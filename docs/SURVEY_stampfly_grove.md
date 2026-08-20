@@ -22,11 +22,34 @@
 | G12 | PMW3901 CS2 | 同上 |
 | G40 | ブザー | 同上 |
 
-### 未使用（＝空き）GPIO
-**G5, G10, G41, G42 の4本**（どのソースにも記述なし）
-- G41/G42 は ESP32-S3 の JTAG(MTDI/MTMS) 共用だが、G39/G40(本来MTCK/MTDO)を
-  既に LED/ブザーへ転用している前例があり機能上の問題は無いはず
-- **ただし基板上にパッド/スルーホールとして引き出されているかは未確認**（回路図PDF未解析）
+### ~~未使用（＝空き）GPIO~~ → **【重大な訂正 2026-08-21】誤りだった**
+
+当初「**G5, G10, G41, G42 の4本が空き**」と記載したが、**これは誤り**。
+
+**現行ファーム `stampfly_ecosystem/firmware/vehicle/main/config.hpp:63-66` で
+この4本はすべてモータ PWM に割り当てられている**:
+```c
+inline constexpr int GPIO_MOTOR_M1 = 42;  // FR, CCW
+inline constexpr int GPIO_MOTOR_M2 = 41;  // RR, CW
+inline constexpr int GPIO_MOTOR_M3 = 10;  // RL, CCW
+inline constexpr int GPIO_MOTOR_M4 = 5;   // FL, CW
+```
+**機体が飛ぶために必須の信号**であり、転用は不可能。
+
+**誤りの原因**: 当時の調査は古い `M5StampFly`（Arduino版）と `stampfly_hal` を
+対象にしており、**現行の `firmware/vehicle` を見ていなかったためモータピンを見落とした**。
+
+### 結果として何が変わるか
+- **本文書の「代替案2: 空きGPIO (G5/G10/G41/G42) を使う」は成立しない**
+- `docs/PLAN.md` の配線案B（空きGPIO 直付け）も**成立しない**
+- **外部に出せるのは GROVE の4本（G13 / G15 / G1 / G2）のみ**
+- したがって StampFly では **SPI 4線で使い切り、IRQ 線が取れない**。
+  R6（IRQ 駆動化）は StampFly では効かないことになる
+  （アンカー側の AtomS3 では IRQ を確保できているので、そちらには効く）
+- 残る選択肢は「GROVE 2系統で SPI 4線」または
+  「内蔵 SPI2_HOST に相乗り（要パッド直付け、IMU と同バス）」
+
+詳細は `docs/STAMPFLY_INTEGRATION.md` を参照。
 
 ## GROVE 端子（HY2.0-4P）— 物理的に2系統ある
 | コネクタ | 色 | 用途 | 信号→GPIO |
