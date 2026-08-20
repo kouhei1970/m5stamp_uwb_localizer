@@ -39,6 +39,35 @@
  * （dwt_setrxantennadelay()/dwt_settxantennadelay()、uwb_qm33120.cpp の
  * init() 参照）とは役割が別（「遅延送信の起動時刻」と「アンテナから実際に
  * 電波が出る時刻」の差を埋めるもの）であり、二重計上ではない。
+ *
+ * --- docs/REIMPL_PLAN.md Phase 2R での変更 (R2/R4/R9) ---
+ * 上記の「移植」段階のあとに、一次資料（Qorvo API rev9p3 / DW3000 UM /
+ * DW3720 API Guide）に基づく修正を入れている。数式・バイト位置・
+ * エンディアン等は引き続き一切変更していない。
+ *
+ *  - 【R2】6箇所（各関数のフレーム照合直後）で、期待外のフレーム
+ *    （他人/別リンク宛て、シーケンス番号不一致等）を受信したときに
+ *    dwt_forcetrxoff() して測距シーケンス全体を Error::RangeFrameMismatch
+ *    で中断していたのをやめ、dwt_rxenable(DWT_START_RX_IMMEDIATE) で
+ *    受信を再開して hostTimeoutMs まで待ち続けるようにした。根拠は
+ *    uwb_qm33120_frame_match.hpp 冒頭コメントと、各関数内のR2コメント
+ *    （Qorvo公式 ex_05a/ex_05b/ex_06a/ex_06b の受信ループ構造）を参照。
+ *    フレーム照合の可否判定そのものは
+ *    uwb::detail::frameMatchesExpectation()（新規、ESP-IDF非依存の純関数、
+ *    tools/test_pipeline でホスト検算可能）に切り出した。
+ *  - 【R4】requestRange()（SS-TWR initiator）のToF計算に
+ *    dwt_readclockoffset() によるクロックオフセット補正を追加した
+ *    （既定で有効。RangeConfig::enableClockOffsetCorrection で無効化可）。
+ *    DS-TWR側（requestDSRange/respondDSRange）は非対称DS-TWR式が原理的に
+ *    クロックオフセットに免疫があるため変更していない
+ *    （DW3000 UM §12.3、docs/refs/DW3000_Family_User_Manual_wayback.txt
+ *    13998行「the typical clock induced error is in the low picosecond
+ *    range even with 20 ppm crystals」）。詳細は requestRange() 内のコメント。
+ *  - 【R9】dwt_setpreambledetecttimeout() を、公式DS-TWRサンプルが実際に
+ *    使っている箇所・値（PRE_TIMEOUT=5）にだけ倣って requestDSRange()/
+ *    respondDSRange() に追加した。SS-TWR（requestRange/respondRange）は
+ *    公式 ex_06a/ex_06b が一度も使っていないため、既定の0（無効）のまま
+ *    据え置いた（詳細は各関数のコメント）。
  */
 #include "uwb_qm33120.hpp"
 
@@ -50,6 +79,7 @@ extern "C" {
 #include "deca_interface.h"
 }
 
+#include "uwb_qm33120_frame_match.hpp"
 #include "uwb_qm33120_impl.hpp"
 #include "uwb_qm33120_internal.hpp"
 
@@ -104,42 +134,75 @@ RangeResult Qm33120::requestRange(const RangeConfig& range)
             dwt_writesysstatuslo(SYS_STATUS_ALL_RX_GOOD | DWT_INT_TXFRS_BIT_MASK);
 
             RxResult parsed;
-            if (!detail::parseShortAddressFrame(rawFrame, frameLen, parsed) ||
-                !detail::payloadMatches(rawFrame, frameLen, "TWR", 3, 11) || (parsed.sequence != pollSeq) ||
-                (parsed.panId != range.panId) || (parsed.src != range.responderAddress) ||
-                (parsed.dst != range.initiatorAddress)) {
-                detail::stopRadioAndClearRxStatus();
-                result.sequence  = parsed.sequence;
-                result.elapsedMs = detail::nowMs() - startMs;
-                result.error     = Error::RangeFrameMismatch;
-                setError(result.error);
+            const bool headerOk  = detail::parseShortAddressFrame(rawFrame, frameLen, parsed);
+            const bool payloadOk = detail::payloadMatches(rawFrame, frameLen, "TWR", 3, 11);
+            const detail::ParsedFrameSummary summary{headerOk,      payloadOk,     parsed.sequence,
+                                                       parsed.panId, parsed.src,    parsed.dst};
+            const detail::FrameExpectation expect{/*checkSequence=*/true, pollSeq, range.panId,
+                                                   range.responderAddress, range.initiatorAddress};
+            if (detail::frameMatchesExpectation(summary, expect)) {
+                const uint32_t pollTxTs = dwt_readtxtimestamplo32();
+                const uint32_t respRxTs = dwt_readrxtimestamplo32(static_cast<dwt_ip_sts_segment_e>(0));
+                const uint32_t pollRxTs = detail::get32le(&rawFrame[12]);
+                const uint32_t respTxTs = detail::get32le(&rawFrame[16]);
+                const int32_t rtdInit   = static_cast<int32_t>(respRxTs - pollTxTs);
+                const int32_t rtdResp   = static_cast<int32_t>(respTxTs - pollRxTs);
+
+                if ((rtdInit <= 0) || (rtdResp <= 0)) {
+                    result.elapsedMs = detail::nowMs() - startMs;
+                    result.error     = Error::RangeTimestampInvalid;
+                    setError(result.error);
+                    return result;
+                }
+
+                // 【R4】SS-TWR クロックオフセット補正 (docs/REIMPL_PLAN.md R4)。
+                // 一次資料: docs/refs/qorvo_api/DW3XXX_API_rev9p3/API/Src/examples/
+                // ex_06a_ss_twr_initiator/ss_twr_initiator.c:199-211（grep -aで直接確認済み）。
+                //   clockOffsetRatio = ((float)dwt_readclockoffset()) / (uint32_t)(1 << 26);
+                //   rtd_init = resp_rx_ts - poll_tx_ts;
+                //   rtd_resp = resp_tx_ts - poll_rx_ts;
+                //   tof = ((rtd_init - rtd_resp * (1 - clockOffsetRatio)) / 2.0) * DWT_TIME_UNITS;
+                // 式の出典（同じ形）: DW3000 UM §12.2 Figure 31 の直後の式
+                // T_prop = (1/2)(T_round - T_reply(1-C_offset))
+                // (docs/refs/DW3000_Family_User_Manual_wayback.txt:13924-13928)。
+                // dwt_readclockoffset() の戻り値の意味
+                // (components/qm33120w_sdk/deca_device_api.h:2795-2801):
+                // 「2^26で割るとppmオフセットになる signed 16-bit」「ローカル(RX)
+                // クロックが相手(TX)より遅いと正の値」。TOF計算に使うのは
+                // ppm値そのものではなく2^26で割った「比」(ppmにするにはさらに
+                // ×1e6が必要、DW3720 API Guide §5.4.13)。CIAが動作していないと
+                // 0を返す（同guide 5.4.13 Notes「If the CIA is not running,
+                // this function will return 0」）ため、無効化フラグが立って
+                // いなくてもCIA未動作時は補正量0＝無補正と等価で安全側に落ちる。
+                // DS-TWR（requestDSRange/respondDSRange）には入れない:
+                // 非対称DS-TWR式は原理的にクロックオフセットへ免疫がある
+                // （DW3000 UM §12.3、本ファイル冒頭コメント参照）。
+                float clockOffsetRatio = 0.0f;
+                if (range.enableClockOffsetCorrection) {
+                    clockOffsetRatio = static_cast<float>(dwt_readclockoffset()) / static_cast<float>(1UL << 26);
+                }
+                const double tof = ((static_cast<double>(rtdInit) -
+                                      static_cast<double>(rtdResp) * (1.0 - static_cast<double>(clockOffsetRatio))) /
+                                     2.0) *
+                                    DWT_TIME_UNITS;
+                result.distanceM = static_cast<float>(tof * detail::kSpeedOfLightMPerS);
+                result.distanceMm =
+                    static_cast<int32_t>((result.distanceM * 1000.0f) + (result.distanceM >= 0 ? 0.5f : -0.5f));
+                result.clockOffsetPpm = clockOffsetRatio * 1.0e6f; // 実機デバッグ用に可視化（R4）
+                result.sequence        = pollSeq;
+                result.elapsedMs       = detail::nowMs() - startMs;
+                result.success         = true;
+                result.error           = Error::Ok;
+                setError(Error::Ok);
                 return result;
             }
 
-            const uint32_t pollTxTs = dwt_readtxtimestamplo32();
-            const uint32_t respRxTs = dwt_readrxtimestamplo32(static_cast<dwt_ip_sts_segment_e>(0));
-            const uint32_t pollRxTs = detail::get32le(&rawFrame[12]);
-            const uint32_t respTxTs = detail::get32le(&rawFrame[16]);
-            const int32_t rtdInit   = static_cast<int32_t>(respRxTs - pollTxTs);
-            const int32_t rtdResp   = static_cast<int32_t>(respTxTs - pollRxTs);
-
-            if ((rtdInit <= 0) || (rtdResp <= 0)) {
-                result.elapsedMs = detail::nowMs() - startMs;
-                result.error     = Error::RangeTimestampInvalid;
-                setError(result.error);
-                return result;
-            }
-
-            const double tof = ((static_cast<double>(rtdInit) - static_cast<double>(rtdResp)) / 2.0) * DWT_TIME_UNITS;
-            result.distanceM = static_cast<float>(tof * detail::kSpeedOfLightMPerS);
-            result.distanceMm =
-                static_cast<int32_t>((result.distanceM * 1000.0f) + (result.distanceM >= 0 ? 0.5f : -0.5f));
-            result.sequence  = pollSeq;
-            result.elapsedMs = detail::nowMs() - startMs;
-            result.success   = true;
-            result.error     = Error::Ok;
-            setError(Error::Ok);
-            return result;
+            // 【R2】アドレス/シーケンス不一致は「エラー」ではなく「他人
+            // （別リンク）宛てのフレームを1枚拾っただけ」。測距シーケンスを
+            // 破棄せず、受信を再開して hostTimeoutMs まで待ち続ける。
+            // 根拠・dwt_setrxtimeout()再設定が不要な理由は本ファイル冒頭の
+            // R2コメントとuwb_qm33120_frame_match.hppを参照。
+            dwt_rxenable(DWT_START_RX_IMMEDIATE);
         }
 
         if ((status & (SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR)) != 0) {
@@ -195,69 +258,70 @@ ResponderResult Qm33120::respondRange(const RangeConfig& range)
             dwt_writesysstatuslo(SYS_STATUS_ALL_RX_GOOD);
 
             RxResult parsed;
-            if (!detail::parseShortAddressFrame(pollFrame, frameLen, parsed) ||
-                !detail::payloadMatches(pollFrame, frameLen, "TWP", 3, 3) || (parsed.panId != range.panId) ||
-                (parsed.dst != range.responderAddress)) {
-                detail::stopRadioAndClearRxStatus();
-                result.sequence  = parsed.sequence;
-                result.requester = parsed.src;
-                result.elapsedMs = detail::nowMs() - startMs;
-                result.error     = Error::RangeFrameMismatch;
-                setError(result.error);
-                return result;
-            }
+            const bool headerOk  = detail::parseShortAddressFrame(pollFrame, frameLen, parsed);
+            const bool payloadOk = detail::payloadMatches(pollFrame, frameLen, "TWP", 3, 3);
+            const detail::ParsedFrameSummary summary{headerOk,      payloadOk,  parsed.sequence,
+                                                       parsed.panId, parsed.src, parsed.dst};
+            // src は照合しない（どの Tag からの Poll でも受理する。元コードの
+            // 挙動そのまま）。
+            const detail::FrameExpectation expect{/*checkSequence=*/false, 0, range.panId, /*src=*/0,
+                                                   range.responderAddress};
+            if (detail::frameMatchesExpectation(summary, expect)) {
+                uint8_t ts[5] = {0};
+                dwt_readrxtimestamp(ts, static_cast<dwt_ip_sts_segment_e>(0));
+                const uint64_t pollRxTs = detail::get40le(ts);
+                const uint32_t respTxTime =
+                    static_cast<uint32_t>((pollRxTs + (range.responseTxDelayUus * detail::kUusToDwtTime)) >> 8);
+                const uint64_t respTxTs =
+                    ((static_cast<uint64_t>(respTxTime & 0xFFFFFFFEUL)) << 8) + _impl->tx_antenna_delay;
 
-            uint8_t ts[5] = {0};
-            dwt_readrxtimestamp(ts, static_cast<dwt_ip_sts_segment_e>(0));
-            const uint64_t pollRxTs = detail::get40le(ts);
-            const uint32_t respTxTime =
-                static_cast<uint32_t>((pollRxTs + (range.responseTxDelayUus * detail::kUusToDwtTime)) >> 8);
-            const uint64_t respTxTs =
-                ((static_cast<uint64_t>(respTxTime & 0xFFFFFFFEUL)) << 8) + _impl->tx_antenna_delay;
+                uint8_t respPayload[11] = {'T', 'W', 'R'};
+                detail::set32le(&respPayload[3], static_cast<uint32_t>(pollRxTs));
+                detail::set32le(&respPayload[7], static_cast<uint32_t>(respTxTs));
 
-            uint8_t respPayload[11] = {'T', 'W', 'R'};
-            detail::set32le(&respPayload[3], static_cast<uint32_t>(pollRxTs));
-            detail::set32le(&respPayload[7], static_cast<uint32_t>(respTxTs));
+                uint8_t respFrame[20] = {0};
+                detail::buildShortAddressFrame(respFrame, parsed.sequence, range.panId, range.responderAddress,
+                                                parsed.src, respPayload, sizeof(respPayload));
 
-            uint8_t respFrame[20] = {0};
-            detail::buildShortAddressFrame(respFrame, parsed.sequence, range.panId, range.responderAddress,
-                                            parsed.src, respPayload, sizeof(respPayload));
-
-            dwt_setdelayedtrxtime(respTxTime);
-            if (dwt_writetxdata(sizeof(respFrame), respFrame, 0) != DWT_SUCCESS) {
-                detail::stopRadioAndClearTxStatus();
-                result.error = Error::TxDataFailed;
-                setError(result.error);
-                return result;
-            }
-            dwt_writetxfctrl(sizeof(respFrame) + FCS_LEN, 0, 1);
-            if (dwt_starttx(DWT_START_TX_DELAYED) != DWT_SUCCESS) {
-                detail::stopRadioAndClearTxStatus();
-                result.error = Error::TxStartFailed;
-                setError(result.error);
-                return result;
-            }
-
-            const uint32_t txStartMs = detail::nowMs();
-            while ((detail::nowMs() - txStartMs) < 20) {
-                const uint32_t txStatus = dwt_readsysstatuslo();
-                if ((txStatus & DWT_INT_TXFRS_BIT_MASK) != 0) {
-                    dwt_writesysstatuslo(DWT_INT_TXFRS_BIT_MASK);
-                    result.success   = true;
-                    result.sequence  = parsed.sequence;
-                    result.requester = parsed.src;
-                    result.elapsedMs = detail::nowMs() - startMs;
-                    result.error     = Error::Ok;
-                    setError(Error::Ok);
+                dwt_setdelayedtrxtime(respTxTime);
+                if (dwt_writetxdata(sizeof(respFrame), respFrame, 0) != DWT_SUCCESS) {
+                    detail::stopRadioAndClearTxStatus();
+                    result.error = Error::TxDataFailed;
+                    setError(result.error);
                     return result;
                 }
-                vTaskDelay(pdMS_TO_TICKS(1));
+                dwt_writetxfctrl(sizeof(respFrame) + FCS_LEN, 0, 1);
+                if (dwt_starttx(DWT_START_TX_DELAYED) != DWT_SUCCESS) {
+                    detail::stopRadioAndClearTxStatus();
+                    result.error = Error::TxStartFailed;
+                    setError(result.error);
+                    return result;
+                }
+
+                const uint32_t txStartMs = detail::nowMs();
+                while ((detail::nowMs() - txStartMs) < 20) {
+                    const uint32_t txStatus = dwt_readsysstatuslo();
+                    if ((txStatus & DWT_INT_TXFRS_BIT_MASK) != 0) {
+                        dwt_writesysstatuslo(DWT_INT_TXFRS_BIT_MASK);
+                        result.success   = true;
+                        result.sequence  = parsed.sequence;
+                        result.requester = parsed.src;
+                        result.elapsedMs = detail::nowMs() - startMs;
+                        result.error     = Error::Ok;
+                        setError(Error::Ok);
+                        return result;
+                    }
+                    vTaskDelay(pdMS_TO_TICKS(1));
+                }
+
+                detail::stopRadioAndClearTxStatus();
+                result.error = Error::TxTimeout;
+                setError(result.error);
+                return result;
             }
 
-            detail::stopRadioAndClearTxStatus();
-            result.error = Error::TxTimeout;
-            setError(result.error);
-            return result;
+            // 【R2】不一致 -> 受信継続（本ファイル冒頭コメント参照）。
+            dwt_rxenable(DWT_START_RX_IMMEDIATE);
         }
 
         if ((status & (SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR)) != 0) {
@@ -297,7 +361,14 @@ DSRangeResult Qm33120::requestDSRange(const DSRangeConfig& range)
                                     pollPayload, sizeof(pollPayload));
 
     detail::stopRadioAndClearIoStatus();
-    dwt_setpreambledetecttimeout(0);
+    // 【R9】プリアンブル検出タイムアウト(PAC単位)。一次資料:
+    // ex_05a_ds_twr_init/ds_twr_initiator.c:92,155 (PRE_TIMEOUT=5、
+    // dwt_setpreambledetecttimeout(PRE_TIMEOUT)をメインループの外で1回だけ
+    // 設定し、以後のResponse受信すべてに適用。grep -aで確認済み)。
+    // ここはDS-TWR initiatorのResponse待ちに対応するので同じ値を使う。
+    // SS-TWR側(requestRange/respondRange)は公式ex_06a/ex_06bが一度も
+    // 使っていないため0(無効)のまま据え置いている（本ファイル冒頭コメント）。
+    dwt_setpreambledetecttimeout(5);
     dwt_setrxaftertxdelay(range.responseRxAfterTxDelayUus);
     dwt_setrxtimeout(range.rxTimeoutUus);
 
@@ -315,9 +386,12 @@ DSRangeResult Qm33120::requestDSRange(const DSRangeConfig& range)
         return result;
     }
 
-    uint8_t respFrame[32]  = {0};
-    uint16_t respLen       = 0;
-    const uint32_t startMs = detail::nowMs();
+    uint8_t respFrame[32]     = {0};
+    uint16_t respLen          = 0;
+    RxResult parsed;
+    bool respMatched          = false;
+    bool respMismatchSeen     = false; // R2診断用: hostTimeoutMs内で不一致フレームを1回以上見たか
+    const uint32_t startMs    = detail::nowMs();
     while ((detail::nowMs() - startMs) < range.hostTimeoutMs) {
         const uint32_t status = dwt_readsysstatuslo();
         if ((status & DWT_INT_RXFCG_BIT_MASK) != 0) {
@@ -328,27 +402,41 @@ DSRangeResult Qm33120::requestDSRange(const DSRangeConfig& range)
             }
             dwt_readrxdata(respFrame, respLen, 0);
             dwt_writesysstatuslo(SYS_STATUS_ALL_RX_GOOD | DWT_INT_TXFRS_BIT_MASK);
-            break;
-        }
-        if ((status & (SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR)) != 0) {
+
+            const bool headerOk  = detail::parseShortAddressFrame(respFrame, respLen, parsed);
+            const bool payloadOk = detail::payloadMatches(respFrame, respLen, "DWR", 3, 11);
+            const detail::ParsedFrameSummary summary{headerOk,      payloadOk,  parsed.sequence,
+                                                       parsed.panId, parsed.src, parsed.dst};
+            const detail::FrameExpectation expect{/*checkSequence=*/true, pollSeq, range.panId,
+                                                   range.responderAddress, range.initiatorAddress};
+            if (detail::frameMatchesExpectation(summary, expect)) {
+                respMatched = true;
+            } else {
+                // 【R2】不一致 -> エラーにせず受信継続（本ファイル冒頭コメント参照）。
+                respMismatchSeen = true;
+                dwt_rxenable(DWT_START_RX_IMMEDIATE);
+            }
+        } else if ((status & (SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR)) != 0) {
             detail::stopRadioAndClearRxStatus();
             result.elapsedMs = detail::nowMs() - startMs;
             result.error     = detail::rxStatusToError(status);
             setError(result.error);
             return result;
         }
+        if (respMatched) {
+            break;
+        }
         vTaskDelay(pdMS_TO_TICKS(1));
     }
 
-    RxResult parsed;
-    if (!detail::parseShortAddressFrame(respFrame, respLen, parsed) ||
-        !detail::payloadMatches(respFrame, respLen, "DWR", 3, 11) || (parsed.sequence != pollSeq) ||
-        (parsed.panId != range.panId) || (parsed.src != range.responderAddress) ||
-        (parsed.dst != range.initiatorAddress)) {
+    if (!respMatched) {
+        // hostTimeoutMs を使い切っても一致するResponseを受け取れなかった。
+        // 不一致フレームを1枚以上見ていれば RangeFrameMismatch、
+        // 何も受信できなかった（respLen==0のまま）なら RxTimeout。
         detail::stopRadioAndClearRxStatus();
         result.sequence  = parsed.sequence;
         result.elapsedMs = detail::nowMs() - startMs;
-        result.error     = respLen == 0 ? Error::RxTimeout : Error::RangeFrameMismatch;
+        result.error     = respMismatchSeen ? Error::RangeFrameMismatch : Error::RxTimeout;
         setError(result.error);
         return result;
     }
@@ -385,8 +473,10 @@ DSRangeResult Qm33120::requestDSRange(const DSRangeConfig& range)
         return result;
     }
 
-    uint8_t distFrame[32]        = {0};
-    uint16_t distLen             = 0;
+    uint8_t distFrame[32]         = {0};
+    uint16_t distLen              = 0;
+    bool distMatched               = false;
+    bool distMismatchSeen          = false; // R2診断用。上のrespMismatchSeenと同じ意味
     const uint32_t resultStartMs = detail::nowMs();
     while ((detail::nowMs() - resultStartMs) < range.hostTimeoutMs) {
         const uint32_t status = dwt_readsysstatuslo();
@@ -398,9 +488,21 @@ DSRangeResult Qm33120::requestDSRange(const DSRangeConfig& range)
             }
             dwt_readrxdata(distFrame, distLen, 0);
             dwt_writesysstatuslo(SYS_STATUS_ALL_RX_GOOD | DWT_INT_TXFRS_BIT_MASK);
-            break;
-        }
-        if ((status & (SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR)) != 0) {
+
+            const bool headerOk  = detail::parseShortAddressFrame(distFrame, distLen, parsed);
+            const bool payloadOk = detail::payloadMatches(distFrame, distLen, "DWD", 3, 7);
+            const detail::ParsedFrameSummary summary{headerOk,      payloadOk,  parsed.sequence,
+                                                       parsed.panId, parsed.src, parsed.dst};
+            const detail::FrameExpectation expect{/*checkSequence=*/true, pollSeq, range.panId,
+                                                   range.responderAddress, range.initiatorAddress};
+            if (detail::frameMatchesExpectation(summary, expect)) {
+                distMatched = true;
+            } else {
+                // 【R2】不一致 -> エラーにせず受信継続。
+                distMismatchSeen = true;
+                dwt_rxenable(DWT_START_RX_IMMEDIATE);
+            }
+        } else if ((status & (SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR)) != 0) {
             detail::stopRadioAndClearRxStatus();
             result.sequence  = pollSeq;
             result.elapsedMs = detail::nowMs() - startMs;
@@ -408,17 +510,17 @@ DSRangeResult Qm33120::requestDSRange(const DSRangeConfig& range)
             setError(result.error);
             return result;
         }
+        if (distMatched) {
+            break;
+        }
         vTaskDelay(pdMS_TO_TICKS(1));
     }
 
-    if (!detail::parseShortAddressFrame(distFrame, distLen, parsed) ||
-        !detail::payloadMatches(distFrame, distLen, "DWD", 3, 7) || (parsed.sequence != pollSeq) ||
-        (parsed.panId != range.panId) || (parsed.src != range.responderAddress) ||
-        (parsed.dst != range.initiatorAddress)) {
+    if (!distMatched) {
         detail::stopRadioAndClearRxStatus();
         result.sequence  = parsed.sequence;
         result.elapsedMs = detail::nowMs() - startMs;
-        result.error     = distLen == 0 ? Error::RxTimeout : Error::RangeFrameMismatch;
+        result.error     = distMismatchSeen ? Error::RangeFrameMismatch : Error::RxTimeout;
         setError(result.error);
         return result;
     }
@@ -459,6 +561,8 @@ DSResponderResult Qm33120::respondDSRange(const DSRangeConfig& range)
     uint8_t pollFrame[32] = {0};
     uint16_t pollLen      = 0;
     RxResult parsed;
+    bool pollMatched       = false;
+    bool pollMismatchSeen  = false; // R2診断用（他の受信ループと同じ意味）
     const uint32_t startMs = detail::nowMs();
     while ((detail::nowMs() - startMs) < range.hostTimeoutMs) {
         const uint32_t status = dwt_readsysstatuslo();
@@ -470,26 +574,41 @@ DSResponderResult Qm33120::respondDSRange(const DSRangeConfig& range)
             }
             dwt_readrxdata(pollFrame, pollLen, 0);
             dwt_writesysstatuslo(SYS_STATUS_ALL_RX_GOOD);
-            break;
-        }
-        if ((status & (SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR)) != 0) {
+
+            const bool headerOk  = detail::parseShortAddressFrame(pollFrame, pollLen, parsed);
+            const bool payloadOk = detail::payloadMatches(pollFrame, pollLen, "DWP", 3, 3);
+            const detail::ParsedFrameSummary summary{headerOk,      payloadOk,  parsed.sequence,
+                                                       parsed.panId, parsed.src, parsed.dst};
+            // src は照合しない（どの Tag からの Poll でも受理する。元コードの
+            // 挙動そのまま。respondRange() と同じ）。
+            const detail::FrameExpectation expect{/*checkSequence=*/false, 0, range.panId, /*src=*/0,
+                                                   range.responderAddress};
+            if (detail::frameMatchesExpectation(summary, expect)) {
+                pollMatched = true;
+            } else {
+                // 【R2】不一致 -> 受信継続（本ファイル冒頭コメント参照）。
+                pollMismatchSeen = true;
+                dwt_rxenable(DWT_START_RX_IMMEDIATE);
+            }
+        } else if ((status & (SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR)) != 0) {
             detail::stopRadioAndClearRxStatus();
             result.elapsedMs = detail::nowMs() - startMs;
             result.error     = detail::rxStatusToError(status);
             setError(result.error);
             return result;
         }
+        if (pollMatched) {
+            break;
+        }
         vTaskDelay(pdMS_TO_TICKS(1));
     }
 
-    if (!detail::parseShortAddressFrame(pollFrame, pollLen, parsed) ||
-        !detail::payloadMatches(pollFrame, pollLen, "DWP", 3, 3) || (parsed.panId != range.panId) ||
-        (parsed.dst != range.responderAddress)) {
+    if (!pollMatched) {
         detail::stopRadioAndClearRxStatus();
         result.sequence  = parsed.sequence;
         result.requester = parsed.src;
         result.elapsedMs = detail::nowMs() - startMs;
-        result.error     = pollLen == 0 ? Error::RxTimeout : Error::RangeFrameMismatch;
+        result.error     = pollMismatchSeen ? Error::RangeFrameMismatch : Error::RxTimeout;
         setError(result.error);
         return result;
     }
@@ -511,6 +630,12 @@ DSResponderResult Qm33120::respondDSRange(const DSRangeConfig& range)
     dwt_setdelayedtrxtime(respTxTime);
     dwt_setrxaftertxdelay(range.finalRxAfterResponseTxDelayUus);
     dwt_setrxtimeout(range.rxTimeoutUus);
+    // 【R9】一次資料: ex_05b_ds_twr_resp/ds_twr_responder.c:90,200-203
+    // (PRE_TIMEOUT=5をFinal待ち受け直前、dwt_setrxaftertxdelay/
+    // dwt_setrxtimeoutと同じ並びで設定。grep -aで確認済み)。
+    // Poll待ち（本関数冒頭、相手がいつ来るか分からない開放待ち）は
+    // ex_05bと同じく0のまま（本ファイル冒頭の該当行参照）。
+    dwt_setpreambledetecttimeout(5);
     if (dwt_writetxdata(sizeof(respFrame), respFrame, 0) != DWT_SUCCESS) {
         detail::stopRadioAndClearIoStatus();
         result.error = Error::TxDataFailed;
@@ -527,6 +652,9 @@ DSResponderResult Qm33120::respondDSRange(const DSRangeConfig& range)
 
     uint8_t finalFrame[32]      = {0};
     uint16_t finalLen           = 0;
+    RxResult finalParsed;
+    bool finalMatched            = false;
+    bool finalMismatchSeen       = false; // R2診断用
     const uint32_t finalStartMs = detail::nowMs();
     while ((detail::nowMs() - finalStartMs) < range.hostTimeoutMs) {
         const uint32_t status = dwt_readsysstatuslo();
@@ -538,9 +666,24 @@ DSResponderResult Qm33120::respondDSRange(const DSRangeConfig& range)
             }
             dwt_readrxdata(finalFrame, finalLen, 0);
             dwt_writesysstatuslo(SYS_STATUS_ALL_RX_GOOD | DWT_INT_TXFRS_BIT_MASK);
-            break;
-        }
-        if ((status & (SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR)) != 0) {
+
+            const bool headerOk  = detail::parseShortAddressFrame(finalFrame, finalLen, finalParsed);
+            const bool payloadOk = detail::payloadMatches(finalFrame, finalLen, "DWF", 3, 15);
+            const detail::ParsedFrameSummary summary{
+                headerOk, payloadOk, finalParsed.sequence, finalParsed.panId, finalParsed.src, finalParsed.dst};
+            // 期待するsequence/srcは、この応答が誰宛てだったか（先に受信した
+            // Pollの送信元）に紐づく動的な値。元コードのfinalParsed.sequence
+            // != parsed.sequence / finalParsed.src != parsed.src と同じ。
+            const detail::FrameExpectation expect{/*checkSequence=*/true, parsed.sequence, range.panId, parsed.src,
+                                                   range.responderAddress};
+            if (detail::frameMatchesExpectation(summary, expect)) {
+                finalMatched = true;
+            } else {
+                // 【R2】不一致 -> 受信継続。
+                finalMismatchSeen = true;
+                dwt_rxenable(DWT_START_RX_IMMEDIATE);
+            }
+        } else if ((status & (SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR)) != 0) {
             detail::stopRadioAndClearRxStatus();
             result.sequence  = parsed.sequence;
             result.requester = parsed.src;
@@ -549,19 +692,18 @@ DSResponderResult Qm33120::respondDSRange(const DSRangeConfig& range)
             setError(result.error);
             return result;
         }
+        if (finalMatched) {
+            break;
+        }
         vTaskDelay(pdMS_TO_TICKS(1));
     }
 
-    RxResult finalParsed;
-    if (!detail::parseShortAddressFrame(finalFrame, finalLen, finalParsed) ||
-        !detail::payloadMatches(finalFrame, finalLen, "DWF", 3, 15) || (finalParsed.sequence != parsed.sequence) ||
-        (finalParsed.panId != range.panId) || (finalParsed.src != parsed.src) ||
-        (finalParsed.dst != range.responderAddress)) {
+    if (!finalMatched) {
         detail::stopRadioAndClearRxStatus();
         result.sequence  = finalParsed.sequence;
         result.requester = parsed.src;
         result.elapsedMs = detail::nowMs() - startMs;
-        result.error     = finalLen == 0 ? Error::RxTimeout : Error::RangeFrameMismatch;
+        result.error     = finalMismatchSeen ? Error::RangeFrameMismatch : Error::RxTimeout;
         setError(result.error);
         return result;
     }

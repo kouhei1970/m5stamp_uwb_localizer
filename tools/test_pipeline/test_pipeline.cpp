@@ -16,6 +16,7 @@
 #include <cmath>
 #include <cstdio>
 
+#include "uwb_qm33120_frame_match.hpp"
 #include "uwb_qm33120_units.hpp"
 #include "uwb_ranging_anchor_table.hpp"
 #include "uwb_ranging_pipeline.hpp"
@@ -337,6 +338,81 @@ static void scenario8_r8_sfd_timeout_auto()
           sfdTimeoutFromPhy(200, 256, 8, 8));
 }
 
+/* ==================================================================== *
+ * 9. docs/REIMPL_PLAN.md R2: uwb::detail::frameMatchesExpectation()
+ *    （受信フレームが「待っていたフレームか」の純関数判定）の検算。
+ *    uwb_qm33120_twr.cpp の6箇所の受信ループが、この関数のfalseを
+ *    「エラーではなく受信継続」の合図として使う（本体側はハードウェアが
+ *    絡むためホストで直接は検証できないが、判定ロジックそのものは
+ *    ここで検算できる）。
+ * ==================================================================== */
+static void scenario9_r2_frame_match()
+{
+    std::printf("--- 9. R2: uwb::detail::frameMatchesExpectation() 検算 ---\n");
+    using uwb::detail::FrameExpectation;
+    using uwb::detail::frameMatchesExpectation;
+    using uwb::detail::ParsedFrameSummary;
+
+    // requestRange()/requestDSRange() が使う形: sequence/panId/src/dstを
+    // すべて厳密照合する。全部一致すればtrue。
+    const FrameExpectation strict{/*checkSequence=*/true, 7, 0xDECA, 0x0002, 0x0001};
+
+    {
+        const ParsedFrameSummary allMatch{true, true, 7, 0xDECA, 0x0002, 0x0001};
+        CHECK(frameMatchesExpectation(allMatch, strict), "全項目一致のフレームがfalseになった");
+    }
+    {
+        // 【R2の核心】シーケンス番号だけ不一致 = 「他人（別リンク）宛て」の
+        // 典型例。エラーではなく「待っていたフレームではない」というfalseに
+        // なることを確認する（呼び出し側はこれを見てdwt_rxenable()して
+        // 受信継続する。中断はしない）。
+        const ParsedFrameSummary wrongSeq{true, true, 8, 0xDECA, 0x0002, 0x0001};
+        CHECK(!frameMatchesExpectation(wrongSeq, strict), "シーケンス番号不一致がtrueになった");
+    }
+    {
+        // 別リンクの送信元アドレス（5台round-robin構成で最も起こりやすい
+        // 不一致パターン）。
+        const ParsedFrameSummary wrongSrc{true, true, 7, 0xDECA, 0x0005, 0x0001};
+        CHECK(!frameMatchesExpectation(wrongSrc, strict), "送信元アドレス不一致がtrueになった");
+    }
+    {
+        const ParsedFrameSummary wrongDst{true, true, 7, 0xDECA, 0x0002, 0x0003};
+        CHECK(!frameMatchesExpectation(wrongDst, strict), "宛先アドレス不一致がtrueになった");
+    }
+    {
+        const ParsedFrameSummary wrongPan{true, true, 7, 0xBEEF, 0x0002, 0x0001};
+        CHECK(!frameMatchesExpectation(wrongPan, strict), "PAN ID不一致がtrueになった");
+    }
+    {
+        // ヘッダ解析自体が失敗（frameLenが短すぎる等）。payloadOk側は
+        // don't careでもheaderOk=falseなら必ずfalse（短絡評価）。
+        const ParsedFrameSummary badHeader{false, true, 7, 0xDECA, 0x0002, 0x0001};
+        CHECK(!frameMatchesExpectation(badHeader, strict), "headerOk=falseなのにtrueになった");
+    }
+    {
+        // 関数コード/フレーム長不一致（例: "TWR"応答待ちなのに別の関数コード
+        // のフレームが来た）。
+        const ParsedFrameSummary badPayload{true, false, 7, 0xDECA, 0x0002, 0x0001};
+        CHECK(!frameMatchesExpectation(badPayload, strict), "payloadOk=falseなのにtrueになった");
+    }
+
+    // respondRange()/respondDSRange() のPoll待ちが使う形: checkSequence=false
+    // かつ src=0(don't care)。「どのTagからのPollでも受理する」の再現。
+    const FrameExpectation pollWait{/*checkSequence=*/false, 0, 0xDECA, /*src=*/0, 0x0002};
+    {
+        const ParsedFrameSummary fromTagA{true, true, 3, 0xDECA, 0x0001, 0x0002};
+        const ParsedFrameSummary fromTagB{true, true, 200, 0xDECA, 0x0009, 0x0002};
+        CHECK(frameMatchesExpectation(fromTagA, pollWait), "src=0(don't care)でTagAからのPollがfalseになった");
+        CHECK(frameMatchesExpectation(fromTagB, pollWait),
+              "src=0(don't care)でシーケンス番号違い/別TagからのPollがfalseになった");
+    }
+    {
+        // dstだけは常に照合する（自分宛てでなければ無条件で不一致）。
+        const ParsedFrameSummary toOtherAnchor{true, true, 3, 0xDECA, 0x0001, 0x0003};
+        CHECK(!frameMatchesExpectation(toOtherAnchor, pollWait), "宛先違いのPollがdon't careですり抜けた");
+    }
+}
+
 int main()
 {
     std::printf("=== tools/test_pipeline: uwb_ranging 測位パイプライン 合成データ検証 ===\n");
@@ -351,6 +427,7 @@ int main()
     scenario6_origin_plane_fails();
     scenario7_r1_us_to_uus();
     scenario8_r8_sfd_timeout_auto();
+    scenario9_r2_frame_match();
 
     std::printf("\n=== %d 件中 %d 件失敗 ===\n", g_run, g_fail);
     return (g_fail == 0) ? 0 : 1;

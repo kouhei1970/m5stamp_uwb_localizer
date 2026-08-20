@@ -24,6 +24,14 @@
  * RxTimeout（まだPollが来ていないだけ）は無視、20回成功するごとにログを出す。
  * DS-TWR の ANCHOR は自分で距離を計算する（respondDSRange()の戻り値）ので、
  * こちらでも同じ統計を出す。
+ *
+ * 【docs/REIMPL_PLAN.md R3-1/R9】上記の「examplesの値をそのまま使用」の
+ * 例外として、RANGE_HOST_TIMEOUT_MS(100→10)/RESULT_RX_AFTER_FINAL_TX_DLY_UUS
+ * (500→200)/RESULT_REPEAT_COUNT(3→1) の3つは
+ * uwb::RangeConfig/DSRangeConfig 側の新しい既定値
+ * （components/uwb_qm33120/include/uwb_qm33120_types.hpp）に揃えて更新した
+ * （examplesの値は検証されていない二次資料であり、この3つは特に
+ * docs/CRITICAL_REVIEW.md【重大3】で問題が指摘されていたため）。
  */
 #include <cmath>
 #include <cstdio>
@@ -136,7 +144,7 @@ static uwb::Config makeConfigFromBoard()
 static constexpr uint32_t RANGE_INTERVAL_MS            = 200;
 static constexpr uint32_t TAG_LOG_INTERVAL              = 10;
 static constexpr uint32_t RX_TIMEOUT_UUS                = 3000;
-static constexpr uint32_t RANGE_HOST_TIMEOUT_MS          = 100;
+static constexpr uint32_t RANGE_HOST_TIMEOUT_MS          = 10;
 static constexpr uint32_t RESPONSE_RX_AFTER_TX_DLY_UUS   = 1500;
 static constexpr uint32_t RESPONSE_TX_DLY_UUS            = 3000;
 
@@ -205,13 +213,13 @@ static constexpr uint32_t RANGE_INTERVAL_MS = 200;
 static constexpr uint32_t TAG_LOG_INTERVAL   = 10;
 
 static constexpr uint32_t RX_TIMEOUT_UUS               = 3000;
-static constexpr uint32_t RANGE_HOST_TIMEOUT_MS         = 100;
+static constexpr uint32_t RANGE_HOST_TIMEOUT_MS         = 10;
 static constexpr uint32_t RESPONSE_RX_AFTER_TX_DLY_UUS  = 1500;
 static constexpr uint32_t RESPONSE_TX_DLY_UUS           = 3000;
 static constexpr uint32_t FINAL_TX_DLY_UUS                   = 1800;
 static constexpr uint32_t FINAL_RX_AFTER_RESPONSE_TX_DLY_UUS = 500;
-static constexpr uint32_t RESULT_RX_AFTER_FINAL_TX_DLY_UUS   = 500;
-static constexpr uint8_t RESULT_REPEAT_COUNT    = 3;
+static constexpr uint32_t RESULT_RX_AFTER_FINAL_TX_DLY_UUS   = 200;
+static constexpr uint8_t RESULT_REPEAT_COUNT    = 1;
 static constexpr uint32_t RESULT_REPEAT_GAP_MS  = 3;
 
 static uwb::DSRangeConfig makeRangeConfig()
@@ -284,7 +292,7 @@ static void runRole(uwb::Qm33120& uwb)
 
 static constexpr uint32_t ANCHOR_LOG_INTERVAL           = 20;
 static constexpr uint32_t RX_TIMEOUT_UUS                = 3000;
-static constexpr uint32_t RANGE_HOST_TIMEOUT_MS          = 100;
+static constexpr uint32_t RANGE_HOST_TIMEOUT_MS          = 10;
 static constexpr uint32_t RESPONSE_RX_AFTER_TX_DLY_UUS   = 1500;
 static constexpr uint32_t RESPONSE_TX_DLY_UUS            = 3000;
 
@@ -337,13 +345,13 @@ static void runRole(uwb::Qm33120& uwb)
 
 static constexpr uint32_t ANCHOR_LOG_INTERVAL          = 20;
 static constexpr uint32_t RX_TIMEOUT_UUS               = 3000;
-static constexpr uint32_t RANGE_HOST_TIMEOUT_MS         = 100;
+static constexpr uint32_t RANGE_HOST_TIMEOUT_MS         = 10;
 static constexpr uint32_t RESPONSE_RX_AFTER_TX_DLY_UUS  = 1500;
 static constexpr uint32_t RESPONSE_TX_DLY_UUS           = 3000;
 static constexpr uint32_t FINAL_TX_DLY_UUS                   = 1800;
 static constexpr uint32_t FINAL_RX_AFTER_RESPONSE_TX_DLY_UUS = 500;
-static constexpr uint32_t RESULT_RX_AFTER_FINAL_TX_DLY_UUS   = 500;
-static constexpr uint8_t RESULT_REPEAT_COUNT    = 3;
+static constexpr uint32_t RESULT_RX_AFTER_FINAL_TX_DLY_UUS   = 200;
+static constexpr uint8_t RESULT_REPEAT_COUNT    = 1;
 static constexpr uint32_t RESULT_REPEAT_GAP_MS  = 3;
 
 static uwb::DSRangeConfig makeRangeConfig()

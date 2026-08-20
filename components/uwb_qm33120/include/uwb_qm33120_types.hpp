@@ -298,9 +298,36 @@ struct RangeConfig {
     //!< UUS。dwt_setrxtimeout() に直接渡る
     //!< (uwb_qm33120_twr.cpp: requestRange:77, respondRange は即時応答なので0固定:175)。
     uint32_t rxTimeoutUus              = 4500;
-    //!< ms。ホスト側ポーリングループのタイムアウト。SDK APIには渡らない
-    //!< (detail::nowMs() ベース。requestRange/respondRange 双方で使用)。
-    uint32_t hostTimeoutMs             = 100;
+    /**
+     * ms。ホスト側ポーリングループのタイムアウト。SDK APIには渡らない
+     * (detail::nowMs() ベース。requestRange/respondRange 双方で使用)。
+     *
+     * 【docs/REIMPL_PLAN.md R9】旧既定値100はチップ側のRXタイムアウト
+     * (rxTimeoutUus=4500UUS≈4.615ms)の20倍以上あり、5アンカー構成では
+     * 「応答が来ない」ケース1つで最大100msストールしうる。
+     * 【R2適用後の根拠】R2により、不一致フレームを受信するたびに
+     * dwt_rxenable()でRXタイムアウトが再アームされる（本ファイルの
+     * uwb_qm33120_twr.cppコメント、ull_setrxtimeout()の解析を参照）ため、
+     * hostTimeoutMsは「チップ側1回分のRXタイムアウト」ではなく「不一致
+     * フレームが何度再アームされても最終的に抜けるための上位バックストップ」
+     * として機能する。10msは、チップ側の最大RXタイムアウト(4500UUS≈4.615ms)
+     * を1回分丸ごと待っても打ち切らない値でありながら、不一致フレーム1枚
+     * あたりの処理時間（フレーム受信+照合、air timeにして高々百数十µs
+     * オーダー、docs/CRITICAL_REVIEW.md「フレーム air time の実測算」参照）
+     * を何十回分も吸収できる余裕を残す。100msの1/10にすることで
+     * 「5アンカー×hostTimeoutMs」のストール上限も同じ比率で縮む。
+     */
+    uint32_t hostTimeoutMs             = 10;
+    /**
+     * 【docs/REIMPL_PLAN.md R4】requestRange()（SS-TWR initiator）のToF計算に
+     * dwt_readclockoffset() によるクロックオフセット補正を適用するか。
+     * 既定で有効（true）。無効にすると旧挙動（無補正、rtd_resp係数=1固定）
+     * に戻る。実機での比較検証用のフラグ（respondRange 側には効果はない。
+     * SS-TWR responder は補正の主体ではなくフレームにタイムスタンプを
+     * 載せるだけなので変更不要）。詳細は uwb_qm33120_twr.cpp
+     * requestRange() 内のコメント参照。
+     */
+    bool enableClockOffsetCorrection    = true;
 };
 
 /**
@@ -336,21 +363,62 @@ struct DSRangeConfig {
     //!< 遅延Response送信後、Final受信を開始するまでの待ち
     //!< （uwb_qm33120_twr.cpp: respondDSRange:512）。
     uint32_t finalRxAfterResponseTxDelayUus = 500;
-    //!< UUS。dwt_setrxaftertxdelay() に直接渡る。Initiator側がFinal送信後、
-    //!< 結果("DWD")受信を開始するまでの待ち
-    //!< （uwb_qm33120_twr.cpp: requestDSRange:372）。
-    uint32_t resultRxAfterFinalTxDelayUus   = 500;
+    /**
+     * UUS。dwt_setrxaftertxdelay() に直接渡る。Initiator側がFinal送信後、
+     * 結果("DWD")受信を開始するまでの待ち
+     * （uwb_qm33120_twr.cpp: requestDSRange:372）。
+     *
+     * 【docs/REIMPL_PLAN.md R3-1】旧既定値500 UUS(≈512.8µs実us)は、
+     * DWD結果フレームの送信がAnchor側で「delayed TXで時刻を予約する」
+     * のではなく「Final受信直後にDWT_START_TX_IMMEDIATEで即時送信する」
+     * 方式（respondDSRange()、SPIレジスタ書き込み数回のみでvTaskDelay等の
+     * 意図的な遅延を挟まない）であるにもかかわらず大きすぎた。
+     * Initiator側のRXが512.8µs後まで開かないため、Anchorがそれより速く
+     * 返信した場合は最初のDWD送信を取りこぼす
+     * （docs/CRITICAL_REVIEW.md【重大3】、L<363µsで約36%取りこぼしの実測算）。
+     * 200 UUS(≈205.1µs実us)へ下げた根拠: DWDフレーム自体の空中線上の
+     * 全長（SHR 138.4µs [preamble128+SFD8=136シンボル×1017.63ns/シンボル、
+     * docs/refs/DW3000_Datasheet_wayback.txt Table 18（§4.4）より本値を
+     * 独立に再検算し一致を確認] + PHR + データ、docs/CRITICAL_REVIEW.md
+     * 「フレーム air time の実測算」より合計約179µs）をわずかに上回る
+     * 205.1µsであれば、Anchor側の実処理時間（意図的な遅延なしの
+     * SPIレジスタ書き込み数回、既存の1ms輪ポーリング実装でも数十〜百数十µs
+     * オーダーと見積もれる）に対して十分な余裕がありながら、
+     * 旧値(512.8µs)の半分以下に圧縮できる。
+     */
+    uint32_t resultRxAfterFinalTxDelayUus   = 200;
     //!< UUS。dwt_setrxtimeout() に直接渡る。Response/Final/結果それぞれの
     //!< 受信タイムアウトに共用される
     //!< （uwb_qm33120_twr.cpp: requestDSRange:302,373, respondDSRange:513）。
     uint32_t rxTimeoutUus                   = 3000;
-    //!< ms。ホスト側ポーリングループのタイムアウト。SDK APIには渡らない。
-    uint32_t hostTimeoutMs                  = 100;
-    //!< 単位なし（回数）。SDK APIには渡らない。Responder が計算した距離
-    //!< ("DWD"結果フレーム)を送る回数（uwb_qm33120_twr.cpp: respondDSRange:603）。
-    uint8_t resultRepeatCount               = 3;
+    /**
+     * ms。ホスト側ポーリングループのタイムアウト。SDK APIには渡らない。
+     * 【docs/REIMPL_PLAN.md R9】RangeConfig::hostTimeoutMs と同じ理由・
+     * 同じ根拠で100→10に変更（コメント参照）。DS-TWRのrxTimeoutUus=3000
+     * (≈3.077ms)に対しても10msは1回分丸ごと待っても打ち切らない値。
+     */
+    uint32_t hostTimeoutMs                  = 10;
+    /**
+     * 単位なし（回数）。SDK APIには渡らない。Responder が計算した距離
+     * ("DWD"結果フレーム)を送る回数（uwb_qm33120_twr.cpp: respondDSRange:603）。
+     *
+     * 【docs/REIMPL_PLAN.md R3-1】旧既定値3は、resultRepeatGapMs=3ms /
+     * rxTimeoutUus=3000UUS(=3.077ms)と一度も整合していなかった
+     * (docs/CRITICAL_REVIEW.md【重大3】)。DWD#3はTagのDWD受信ウィンドウが
+     * 閉じた後(ウィンドウ終端の2〜3.5ms後)に送信されるため物理的に受信
+     * 不能な上、次のAnchorの応答窓(8.6〜11.7ms)のど真ん中に着弾して
+     * 次のリンクの測距を巻き添えにする。既定を1にしてこの破壊的な
+     * リピートを止める。リピート機構自体は削除しない（respondDSRange()の
+     * for(i<repeatCount)ループはそのまま残っており、呼び出し側がこの
+     * フィールドを2以上に設定すれば実機比較検証用に旧挙動へ戻せる。
+     * firmware/anchor, firmware/twr は現状Kconfig化しておらず
+     * main.cpp内のstatic constexprで直接指定している）。
+     */
+    uint8_t resultRepeatCount               = 1;
     //!< ms。SDK APIには渡らない。結果フレーム再送の間隔
     //!< （uwb_qm33120_twr.cpp: respondDSRange:630, vTaskDelay）。
+    //!< resultRepeatCount>1のときのみ意味を持つ（R3-1で既定1になったため
+    //!< 既定構成では未使用）。
     uint32_t resultRepeatGapMs              = 3;
 };
 
@@ -365,6 +433,16 @@ struct RangeResult {
     float distanceM    = 0.0f;
     uint32_t elapsedMs = 0;
     Error error         = Error::Ok;
+    /**
+     * 【docs/REIMPL_PLAN.md R4】requestRange() が dwt_readclockoffset() から
+     * 求めたクロックオフセット比を ppm 単位で入れる（実機デバッグ用の可視化。
+     * distanceM/distanceMm の算出には既に織り込み済みで、この値自体は
+     * 加算・減算しない）。RangeConfig::enableClockOffsetCorrection が false
+     * のとき、または成功しなかった呼び出しでは 0.0（未計算）のまま。
+     * CIAが動作していないとdwt_readclockoffset()は0を返す
+     * (DW3720 API Guide §5.4.13) ため、その場合もここは0になる。
+     */
+    float clockOffsetPpm = 0.0f;
 };
 
 /**

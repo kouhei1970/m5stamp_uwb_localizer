@@ -28,6 +28,13 @@
  *
  * NVS保存・シリアルコンソールからのショートアドレス変更は未実装(将来課題)。
  * 現時点ではKconfigの UWB_ANCHOR_SHORT_ADDR の値を書き込み時に焼き込む形。
+ *
+ * 【docs/REIMPL_PLAN.md R3-1/R9】以下の各 static constexpr は、旧
+ * third_party/M5Stamp-UWB/examples の .ino 値をそのまま踏襲していたが、
+ * RANGE_HOST_TIMEOUT_MS(100→10)/RESULT_RX_AFTER_FINAL_TX_DLY_UUS(500→200)/
+ * RESULT_REPEAT_COUNT(3→1) の3つは uwb::RangeConfig/DSRangeConfig 側の
+ * 新しい既定値（components/uwb_qm33120/include/uwb_qm33120_types.hpp）と
+ * 揃える形で更新した。根拠はそちらのフィールドコメントを参照。
  */
 #include <cmath>
 #include <cstdio>
@@ -130,13 +137,13 @@ static uwb::Config makeConfigFromBoard()
 
 static constexpr uint32_t ANCHOR_LOG_INTERVAL                = 20;
 static constexpr uint32_t RX_TIMEOUT_UUS                     = 3000;
-static constexpr uint32_t RANGE_HOST_TIMEOUT_MS               = 100;
+static constexpr uint32_t RANGE_HOST_TIMEOUT_MS               = 10;
 static constexpr uint32_t RESPONSE_RX_AFTER_TX_DLY_UUS        = 1500;
 static constexpr uint32_t RESPONSE_TX_DLY_UUS                 = 3000;
 static constexpr uint32_t FINAL_TX_DLY_UUS                    = 1800;
 static constexpr uint32_t FINAL_RX_AFTER_RESPONSE_TX_DLY_UUS  = 500;
-static constexpr uint32_t RESULT_RX_AFTER_FINAL_TX_DLY_UUS    = 500;
-static constexpr uint8_t RESULT_REPEAT_COUNT                  = 3;
+static constexpr uint32_t RESULT_RX_AFTER_FINAL_TX_DLY_UUS    = 200;
+static constexpr uint8_t RESULT_REPEAT_COUNT                  = 1;
 static constexpr uint32_t RESULT_REPEAT_GAP_MS                = 3;
 
 static uwb::DSRangeConfig makeRangeConfig()
@@ -207,7 +214,7 @@ static void runRole(uwb::Qm33120& uwb)
 
 static constexpr uint32_t ANCHOR_LOG_INTERVAL          = 20;
 static constexpr uint32_t RX_TIMEOUT_UUS               = 3000;
-static constexpr uint32_t RANGE_HOST_TIMEOUT_MS         = 100;
+static constexpr uint32_t RANGE_HOST_TIMEOUT_MS         = 10;
 static constexpr uint32_t RESPONSE_RX_AFTER_TX_DLY_UUS  = 1500;
 static constexpr uint32_t RESPONSE_TX_DLY_UUS           = 3000;
 
