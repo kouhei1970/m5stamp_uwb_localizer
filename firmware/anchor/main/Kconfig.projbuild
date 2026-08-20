@@ -2,7 +2,7 @@ menu "UWB Anchor Configuration"
 
     choice UWB_ANCHOR_BOARD
         prompt "Target host board"
-        default UWB_ANCHOR_BOARD_STAMPS3
+        default UWB_ANCHOR_BOARD_ATOMS3
         help
             Select which host board's pin definitions (boards/stamps3.h or
             boards/atoms3.h, at the repo root) main.cpp uses to configure

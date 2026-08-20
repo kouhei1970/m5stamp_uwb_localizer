@@ -37,7 +37,11 @@
         .pin_rst      = 6,  /* G6: free header GPIO, no onboard-peripheral conflict, docs.m5stack.com/en/core/StampS3 */ \
         .pin_irq      = 7,  /* G7: free header GPIO, no onboard-peripheral conflict, docs.m5stack.com/en/core/StampS3 */ \
         .pin_wakeup   = 8,  /* G8: free header GPIO, no onboard-peripheral conflict, docs.m5stack.com/en/core/StampS3 */ \
-        .pin_gp7      = 9,  /* G9: free header GPIO, no onboard-peripheral conflict, docs.m5stack.com/en/core/StampS3 */ \
+        /* GP7 (モジュール pin 5) は本ドライバのどのファームからも読まない
+         * (uwb_port_read_gp7() の呼び出し箇所が無い)。配線しないなら
+         * UWB_PORT_PIN_UNUSED にしておく。GPIO 番号を入れたまま未配線だと
+         * 入力が浮く。配線する場合のみ 9 に戻すこと (G9)。 */ \
+        .pin_gp7      = UWB_PORT_PIN_UNUSED, \
         .spi_slow_hz  = 2000000,                                        \
         .spi_fast_hz  = 16000000,                                       \
         .init_spi_bus = true,                                           \

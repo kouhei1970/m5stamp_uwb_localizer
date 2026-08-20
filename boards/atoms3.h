@@ -17,9 +17,12 @@
 /*
  * M5 AtomS3 はオンボード周辺機能（LCD: G21/G17/G15/G33/G34/G16、
  * IMU(MPU6886) I2C: G38/G39、ボタン: G41）でほとんどの GPIO を消費しており、
- * 完全に空いている GPIO は実質 6 本（底面 6 ピンヘッダに出ている
- * G5/G6/G7/G8/G1/G2）のみ。この6本を SCK/MOSI/MISO/CS/RST/IRQ に全て
- * 割り当てる。出典: https://docs.m5stack.com/en/core/AtomS3
+ * 完全に空いている GPIO は実質 6 本のみ。内訳は 2 箇所に分かれている:
+ *   - 底面 6 ピンヘッダ: G5 / G6 / G7 / G8
+ *   - Grove ポート (HY2.0-4P): G1 / G2 (本来は I2C の SDA/SCL)
+ * この 6 本を SCK/MOSI/MISO/CS/RST/IRQ に全て割り当てる。
+ * 出典: https://docs.m5stack.com/en/core/AtomS3
+ * ※ この内訳は実物で要確認（docs/SOLDER_PADS.md の未確認事項リスト参照）
  *
  * - SCK/MOSI/MISO/CS: 底面 6 ピンヘッダの空き GPIO
  * - RST/IRQ: 本来 Grove ポートの I2C (SDA/SCL) に使われる G1/G2 を転用。

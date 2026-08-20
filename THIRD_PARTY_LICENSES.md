@@ -32,13 +32,46 @@ MIT License, Copyright (c) 2026 Kouhei Ito
 全文は取り込み元の [`third_party/uwb_localizer/LICENSE`](third_party/uwb_localizer/LICENSE)
 （本リポジトリの [`LICENSE`](LICENSE) と同一の MIT）を参照してください。
 
-## M5Stack 由来のポーティングコード（将来追加予定、例: `components/uwb_qm33120/`）
+## `components/uwb_qm33120/` — MIT（M5Stack 由来の移植コードを含む）
 
-MIT License, Copyright (c) 2026 M5Stack Technology CO LTD
+```
+MIT License
 
-[m5stack/M5Stamp-UWB](https://github.com/m5stack/M5Stamp-UWB) の Arduino ラッパー
-（`src/M5Stamp_UWB.cpp` 等）を ESP-IDF / C++ に移植して取り込む場合、このライセンス表記に従います。
-本フェーズ（Phase 1）ではまだ該当コードは追加されていません。
+Copyright (c) 2026 M5Stack Technology CO LTD
+Copyright (c) 2026 Kouhei Ito
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+このコンポーネントは [m5stack/M5Stamp-UWB](https://github.com/m5stack/M5Stamp-UWB)
+の Arduino ラッパー（`src/M5Stamp_UWB.cpp` / `M5Stamp_UWB.h` / `M5Stamp_UWB_Types.h`、MIT）を
+ESP-IDF / C++ へ移植したものを含みます。各ファイル冒頭に移植元の関数名と行番号を記載しています。
+
+ただし**制御フローの一部は Qorvo 公式 TWR リファレンス実装に合わせて書き直しており、
+M5Stack 版とは挙動が異なります**（詳細は [`docs/CRITICAL_REVIEW.md`](docs/CRITICAL_REVIEW.md)
+と [`docs/REIMPL_PLAN.md`](docs/REIMPL_PLAN.md)）。移植元と同じ動作を期待しないでください。
+
+## `components/uwb_ranging/` — MIT（本リポジトリ独自）
+
+MIT License, Copyright (c) 2026 Kouhei Ito
+
+アンカー登録テーブル・測距スケジューラ・測位パイプライン。M5Stack 由来のコードは含みません。
 
 ## それ以外（本リポジトリ独自に書かれたコード）— MIT
 
