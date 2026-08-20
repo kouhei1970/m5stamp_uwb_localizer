@@ -1,0 +1,197 @@
+# 次セッションへの申し送り (2026-08-21 時点)
+
+**このファイルを最初に読むこと。** 全体像・決定事項・落とし穴・次の一手をまとめてある。
+
+---
+
+## 0. 次セッションの任務
+
+> **確定した仕様変更に合わせて、設計変更と実装を進める**（ユーザ指示 2026-08-21）
+
+仕様は固まっているが、**実装が追いついていない**箇所がある。優先順に:
+
+| # | 仕様 | 実装状況 | やること |
+|---|---|---|---|
+| **1** | **`docs/IRQ_POLICY.md`**（IRQ 方針） | **未実装** | アンカー側に IRQ 経路を追加。**ポーリングは残す**。`pin_irq` 未接続なら自動フォールバック |
+| **2** | 同上（遅延値の扱い） | **未実装** | 遅延値を**役割 × IRQ有無のプリセット**に。**バージョン不一致の検出**（タグ/アンカーで食い違うと測距が壊れる） |
+| **3** | 役割の確定（タグ=StampFly） | **`boards/stampfly.h` が存在しない** | 新規作成。GROVE 4本=SPI、`pin_irq` 既定 UNUSED、別配線候補 G6/G8/G11 をコメントに |
+| **4** | アンカーのピン構成A/B | 未実装 | `boards/atoms3.h` に Kconfig 切替（ToF を Grove に挿すか底面に手配線するか） |
+| 5 | `docs/SURVEY_SPEC.md` の訂正 | 計算部分のみ実装 | `survey chirality` / 冗長度表示 は S3-S5（ESP-NOW）と同時 |
+| 6 | `docs/STAMPFLY_INTEGRATION.md` 案B-2 | 未着手 | 実機で測位が出てから |
+
+**1〜4 は実機なしで進められる。** 3 → 1 → 2 → 4 の順が自然
+（ボード定義が無いと IRQ 経路の条件分岐を書けないため）。
+
+---
+
+## 1. 現在地
+
+**実機未着。すべてビルド通過とホスト検証まで。実機で Device ID すら読めていない。**
+製品自体が新しく、コミュニティの実績も無い（ユーザ談）。
+
+| リポジトリ | 場所 | 状態 |
+|---|---|---|
+| **m5stack_uwb**（本体） | `/Users/kouhei/tmp/github/m5stack_uwb` | **GitHub 公開済み** `kouhei1970/m5stack_uwb` (public)。全コミット push 済み |
+| **uwb_localizer**（上流） | `/Users/kouhei/tmp/github/uwb_localizer` | ブランチ `perf/exploit-structure` を push 済み。**未マージ**。PR 未作成 |
+| stampfly_ecosystem | `third_party/stampfly_ecosystem` | 2026-08-19 の読み取り専用クローン。**書き込み禁止** |
+| M5Stamp-UWB / uwb_localizer 参照用 | `third_party/` | 読み取り専用 |
+| 一次資料（PDF/公式API） | `docs/refs/` | **`.gitignore` 済み**（再配布禁止文書を含む） |
+
+### ビルド・テストの現況（すべて通る）
+```
+firmware/{probe,devtest,twr,tag,anchor,soltest}   全て警告0・エラー0
+tools/test_pipeline    132件    tools/test_survey  281件    tools/test_uwb_loc  53件
+```
+
+---
+
+## 2. 何を作ったか
+
+```
+components/
+  qm33120w_sdk/   Qorvo ドライバ (vendoring, SPDX 保持)     ← 一次資料。信頼してよい
+  uwb_port/       dwt_spi_s / deca_sleep / mutex / GPIO     ← 自作
+  uwb_qm33120/    デバイス層 + SS/DS-TWR                     ← M5Stack 由来を大幅に修正
+  uwb_loc/        測位ソルバ Lv0-Lv3 (uwb_localizer の c/)   ← 無改造 vendoring
+  uwb_ranging/    アンカーテーブル + スケジューラ + パイプライン
+  uwb_cfgstore/   NVS 永続化 + シリアルコンソール
+  uwb_survey/     MDS + Gauss-Newton + ゲージ固定（自動測量の計算部分）
+firmware/         probe / devtest / twr / soltest / tag / anchor
+tools/            test_pipeline / test_survey / test_uwb_loc
+```
+
+**ハード依存は `uwb_port` と `uwb_ranging_scheduler` の2箇所だけ**に隔離。
+測位パイプラインと測量計算はホストで検証できる。
+
+---
+
+## 3. 確定した仕様・決定事項
+
+| # | 決定 | 文書 |
+|---|---|---|
+| 対象 | **ESP32-S3 + M5Stamp UWB Module 専用**。プラットフォーム最適化してよい。ただし StampFly には非依存 | `docs/PLAN.md` |
+| 役割 | **タグ = M5StampS3A ×1 / アンカー = AtomS3(R) ×5** | `PROGRESS.md` |
+| 接続 | **FPC ではなく半田パッド**（1.27mm キャステレーション） | `docs/SOLDER_PADS.md` |
+| **IRQ** | **アンカーは積極使用。タグは不使用。StampFly の別配線可能性は残す** | **`docs/IRQ_POLICY.md`** |
+| 資料 | **一次資料 = Qorvo SDK/UM/APS。M5Stack ラッパは二次資料で信頼しない** | **`docs/SOURCE_POLICY.md`** |
+| 測量 | 高さのみ実測(4点以上) + キラリティ1ビット。タグも6台目として参加。計算は実機上 | `docs/SURVEY_SPEC.md` |
+| StampFly統合 | **案B-2 疎結合**: Lv2 で位置を出し `EskfCore::vectorUpdate3()` で POS_X/Y 観測 | `docs/STAMPFLY_INTEGRATION.md` |
+
+### 文書の地図
+```
+README.md                    購入者の入口
+docs/GETTING_STARTED.md      BOM から測位まで11章
+docs/HANDOFF.md              ← このファイル
+docs/SOURCE_POLICY.md        資料の格付けと、過去の誤りの記録
+docs/IRQ_POLICY.md           IRQ 方針（確定版）
+docs/CRITICAL_REVIEW.md      M5Stack ラッパの批判的レビュー
+docs/REIMPL_PLAN.md          R1-R12。R1/R2/R3-1/R4/R7/R8/R9 は実装済み
+docs/SURVEY_SPEC.md          自動測量の仕様（訂正4件入り）
+docs/STAMPFLY_INTEGRATION.md StampFly 位置制御への統合（1127行）
+docs/PERF_ANALYSIS.md        測位計算の性能分析と上流最適化の結果
+docs/PLATFORM_TUNING.md      ESP32-S3 の浮動小数点・コンパイル設定
+docs/ANCHOR_PLACEMENT.md     アンカー配置ルール
+docs/SOLDER_PADS.md          パッド仕様と配線
+docs/BRINGUP.md              Phase 1 受入確認
+docs/refs/README.md          一次資料の索引
+```
+
+---
+
+## 4. 【最重要】私が犯した誤りと、そこから得た教訓
+
+**同じ失敗を繰り返さないこと。パターンは1つに集約される:
+「二次的な指標を、直接証拠より優先した」「確認せずに断定した」。**
+
+| # | 誤り | 正解 | 原因 |
+|---|---|---|---|
+| 1 | フレームフィルタ未設定は欠陥 | **Qorvo 公式 TWR 4例も使っていない** | 公式サンプルを見ずに断定 |
+| 2 | アンテナ遅延 16385 は EVB からのコピー | **APS014 が定める正規の初期値 (~513ns)** | 同上 |
+| 3 | `PGcount=0` は欠陥 | **Qorvo 公式も 0** | 同上 |
+| 4 | 操作対象はこの Mac の Chrome | **リモート接続元の別マシンだった** | API の `isLocal:true` を検証せず信用 |
+| 5 | 「同期された履歴が見えているだけ」 | 実際に別マシンへダウンロードされていた | **矛盾する直接証拠（ファイルが無い）を握りながら辻褄合わせ** |
+| 6 | StampFly の空きGPIO は G5/G10/G41/G42 | **4本ともモータPWM**（`vehicle/main/config.hpp:63-66`） | 古い M5StampFly を見て現行 vehicle を見なかった |
+| 7 | 高さ実測で鏡像が決まる | **原理的に不可能**（線形汎関数はキラリティを検出できない） | 数学を検証せず仕様に書いた |
+| 8 | `uwb_sym_eig()` が使える | **未マージ上流にしか無い** | 自分が書いた別ブランチの成果と混同 |
+| 9 | 高さ3点で傾きが決まる | **4点以上必要** | 同上 |
+| 10 | 単位を `Uus`→`Us` にリネームすべき | **M5Stack の単位系は正しかった。誤称は Qorvo 側** | SDK の記述を読む前に計画を書いた |
+| 11 | 公式ピンマップと文書が8箇所違う | **パッドと FPC で並びが違うだけ。両方正しい** | 番号付きの帯をパッド番号と決めつけた |
+
+### 運用ルール（`docs/SOURCE_POLICY.md` に詳細）
+1. **フラグ・メタデータより直接観測できる事実を優先する**
+2. **矛盾する証拠が出たら辻褄を合わせず前提を疑う**
+3. **`grep` が0件なら、まずファイルが読めているか疑う**
+   （**Qorvo 公式サンプルの `.c` は非UTF-8。`grep -a` か `iconv` 必須**。この罠で誤結論を出しかけた）
+4. **「SDK に API があるのに使っていない」は、それだけでは欠陥の根拠にならない**
+5. **入手資料は独立経路で再取得してハッシュ照合する**（実施済み、主要6件一致）
+
+### ブラウザ自動化は使わない
+セッション中、`mcp__claude-in-chrome__*` がユーザの意図しない**リモート接続元マシンの
+Chrome** を操作する事故を起こした。**本プロジェクトでは以後一切使わない。**
+Web 取得は `WebFetch` / `curl` に限定し、サブエージェントにも明示的に禁止すること。
+
+---
+
+## 5. 次にやること
+
+### すぐ着手できる（実機不要）
+| # | 内容 | 備考 |
+|---|---|---|
+| **A** | **`boards/stampfly.h` の作成** | GROVE 4本(G13/G15/G1/G2)=SPI、`pin_irq` は既定 UNUSED。別配線候補 G6/G8/G11 をコメントに |
+| B | `boards/atoms3.h` に構成A/B の Kconfig 切替 | ToF を Grove に挿すか底面に手配線するか |
+| C | 遅延プリセット化 + バージョン不一致検出 | **タグとアンカーで遅延値が食い違うと測距が壊れる**。実運用で必ず踏む |
+| D | `firmware/twr` の `spi_fast_hz` / アンカーアドレスを Kconfig 化 | 切り分けの最頻出項目 |
+| E | `RangingScheduler::stats()` を tag の JSON に接続 | 「どのアンカーが悪いか」は最初に知りたい情報 |
+| F | `RangingSample` に絶対タイムスタンプ追加 | 周内スミア対策（1周32ms → ±16ms、1m/s で 16mm） |
+
+### 実機が要る
+| # | 内容 |
+|---|---|
+| **Phase 1 受入** | `firmware/probe` で Device ID `0xDECA0314`。**ピン配線が未検証なのでここが最初の関門** |
+| R5 | 遅延値の追い込み（公式手順: `dwt_starttx()` が `DWT_ERROR` を返すまで下げる） |
+| R6 | **アンカー側の** IRQ 駆動化 |
+| R10-R12 | ch9 の PLL 再校正(20°Cごと)、アンテナ遅延校正、診断情報→測位重み |
+| S3-S5 | ESP-NOW、測量モード、コーディネータ |
+| S7 | I2C ToF（高さ自動計測） |
+
+### ユーザ判断待ち
+- **`uwb_localizer` の `perf/exploit-structure` をマージするか**
+  → マージされたら `components/uwb_loc/` を再 vendoring（測位計算が3〜5倍速い）
+  → `uwb_survey` の自前 Jacobi も上流の `uwb_sym_eig()` に寄せられる
+- 上流の pytest 1件失敗（`test_self_survey_with_noise_and_missing_links[1]`）
+  → テストの基準アンカーが同一平面。テスト側の問題
+- デフォルトブランチが `master`。`main` に変えるか
+
+---
+
+## 6. 落とし穴（踏むと時間を失う）
+
+1. **Qorvo 公式サンプルの `.c` は latin-1。`grep -a` を使うこと**
+2. **`UUS_TO_DWT_TIME` は DW1000=65536 / DW3000公式=63898。**
+   Qorvo の `*_UUS` 定数は実は実マイクロ秒。そのまま流用すると2.5%ずれる
+3. **ESP-IDF ビルドとホスト `make strict` は警告設定が違う。**
+   `uwb_survey.c` が `-Werror=maybe-uninitialized` で落ちた実例あり。
+   **新規コンポーネントは必ず `idf.py build` も通すこと**
+4. **シェルの cwd が持続する。** `cd firmware/anchor` した後に `cat >> PROGRESS.md` して
+   迷子ファイルを作った実例あり。**絶対パスを使うこと**
+5. **`sdkconfig` は `.gitignore` 済み。** `sed` で書き換える手順を書いてはいけない。
+   `-D SDKCONFIG=build/xxx/sdkconfig` 方式を使う（`GETTING_STARTED.md` に検証済みの手順あり）
+6. **`components/uwb_loc/` は上流と byte 一致を保っている。** 直接編集しないこと
+7. サブエージェントに Web 調査を任せるときは**取得手段を明示的に限定する**
+
+---
+
+## 7. 数字の要約（実機で最初に検証すべきもの）
+
+| 項目 | 値 | 出典 |
+|---|---|---|
+| 測位レート（現状・5アンカー） | **31.3 Hz**（1周 31.9ms） | `STAMPFLY_INTEGRATION.md` |
+| 同（アンカーのみ IRQ） | **59.4 Hz** | 同上 |
+| StampFly 位置制御の実効帯域 | **約 0.064 Hz**（`pos.kp=0.4`） | `params.cpp:771` |
+| アンカー座標の推定誤差（σ=5cm時） | RMS 5cm / 最悪 25cm | `test_survey` |
+| 共通アンテナ遅延の推定誤差 | 平均 1.5cm | 同上 |
+| **無校正のアンテナ遅延バイアス** | **Δ1ns = 30cm** | APS014 |
+| ESP32-S3 の float | 加減乗と `madd.s` はハード、**除算と sqrt はソフト** | 逆アセンブルで確認 |
+
+**StampFly の ESKF には POS_X/POS_Y を直接観測する update 関数が1つも無く、
+水平位置は速度の積分だけ（実質デッドレコニング）。UWB が埋めるのはそこ。**
