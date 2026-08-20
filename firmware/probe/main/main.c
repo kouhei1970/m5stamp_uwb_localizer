@@ -1,7 +1,7 @@
 /**
  * @file main.c
  * @brief Phase 1 acceptance test: verify SPI connectivity to the Qorvo
- *        QM33120W/DW3720 (M5Stack Stamp UWB-F) over components/uwb_port,
+ *        QM33120W/DW3720 (M5Stack M5Stamp UWB Module with FPC) over components/uwb_port,
  *        via two independent checks (L1: raw SPI DEV_ID read, L2:
  *        dwt_probe()+dwt_readdevid()), mirroring
  *        third_party/M5Stamp-UWB/src/M5Stamp_UWB.cpp's begin()/probe().

@@ -1,13 +1,13 @@
-# 調査3: M5Stack Stamp UWB-F ハードウェア仕様 (2026-08-19)
+# 調査3: M5Stack M5Stamp UWB Module with FPC ハードウェア仕様 (2026-08-19)
 
 ## 結論（計画の要）
-**Stamp UWB-F は SPI 直結専用。UART/AT コマンド方式は存在しない。**
+**M5Stamp UWB Module with FPC は SPI 直結専用。UART/AT コマンド方式は存在しない。**
 コネクタは **HY2.0-4P GROVE ではなく 0.5mm ピッチ 12P FPC**。
 
 ## チップ
 - **Qorvo QM33120W**（QM33120WTR13, WLCSP52, 3.1x3.5mm）
 - IEEE 802.15.4-2020 / 802.15.4z-2020 (BPRF)、ch5/ch9 対応
-  （Stamp UWB-F は **ch9 固定運用**、中心周波数 7987.2MHz）
+  （M5Stamp UWB Module with FPC は **ch9 固定運用**、中心周波数 7987.2MHz）
 - 公式ドライバソースに `dw3720_device.c` / `dw3720_deca_regs.h` があり、
   デバイスID は `0xDECA0314` を返す → **DW3720 系レジスタ体系を継承**
   （Qorvo は Decawave を買収。既存 DW3000 系の知見がそのまま効く）
@@ -28,14 +28,26 @@
 ### 注意: 「Unit UWB」との混同厳禁
 M5Stack の**別製品**「Unit UWB」(SKU U100) は UART+AT コマンド方式
 （STM32F103 + Ai-Thinker BU01 = DW1000ベース、115200bps、`AT+switchdis=` 等）。
-**Stamp UWB-F とは別チップ・別I/F。** uwb_localizer が対応する RYUW122 も AT 型。
+**M5Stamp UWB Module with FPC とは別チップ・別I/F。** uwb_localizer が対応する RYUW122 も AT 型。
 → 本件では **AT コマンド資産は一切使えない**。
 
-## ピンアサイン（モジュール側 12P FPC / 公式回路図 PINMAP）
+## ピンアサイン
+
+![公式ピンマップ](../assets/S017_Stamp_UWB_pinmap.jpg)
+
+**重要: 半田パッドと FPC ケーブルでは信号の並びが違う。**
+公式ピンマップの「側面ラベル」がパッド、「下部の番号付きの帯」が FPC ケーブルを表す。
+混同すると配線を間違えるので、必ず使う側の表を見ること。
+
+### (A) 半田パッド（キャステレーションホール）— **本プロジェクトはこちらを使う**
+
+KiCad フットプリント（`docs/refs/m5_hardware/Stamp_UWB.kicad_mod`）の座標と
+公式ピンマップの側面ラベルの両方で確認済み。
+
 | Pin | 信号 | 用途 |
 |---|---|---|
 | 1 | GND | |
-| 2 | VCC_3V3 | **電源 3.3V 単一** |
+| 2 | 3V3 | **電源 3.3V 単一** |
 | 3 | DW_WAKEUP | ウェイクアップ制御 |
 | 4 | DW_IRQ | 割り込み出力 |
 | 5 | DW_GP7 | チップGPIO7/SYNC 相当（予備） |
@@ -46,6 +58,35 @@ M5Stack の**別製品**「Unit UWB」(SKU U100) は UART+AT コマンド方式
 | 10 | DW_CSn | SPI CS |
 | 11 | DW_CLK | SPI SCK |
 | 12 | GND | |
+
+**物理配置（番号は反時計回り）**
+```
+左列 上→下 = 1 2 3 4 5 6        右列 上→下 = 12 11 10 9 8 7
+つまり pin 7 は pin 1 の対面ではなく pin 6 の対面
+```
+KiCad の実測値: pad1 (-5.9, -2.95) / pad6 (-5.9, 3.4) / pad7 (6.1, 3.4) / pad12 (6.1, -2.95)
+（KiCad は +y が下向き）。ピッチ 1.27mm、列間 12.0mm。
+
+### (B) FPC ケーブル（0.5mm 12P）— パッドとは並びが違う
+
+公式ピンマップ下部の番号付きの帯。緑の矢印が「12 ← 1」の向きを示す。
+
+| Pin | 信号 |
+|---|---|
+| 1 | 3V3 |
+| 2 | 3V3 |
+| 3 | GP7 |
+| 4 | IRQ |
+| 5 | WAKEUP |
+| 6 | RSTn |
+| 7 | GND |
+| 8 | MISO |
+| 9 | MOSI |
+| 10 | CSn |
+| 11 | GND |
+| 12 | CLK |
+
+**パッドは GND×3 / 3V3×1、FPC は GND×2 / 3V3×2** と本数も異なる。
 
 **ホスト側に必要な信号線: 最低 4本 (SCK/MOSI/MISO/CS)。
 推奨 +2本 (IRQ/RSTn)、省電力運用なら +1本 (WAKEUP)。**
@@ -79,7 +120,7 @@ GP7=G23, IRQ=G0, WAKEUP=G24, RSTn=G25, MISO=G26, MOSI=G27, CSn=G11, SCK=G12
 - `M5Stamp_UWBPHYConfig` でチャネル・プリアンブル長・PAC・SFD・データレート・STS・PDoA
   ・TX電力・**アンテナ遅延**を設定可能
 
-## Stamp UWB (無印 S017) との違い
+## M5Stamp UWB Module (無印 S017) との違い
 コネクタ実装の有無のみ。電気仕様・チップ・ピン配置・ライブラリは同一。
 - S017: FPC 12P コネクタ未実装（パッドのみ）、$23.50
 - **S017-F: FPC コネクタ実装済み + FPCケーブル同梱、$24.50**

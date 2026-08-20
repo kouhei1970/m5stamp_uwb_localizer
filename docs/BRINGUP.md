@@ -2,7 +2,12 @@
 
 ## この文書の位置づけ
 
-**`firmware/probe` を書き込み、Stamp UWB-F の Device ID `0xDECA0314` が読めることを
+![公式ピンマップ](../assets/S017_Stamp_UWB_pinmap.jpg)
+
+**半田パッドと FPC ケーブルは信号の並びが違う。** 側面ラベルがパッド、下部の帯が FPC。
+
+
+**`firmware/probe` を書き込み、M5Stamp UWB Module with FPC の Device ID `0xDECA0314` が読めることを
 確認する** ——ここだけに絞った受入確認手順です。
 これが通れば、以降の TWR 移植（Phase 2）はソフトウェアだけの話になります。
 
@@ -10,7 +15,7 @@
 |---|---|
 | **買ってから測位が出るまでの通し手順**（配線・5 台への書き込み・座標入力・測位・校正） | **[`GETTING_STARTED.md`](GETTING_STARTED.md)** |
 | **半田パッドの寸法・向きの確定・半田付け手順・アンテナ禁止領域** | [`SOLDER_PADS.md`](SOLDER_PADS.md) |
-| モジュールのハードウェア仕様 | [`SURVEY_stamp_uwb_f.md`](SURVEY_stamp_uwb_f.md) |
+| モジュールのハードウェア仕様 | [`SURVEY_m5stamp_uwb_module.md`](SURVEY_m5stamp_uwb_module.md) |
 | **Phase 1 の受入確認そのもの** | **本書** |
 
 ---
@@ -18,7 +23,7 @@
 ## 用意するもの
 
 - **M5Stamp S3** または **M5 AtomS3**（ESP32-S3 ホストボード）
-- **M5Stack Stamp UWB-F**（無印 `S017` / FPC コネクタ実装済み `S017-F` のどちらでも可）
+- **M5Stamp UWB Module with FPC**（無印 `S017` / FPC コネクタ実装済み `S017-F` のどちらでも可）
 - 接続手段（下記）
 - **3.3V 電源**（モジュールは 3.3V 単一供給。**5V は入れないこと**）
 - ESP-IDF **v5.5.2**

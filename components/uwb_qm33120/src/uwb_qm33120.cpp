@@ -224,7 +224,7 @@ bool isValidChannel(Channel channel)
  * 191-198）が `config_options.chan == 5` で切り替えて dwt_configuretxrf() に
  * 渡している実際の値そのもの。ここではその値をチャネルで切り替えて返す。
  *
- * 【Stamp UWB-F の実運用】docs/SURVEY_stamp_uwb_f.md より本機は ch9 固定
+ * 【M5Stamp UWB Module with FPC の実運用】docs/SURVEY_m5stamp_uwb_module.md より本機は ch9 固定
  * 運用（既定値もch9用）。Channel enum は将来の別ボード/実験用に残してあり、
  * Channel5 を明示選択した場合も正しい ch5 用TX設定が適用されるようにする
  * （enum を削って握り潰すより、正直に両対応させる方を選んだ。R7選択肢(b)）。

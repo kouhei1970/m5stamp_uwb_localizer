@@ -554,7 +554,11 @@ static int escape_local_minima(survey_ctx *c, uwb_real *f, int *iters, uwb_real 
  * 落としたら 1、落とさなかったら 0。 */
 static int drop_worst_link(survey_ctx *c, const uwb_real *f, unsigned long *excluded)
 {
-    uwb_real ar[LMAX], med, thr, worst = (uwb_real)-1;
+    /* ar は下のループで m 個だけ埋めてから ar[0..m-1] しか読まないが、
+     * GCC はそれを証明できず -Werror=maybe-uninitialized で落ちる
+     * (ESP-IDF のビルド設定。ホストの make strict では出ない)。
+     * 設置時に1回だけ走る関数なので、素直にゼロ初期化する。 */
+    uwb_real ar[LMAX] = {(uwb_real)0}, med, thr, worst = (uwb_real)-1;
     int      deg[NMAX];
     int      k, i, j, m = 0, wk = -1, need;
 

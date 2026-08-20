@@ -1,6 +1,6 @@
 # m5stack_uwb
 
-**M5Stack Stamp UWB-F**（Qorvo QM33120W / DW3720 搭載の UWB モジュール）を
+**M5Stamp UWB Module with FPC (QM33120W)**（Qorvo QM33120W = DW3720 系を搭載）を
 **ESP32-S3 ホストボード**から ESP-IDF で使うための、**測距 + 測位スタック**です。
 
 タグ 1 台とアンカー 4 台以上で、**屋内の 3 次元位置**を求めて JSON Lines で吐きます。
@@ -59,7 +59,7 @@ StampFly（マルチコプター機体）には依存しない汎用のスタッ
 
 | 品目 | 数量 | 役割 |
 |---|---:|---|
-| [M5Stack Stamp UWB-F](https://docs.m5stack.com/en/stamp/Stamp_UWB_F)（SKU `S017-F` / 無印 `S017` も可） | **6** | UWB モジュール |
+| [M5Stamp UWB Module with FPC (QM33120W)](https://docs.m5stack.com/en/stamp/Stamp_UWB_F) （SKU `S017-F`）<br>または [M5Stamp UWB Module (QM33120W)](https://docs.m5stack.com/en/stamp/Stamp_UWB) （SKU `S017`） | **6** | UWB モジュール。**半田パッドを使うのでどちらでもよい** |
 | [M5Stamp S3](https://docs.m5stack.com/en/core/StampS3) | **1** | タグ（移動体）のホスト |
 | [M5 AtomS3](https://docs.m5stack.com/en/core/AtomS3) | **5** | アンカー（固定局）のホスト |
 
@@ -201,7 +201,7 @@ firmware/tag ──┬─ uwb_ranging ─┬─ uwb_loc          （ハード非
 
 ---
 
-## 主なハードウェア仕様（Stamp UWB-F）
+## 主なハードウェア仕様（M5Stamp UWB Module (QM33120W) 系）
 
 | 項目 | 値 |
 |---|---|
@@ -216,7 +216,7 @@ firmware/tag ──┬─ uwb_ranging ─┬─ uwb_loc          （ハード非
 > **M5Stack の別製品「Unit UWB」(SKU U100) とは別物です。**
 > あちらは UART + AT コマンド方式（DW1000 ベース）で、本リポジトリのコードは使えません。
 
-詳細は [`docs/SURVEY_stamp_uwb_f.md`](docs/SURVEY_stamp_uwb_f.md)。
+詳細は [`docs/SURVEY_m5stamp_uwb_module.md`](docs/SURVEY_m5stamp_uwb_module.md)。
 
 ---
 
