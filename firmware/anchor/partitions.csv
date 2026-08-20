@@ -1,0 +1,18 @@
+# firmware/anchor のパーティションテーブル
+#
+# 設定を NVS へ永続化する（components/uwb_cfgstore）ので **nvs パーティションが必須**。
+# ESP-IDF 既定の partitions_singleapp.csv にも nvs は含まれているため配置は
+# それと同一にしてあるが、「nvs が要る」ことをリポジトリ内で明示するために
+# 独自ファイルとして持つ（CONFIG_PARTITION_TABLE_CUSTOM=y、sdkconfig.defaults 参照）。
+#
+# 現状のアプリサイズは約 300KB で、factory の 1M に十分収まる
+# （CONFIG_ESPTOOLPY_FLASHSIZE は 2MB なので 0x10000+1M=0x110000 で余裕がある）。
+#
+# nvs の 0x6000 (24KB) は本プロジェクトの用途（アンカー1件ぶんのアドレス、
+# 20バイト）に対して桁違いに大きいが、NVS は摩耗平準化のために複数ページを
+# 使うので既定値より小さくしないこと。
+#
+# Name,     Type, SubType, Offset,   Size,  Flags
+nvs,        data, nvs,     0x9000,   0x6000,
+phy_init,   data, phy,     0xf000,   0x1000,
+factory,    app,  factory, 0x10000,  1M,

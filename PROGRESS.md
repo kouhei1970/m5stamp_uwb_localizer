@@ -844,3 +844,63 @@ compile_commands.json で確認）:
 - `CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_ENABLE` は**変更していない**（安全性設定なので判断保留）
 - int32 の除算・乗算がハードかソフトか未確認（参考値として断定せずに出力）
 - メモリベンチのオーバーヘッド差し引きは、フラットループの値をネストループへ流用する近似
+
+---
+
+## 実行時設定（NVS + シリアルコンソール）を追加 (2026-08-20)
+
+`docs/GETTING_STARTED.md` を書いた結果、**購入者が実機で最も繰り返す作業が
+ビルド時定数になっていて手順が煩雑**と判明したため、実機到着前に潰した。
+
+| 対象 | 変更前 | 変更後 |
+|---|---|---|
+| アンカーのアドレス | Kconfig。5台に焼くのに menuconfig→build→flash を5回 | `addr set 0x0003` / `save` / `reboot` |
+| アンカー座標テーブル | `kAnchors[]` 定数。数cm直すたびに再ビルド | `anchor set 0 0x0002 0.0 0.0 2.4` / `save` |
+
+### 成果物
+- `components/uwb_cfgstore/`（962行）
+  - `uwb_cfgstore_blob.{hpp,cpp}`（541行）… **ESP-IDF 非依存**のバイト列形式。ホストで検証可能
+  - `uwb_cfgstore.{hpp,cpp}`（392行）… NVS 層とフォールバック判断
+- `firmware/anchor/main/anchor_console.{hpp,cpp}`（495行）
+- `firmware/tag/main/tag_console.{hpp,cpp}`（834行）
+- `firmware/{anchor,tag}/partitions.csv`（配置は ESP-IDF 既定と同一。nvs 必須を明示するため）
+
+### 後方互換
+- **NVS が空・未初期化・破損のいずれでも既定値にフォールバックして起動を継続**
+- Kconfig の `UWB_ANCHOR_SHORT_ADDR` と `kAnchors[]` は「NVS が空のときの初期値」として存置
+- コンソールを無効化する Kconfig あり（ただし NVS 分の +10〜11KB は残る）
+
+### 測位ループとコンソールの同時実行
+**編集用シャドウコピー + 1周期境界での差し替え**（片方向の二重バッファ）を採用。
+- コンソールは編集用コピーだけを書き換えて `pending` を立てる
+- 測位ループは**周期の先頭**で `takePendingTable()` を呼び、変更があればそこで `AnchorTable::set()`
+- ミューテックスが守るのは数百バイトの memcpy のみ。測距・測位・JSON 出力中はロックを持たない
+- 理由: `uwb_config.anchors` は内部記憶域を指すので、`set()` 中にソルバから読まれると
+  `n_anchors` と実体が食い違う。「測位が走っていない瞬間にしか差し替えない」を構造で保証した
+
+### 検証
+- 全6ファーム クリアビルド **警告0・エラー0**
+- ホストテスト **132件**（従来53 + シリアライズ検算79）。`make strict` も通過
+  - 往復、境界値、**破損データ**（全0/全0xFF の未初期化フラッシュ、CRC 1ビット化け、
+    版違い、件数改ざん、NaN/Inf、桁違い座標）
+- バイナリ: tag 0x59020 (364KB) / anchor 0x52520 (337KB)。1M パーティションに対し 33〜35%
+
+### 実装中に潰した既存バグ
+- **`app_main` のスタック枯渇リスク**。`CONFIG_ESP_MAIN_TASK_STACK_SIZE` が 3584 なのに
+  JSON バッファ 2KB×2 + `PositioningPipeline`（内部 `uwb_ekf` だけで約1KB）+ `AnchorTable`
+  が同一フレームにあった。JSON バッファを単一 static に、他を `.bss` へ移動（出力は不変）
+
+### 判断のログ
+- **argtable3 は使わなかった。** 位置引数の解析が内部で `getopt_long` を通るため、
+  `-1.5` が `-1 -. -5` の不正オプション扱いになる（ホストで再現確認済み）。
+  座標もアンテナ遅延も負値を取るので、`argtable=nullptr` にして argc/argv を直接見る形にした。
+  linenoise の行編集・履歴・`help`・dispatch は console コンポーネントのまま使用
+- **`CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y` に変更。** 既定（UART0 が一次）だと
+  `esp_console_new_repl_usb_serial_jtag()` の宣言が出ずキー入力を受け取れない。
+  UART0(GPIO43/44) への出力は失われるが、これらのボードでは何も繋がっていない
+- タグの JSON 出力が毎周期流れると設定作業ができないので `output on|off` を追加
+
+### 実機が無いため未検証
+- NVS への実際の読み書き（ホストで検証したのは「NVS に置くバイト列」の層まで）
+- USB-Serial/JTAG 上の REPL が実機で動くか（linenoise の端末制御、`idf.py monitor` との相性）
+- 設定変更中に測距・測位が途切れないか

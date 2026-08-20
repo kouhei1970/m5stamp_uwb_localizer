@@ -19,7 +19,8 @@
 #
 #   make            既定値 (UWB_MAX_ANCHORS=8 / UWB_MAX_MEAS=8) でビルド
 #   make test       同上でビルドしてテスト実行（uwb_ranging 6シナリオ +
-#                    uwb_qm33120_units R1/R8 検算）
+#                    uwb_qm33120_units R1/R8 検算 + uwb_cfgstore の
+#                    シリアライズ往復・境界値・破損データ検算）
 #   make strict     -Wall -Wextra -Werror -pedantic で通るか見る
 #   make clean
 
@@ -35,12 +36,14 @@ ROOT         = ../..
 UWB_LOC_DIR  = $(ROOT)/components/uwb_loc
 RANGING_DIR  = $(ROOT)/components/uwb_ranging
 QM33120_DIR  = $(ROOT)/components/uwb_qm33120
+CFGSTORE_DIR = $(ROOT)/components/uwb_cfgstore
 
 # Kconfig の既定 (components/uwb_loc/Kconfig) と揃えた値。
 ANCHORS8_DEFS = -DUWB_MAX_ANCHORS=8 -DUWB_MAX_MEAS=8
 DEFS ?= $(ANCHORS8_DEFS)
 
-INCLUDES = -I$(UWB_LOC_DIR)/include -I$(UWB_LOC_DIR)/src -I$(RANGING_DIR)/include -I$(QM33120_DIR)/include
+INCLUDES = -I$(UWB_LOC_DIR)/include -I$(UWB_LOC_DIR)/src -I$(RANGING_DIR)/include \
+           -I$(QM33120_DIR)/include -I$(CFGSTORE_DIR)/include
 
 C_SRC = $(UWB_LOC_DIR)/src/uwb_linalg.c \
         $(UWB_LOC_DIR)/src/uwb_model.c \
@@ -51,9 +54,16 @@ C_SRC = $(UWB_LOC_DIR)/src/uwb_linalg.c \
 CXX_SRC = $(RANGING_DIR)/src/uwb_ranging_anchor_table.cpp \
           $(RANGING_DIR)/src/uwb_ranging_pipeline.cpp
 
+# components/uwb_cfgstore のハード非依存部分（設定のシリアライズ/デシリアライズ）。
+# NVS 入出力（src/uwb_cfgstore.cpp）は ESP-IDF 依存なので**含めない** —
+# ここで検証したいのはバイト列の往復・境界値・壊れたデータの扱いであって、
+# フラッシュの読み書きそのものではない（実機が無い段階で検証できるのはここまで）。
+CFGSTORE_SRC = $(CFGSTORE_DIR)/src/uwb_cfgstore_blob.cpp
+
 BUILD = build
 C_OBJ   = $(patsubst $(UWB_LOC_DIR)/src/%.c,$(BUILD)/%.o,$(C_SRC))
 CXX_OBJ = $(patsubst $(RANGING_DIR)/src/%.cpp,$(BUILD)/%.o,$(CXX_SRC))
+CFGSTORE_OBJ = $(patsubst $(CFGSTORE_DIR)/src/%.cpp,$(BUILD)/%.o,$(CFGSTORE_SRC))
 TEST_OBJ = $(BUILD)/test_pipeline.o
 TEST_BIN = $(BUILD)/test_pipeline
 
@@ -70,10 +80,13 @@ $(BUILD)/%.o: $(UWB_LOC_DIR)/src/%.c | $(BUILD)
 $(BUILD)/%.o: $(RANGING_DIR)/src/%.cpp | $(BUILD)
 	$(CXX) $(CXXFLAGS) $(WARN_CXX) $(DEFS) $(INCLUDES) -c $< -o $@
 
+$(BUILD)/%.o: $(CFGSTORE_DIR)/src/%.cpp | $(BUILD)
+	$(CXX) $(CXXFLAGS) $(WARN_CXX) $(DEFS) $(INCLUDES) -c $< -o $@
+
 $(TEST_OBJ): test_pipeline.cpp | $(BUILD)
 	$(CXX) $(CXXFLAGS) $(WARN_CXX) $(DEFS) $(INCLUDES) -c $< -o $@
 
-$(TEST_BIN): $(C_OBJ) $(CXX_OBJ) $(TEST_OBJ)
+$(TEST_BIN): $(C_OBJ) $(CXX_OBJ) $(CFGSTORE_OBJ) $(TEST_OBJ)
 	$(CXX) $(CXXFLAGS) $^ $(LDLIBS) -o $@
 
 test: $(TEST_BIN)

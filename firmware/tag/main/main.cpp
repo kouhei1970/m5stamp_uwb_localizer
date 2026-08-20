@@ -23,6 +23,16 @@
  * 等のプレフィックスが付き先頭が '{' にならないため、JsonLinesHal 側で
  * 「JSONでない行」として読み捨てられるだけで実害は無いが、ここでは診断用の
  * 通常ログ(ESP_LOGx)とデータ行(printf)を意図的に分けている）。
+ *
+ * アンカー登録テーブルは **NVS に保存された値を優先し、無ければ下の
+ * kAnchors[] を既定値として使う**（components/uwb_cfgstore）。NVSが空・
+ * 未初期化・破損のいずれでも必ず kAnchors[] へフォールバックするので、
+ * 購入者が何も設定しなければ従来どおり動く。実行時の変更は
+ * USB-Serial/JTAG 上のシリアルコンソール（tag_console.cpp、
+ * CONFIG_UWB_TAG_CONSOLE で無効化可）から anchor set / save で行う。
+ * これにより「座標を数cm直すたびに再ビルド・再書き込み」が不要になる。
+ * 測位ループとコンソールの同時実行の解き方は tag_console.hpp の
+ * 冒頭コメントを参照。
  */
 #include <cmath>
 #include <cstdarg>
@@ -33,12 +43,17 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include "uwb_cfgstore.hpp"
 #include "uwb_port.h"
 #include "uwb_qm33120.hpp"
 #include "uwb_ranging_anchor_table.hpp"
 #include "uwb_ranging_pipeline.hpp"
 #include "uwb_ranging_scheduler.hpp"
 #include "uwb_ranging_types.hpp"
+
+#if CONFIG_UWB_TAG_CONSOLE
+#include "tag_console.hpp"
+#endif
 
 #if CONFIG_UWB_TAG_BOARD_ATOMS3
 #include "boards/atoms3.h"
@@ -65,17 +80,26 @@ static constexpr uint16_t PAN_ID          = 0xDECA;
 static constexpr uint16_t TAG_SHORT_ADDR = 0x0001;
 
 /**
- * アンカー登録テーブル（コンパイル時定数。NVS化は将来課題）。
+ * アンカー登録テーブルの **既定値**（NVSが空のときに使われる値）。
  *
  * ============================================================
- * 暫定値。実配置の実測座標に置き換えること（boards 配下のヘッダと同様、
- * ここに書かれている座標は未確定のプレースホルダ）。
+ * 暫定値。**通常はここを書き換えず**、シリアルコンソールから
+ *     anchor set 0 0x0002 0.0 0.0 2.4
+ *     save
+ * のように実測座標を入れること（docs/GETTING_STARTED.md §7）。
+ * ここを直す方法は、コンソールを使わない場合の代替手段として残してある。
  * ============================================================
  *
- * short_addr は firmware/anchor の Kconfig (UWB_ANCHOR_SHORT_ADDR) で
- * 各アンカー実機に書き込む値と一致させる。docs/ANCHOR_PLACEMENT.md の
- * 配置ルールに従い、非同一平面（高さを最低1台は変える）にしてあり、かつ
- * アンカー平面がワールド原点(z=0)を通らないよう最低高さを 0.2m にしてある。
+ * 起動時は uwb::ConfigStore::loadAnchorTable() が NVS を読み、保存された
+ * テーブルがあればそちらを採用する。NVSが空・未初期化・破損・値が異常の
+ * いずれの場合もこの配列へフォールバックするので、何も設定しなくても
+ * 従来どおり動く。
+ *
+ * short_addr は各アンカー実機のショートアドレス（firmware/anchor で
+ * addr set したもの、または Kconfig UWB_ANCHOR_SHORT_ADDR の既定値）と
+ * 一致させる。docs/ANCHOR_PLACEMENT.md の配置ルールに従い、非同一平面
+ * （高さを最低1台は変える）にしてあり、かつアンカー平面がワールド原点
+ * (z=0)を通らないよう最低高さを 0.2m にしてある。
  */
 static const uwb::AnchorEntry kAnchors[] = {
     {0x0002, {0.0f, 0.0f, 2.4f}, 0.0f, true},
@@ -117,6 +141,34 @@ static uwb::Config makeConfigFromBoard()
 #define JSON_BUF_SIZE 2048
 
 /**
+ * @brief JSON 1行ぶんの組み立てバッファ。
+ *
+ * **測位ループのタスクからしか使わない**（コンソールのタスクは触らない）ので
+ * static にしてよい。スタックではなく .bss に置くのは、app_main のタスク
+ * スタック（CONFIG_ESP_MAIN_TASK_STACK_SIZE、既定 3584 バイト）に 2KB の
+ * 配列を 2 つ積むと、AnchorTable / PositioningPipeline（内部に uwb_ekf を
+ * 持つ）と合わせて余裕が無くなるため。コンソール追加とは独立した安全側の
+ * 変更で、出力される JSON の内容は従来と同一。
+ */
+static char g_jsonBuf[JSON_BUF_SIZE];
+
+/**
+ * @brief JSON Lines を出力してよいか。
+ *
+ * コンソール有効時は output コマンドで一時的に止められる（毎周期2行のJSONが
+ * 流れているとコンソールで設定作業ができないため）。無効時は常に true を返す
+ * 定数関数になり、従来と全く同じ動作になる。
+ */
+static inline bool jsonOutputEnabled()
+{
+#if CONFIG_UWB_TAG_CONSOLE
+    return tagapp::jsonOutputEnabled();
+#else
+    return true;
+#endif
+}
+
+/**
  * @brief バッファ範囲を超えない vsnprintf ラッパ。*off を書き込み後の位置に進める。
  * 途中で切り詰められても（バッファが足りなくなっても）以降の呼び出しは
  * 安全に無視される（off が cap を超えないようにクランプする）。
@@ -149,20 +201,23 @@ static void formatAnchorId(uint16_t shortAddr, char* out, size_t outSize)
 /** 起動時に1回だけ出す "type":"anchors" 行。 */
 static void printAnchorsLine(const uwb::AnchorTable& table)
 {
-    char buf[JSON_BUF_SIZE];
-    size_t off = 0;
-    jsonAppend(buf, sizeof(buf), &off, "{\"v\":1,\"type\":\"anchors\",\"anchors\":[");
+    if (!jsonOutputEnabled()) {
+        return;
+    }
+    char* const buf = g_jsonBuf;
+    size_t off      = 0;
+    jsonAppend(buf, JSON_BUF_SIZE, &off, "{\"v\":1,\"type\":\"anchors\",\"anchors\":[");
     for (size_t i = 0; i < table.size(); ++i) {
         const uwb::AnchorEntry& e = table.entry(i);
         char id[8];
         formatAnchorId(e.short_addr, id, sizeof(id));
-        jsonAppend(buf, sizeof(buf), &off,
+        jsonAppend(buf, JSON_BUF_SIZE, &off,
                    "%s{\"id\":\"%s\",\"p\":[%.4f,%.4f,%.4f],\"antenna_delay_m\":%.4f,\"enabled\":%s}",
                    (i == 0) ? "" : ",", id, static_cast<double>(e.pos[0]), static_cast<double>(e.pos[1]),
                    static_cast<double>(e.pos[2]), static_cast<double>(e.antenna_delay_m),
                    e.enabled ? "true" : "false");
     }
-    jsonAppend(buf, sizeof(buf), &off, "]}\n");
+    jsonAppend(buf, JSON_BUF_SIZE, &off, "]}\n");
     std::fputs(buf, stdout);
 }
 
@@ -171,9 +226,12 @@ static void printAnchorsLine(const uwb::AnchorTable& table)
 static void printMeasLine(double t, const uwb::AnchorTable& table, const uwb::RangingSample* samples,
                            size_t n)
 {
-    char buf[JSON_BUF_SIZE];
-    size_t off = 0;
-    jsonAppend(buf, sizeof(buf), &off, "{\"v\":1,\"type\":\"meas\",\"t\":%.3f,\"tag\":\"tag0\",\"meas\":[",
+    if (!jsonOutputEnabled()) {
+        return;
+    }
+    char* const buf = g_jsonBuf;
+    size_t off      = 0;
+    jsonAppend(buf, JSON_BUF_SIZE, &off, "{\"v\":1,\"type\":\"meas\",\"t\":%.3f,\"tag\":\"tag0\",\"meas\":[",
                t);
     bool first = true;
     for (size_t i = 0; i < n; ++i) {
@@ -182,11 +240,11 @@ static void printMeasLine(double t, const uwb::AnchorTable& table, const uwb::Ra
         }
         char id[8];
         formatAnchorId(table.entry(samples[i].anchor_index).short_addr, id, sizeof(id));
-        jsonAppend(buf, sizeof(buf), &off, "%s{\"a\":\"%s\",\"d\":%.4f}", first ? "" : ",", id,
+        jsonAppend(buf, JSON_BUF_SIZE, &off, "%s{\"a\":\"%s\",\"d\":%.4f}", first ? "" : ",", id,
                    static_cast<double>(samples[i].distance_m));
         first = false;
     }
-    jsonAppend(buf, sizeof(buf), &off, "]}\n");
+    jsonAppend(buf, JSON_BUF_SIZE, &off, "]}\n");
     std::fputs(buf, stdout);
 }
 
@@ -220,34 +278,37 @@ static void printFixLine(double t, uint32_t cycleMs, const uwb::AnchorTable& tab
                           const uwb::PositionResult& lv2, bool haveLv3, const uwb::PositionResult& lv3,
                           const EpochTiming& timing)
 {
-    char buf[JSON_BUF_SIZE];
-    size_t off = 0;
+    if (!jsonOutputEnabled()) {
+        return;
+    }
+    char* const buf = g_jsonBuf;
+    size_t off      = 0;
 
-    jsonAppend(buf, sizeof(buf), &off,
+    jsonAppend(buf, JSON_BUF_SIZE, &off,
                "{\"v\":1,\"type\":\"fix\",\"t\":%.3f,\"tag\":\"tag0\",\"cycle_ms\":%lu,"
                "\"primary_level\":\"Lv2\",",
                t, static_cast<unsigned long>(cycleMs));
 
-    appendResultBody(buf, sizeof(buf), &off, lv2);
+    appendResultBody(buf, JSON_BUF_SIZE, &off, lv2);
 
-    jsonAppend(buf, sizeof(buf), &off, ",\"solve_us_lv0\":%lld,\"solve_us_lv2\":%lld",
+    jsonAppend(buf, JSON_BUF_SIZE, &off, ",\"solve_us_lv0\":%lld,\"solve_us_lv2\":%lld",
                static_cast<long long>(timing.solveLv0Us), static_cast<long long>(timing.solveLv2Us));
     if (haveLv3) {
-        jsonAppend(buf, sizeof(buf), &off, ",\"solve_us_lv3\":%lld",
+        jsonAppend(buf, JSON_BUF_SIZE, &off, ",\"solve_us_lv3\":%lld",
                    static_cast<long long>(timing.solveLv3Us));
     }
 
-    jsonAppend(buf, sizeof(buf), &off, ",\"lv0\":{");
-    appendResultBody(buf, sizeof(buf), &off, lv0);
-    jsonAppend(buf, sizeof(buf), &off, "}");
+    jsonAppend(buf, JSON_BUF_SIZE, &off, ",\"lv0\":{");
+    appendResultBody(buf, JSON_BUF_SIZE, &off, lv0);
+    jsonAppend(buf, JSON_BUF_SIZE, &off, "}");
 
     if (haveLv3) {
-        jsonAppend(buf, sizeof(buf), &off, ",\"lv3\":{");
-        appendResultBody(buf, sizeof(buf), &off, lv3);
-        jsonAppend(buf, sizeof(buf), &off, "}");
+        jsonAppend(buf, JSON_BUF_SIZE, &off, ",\"lv3\":{");
+        appendResultBody(buf, JSON_BUF_SIZE, &off, lv3);
+        jsonAppend(buf, JSON_BUF_SIZE, &off, "}");
     }
 
-    jsonAppend(buf, sizeof(buf), &off, ",\"anchors\":[");
+    jsonAppend(buf, JSON_BUF_SIZE, &off, ",\"anchors\":[");
     for (size_t i = 0; i < n; ++i) {
         if (samples[i].anchor_index >= table.size()) {
             continue;
@@ -255,49 +316,47 @@ static void printFixLine(double t, uint32_t cycleMs, const uwb::AnchorTable& tab
         char id[8];
         formatAnchorId(table.entry(samples[i].anchor_index).short_addr, id, sizeof(id));
         if (samples[i].ok) {
-            jsonAppend(buf, sizeof(buf), &off, "%s{\"a\":\"%s\",\"ok\":true,\"d\":%.4f,\"elapsed_ms\":%lu}",
+            jsonAppend(buf, JSON_BUF_SIZE, &off, "%s{\"a\":\"%s\",\"ok\":true,\"d\":%.4f,\"elapsed_ms\":%lu}",
                        (i == 0) ? "" : ",", id, static_cast<double>(samples[i].distance_m),
                        static_cast<unsigned long>(samples[i].elapsed_ms));
         } else {
-            jsonAppend(buf, sizeof(buf), &off, "%s{\"a\":\"%s\",\"ok\":false}", (i == 0) ? "" : ",", id);
+            jsonAppend(buf, JSON_BUF_SIZE, &off, "%s{\"a\":\"%s\",\"ok\":false}", (i == 0) ? "" : ",", id);
         }
     }
-    jsonAppend(buf, sizeof(buf), &off, "]}\n");
+    jsonAppend(buf, JSON_BUF_SIZE, &off, "]}\n");
     std::fputs(buf, stdout);
 }
 
 /* ==================================================================== *
- * app_main
+ * アンカー登録テーブルの適用
  * ==================================================================== */
 
-extern "C" void app_main(void)
+/** 測位ループとコンソールの間で受け渡すテーブルの一時領域。
+ *  測位ループのタスクからしか触らないので static でよい（app_main の
+ *  スタックを節約する）。 */
+static uwb::AnchorEntry g_workEntries[uwb::kMaxAnchors];
+
+/**
+ * @brief アンカー登録テーブルを差し替え、配置チェックと 2D フォールバック
+ * 判定をやり直す。
+ *
+ * 起動時と、コンソールから設定が変わったときの両方から呼ぶ。**測距も測位も
+ * 走っていない瞬間（1周期の先頭）にだけ呼ぶこと**（AnchorTable::set() は
+ * uwb_config を作り直すため、ソルバから読まれている最中に呼んではいけない）。
+ *
+ * 前回 dim=2 へフォールバックしていた状態を引きずらないよう、判定前に
+ * 必ず dim=3 へ戻してから checkPlacement() をやり直す。
+ *
+ * @return 差し替えに成功したら true。false のときテーブルは変更されない。
+ */
+static bool applyAnchorTable(uwb::AnchorTable& table, const uwb::AnchorEntry* entries, size_t count)
 {
-    ESP_LOGI(TAG, "Phase 4 Step 2 uwb_tag firmware, board=%s method=%s anchors=%zu", BOARD_NAME,
-             METHOD_NAME, kNumAnchors);
-
-    uwb::Qm33120 uwbDevice;
-    const uwb::Config cfg = makeConfigFromBoard();
-    const uwb::PhyConfig phy; // defaults: ch9, preamble128, PAC8, 6.8Mbps
-
-    if (!uwbDevice.begin(cfg, phy)) {
-        ESP_LOGE(TAG, "begin() failed: error=%s", uwbDevice.lastErrorName());
-        return;
-    }
-    ESP_LOGI(TAG, "deviceId=0x%08lX (expect 0x%08lX) chipName=%s isConnected=%d isInitialized=%d",
-             (unsigned long)uwbDevice.deviceId(), (unsigned long)UWB_DEV_ID_EXPECTED, uwbDevice.chipName(),
-             uwbDevice.isConnected(), uwbDevice.isInitialized());
-    if (uwbDevice.deviceId() != UWB_DEV_ID_EXPECTED || !uwbDevice.isInitialized()) {
-        ESP_LOGE(TAG, "UWB device not ready, aborting");
-        return;
+    if (!table.set(entries, count)) {
+        ESP_LOGE(TAG, "AnchorTable::set() failed (count=%zu, kMaxAnchors=%zu)", count, uwb::kMaxAnchors);
+        return false;
     }
 
-    /* --- アンカー登録テーブルの構築 + 起動時チェック（必須） --- */
-    uwb::AnchorTable table;
-    if (!table.set(kAnchors, kNumAnchors)) {
-        ESP_LOGE(TAG, "AnchorTable::set() failed (kNumAnchors=%zu, kMaxAnchors=%zu)", kNumAnchors,
-                 uwb::kMaxAnchors);
-        return;
-    }
+    table.setDimension3D();
 
     const uwb::PlacementCheck placement = table.checkPlacement();
     if (placement.coplanar) {
@@ -316,10 +375,52 @@ extern "C" void app_main(void)
 #endif
         }
     }
+    return true;
+}
+
+/* ==================================================================== *
+ * app_main
+ * ==================================================================== */
+
+extern "C" void app_main(void)
+{
+    /* --- NVS からアンカー登録テーブルを読む（無ければ kAnchors[] 既定値） ---
+     * ConfigStore::init() が失敗しても loadAnchorTable() は必ず既定値を返すので、
+     * ここでは戻り値を見て中断しない。NVS破損で起動しなくなるのを避ける方針。 */
+    uwb::ConfigStore::init();
+    size_t entryCount = 0;
+    const uwb::ConfigSource tableSource = uwb::ConfigStore::loadAnchorTable(
+        kAnchors, kNumAnchors, g_workEntries, uwb::kMaxAnchors, &entryCount);
+
+    ESP_LOGI(TAG, "Phase 4 Step 2 uwb_tag firmware, board=%s method=%s anchors=%zu (%s)", BOARD_NAME,
+             METHOD_NAME, entryCount, uwb::configSourceName(tableSource));
+
+    uwb::Qm33120 uwbDevice;
+    const uwb::Config cfg = makeConfigFromBoard();
+    const uwb::PhyConfig phy; // defaults: ch9, preamble128, PAC8, 6.8Mbps
+
+    if (!uwbDevice.begin(cfg, phy)) {
+        ESP_LOGE(TAG, "begin() failed: error=%s", uwbDevice.lastErrorName());
+        return;
+    }
+    ESP_LOGI(TAG, "deviceId=0x%08lX (expect 0x%08lX) chipName=%s isConnected=%d isInitialized=%d",
+             (unsigned long)uwbDevice.deviceId(), (unsigned long)UWB_DEV_ID_EXPECTED, uwbDevice.chipName(),
+             uwbDevice.isConnected(), uwbDevice.isInitialized());
+    if (uwbDevice.deviceId() != UWB_DEV_ID_EXPECTED || !uwbDevice.isInitialized()) {
+        ESP_LOGE(TAG, "UWB device not ready, aborting");
+        return;
+    }
+
+    /* --- アンカー登録テーブルの構築 + 起動時チェック（必須） --- */
+    static uwb::AnchorTable table; // .bss へ置いて app_main のスタックを節約する
+    if (!applyAnchorTable(table, g_workEntries, entryCount)) {
+        return;
+    }
 
     uwb::PositioningConfig posCfg;
     posCfg.defaultLevel = uwb::SolverLevel::Lv2;
-    uwb::PositioningPipeline pipeline(table, posCfg);
+    // pipeline は内部に uwb_ekf（1KB 程度）を持つので、こちらも .bss へ置く。
+    static uwb::PositioningPipeline pipeline(table, posCfg);
 #if CONFIG_UWB_TAG_ENABLE_EKF
     pipeline.initEkf();
 #endif
@@ -334,18 +435,74 @@ extern "C" void app_main(void)
     schedCfg.tagShortAddr         = TAG_SHORT_ADDR;
     schedCfg.perAnchorIntervalMs = CONFIG_UWB_TAG_PER_ANCHOR_INTERVAL_MS;
     schedCfg.cycleIntervalMs      = CONFIG_UWB_TAG_CYCLE_INTERVAL_MS;
-    uwb::RangingScheduler scheduler(uwbDevice, table, schedCfg);
+    static uwb::RangingScheduler scheduler(uwbDevice, table, schedCfg);
 
     ESP_LOGI(TAG, "begin() + PHY config OK, starting ranging loop");
+
+#if CONFIG_UWB_TAG_CONSOLE
+    /* --- シリアルコンソール（別タスクで動く REPL）を起動する ---
+     * コンソールは編集用のシャドウコピーだけを書き換え、この測位ループが
+     * 1周期の先頭で takePendingTable() を呼んで取り込む
+     *（方式と理由は tag_console.hpp の冒頭コメント）。
+     * 起動に失敗しても測位そのものは継続する。 */
+    bool consoleReady = false;
+    {
+        tagapp::StaticInfo consoleInfo;
+        consoleInfo.boardName    = BOARD_NAME;
+        consoleInfo.methodName   = METHOD_NAME;
+        consoleInfo.chipName     = uwbDevice.chipName();
+        consoleInfo.deviceId     = uwbDevice.deviceId();
+        consoleInfo.tagAddr      = TAG_SHORT_ADDR;
+        consoleInfo.panId        = PAN_ID;
+        consoleInfo.source       = tableSource;
+        consoleInfo.defaults     = kAnchors;
+        consoleInfo.defaultCount = kNumAnchors;
+        if (tagapp::sharedInit(g_workEntries, entryCount, consoleInfo)) {
+            const esp_err_t consoleErr = tagapp::consoleStart();
+            if (consoleErr == ESP_OK) {
+                consoleReady = true;
+                ESP_LOGI(TAG, "シリアルコンソールを起動しました（help でコマンド一覧。"
+                              "JSON出力が邪魔なときは output off）");
+            } else {
+                ESP_LOGE(TAG, "シリアルコンソールを起動できませんでした (err=%s)。測位は継続します",
+                         esp_err_to_name(consoleErr));
+            }
+        }
+    }
+#endif
 
     /* JSON Lines: アンカー一覧を最初に1回出す */
     printAnchorsLine(table);
 
     const int64_t bootUs = esp_timer_get_time();
-    uwb::RangingSample samples[uwb::kMaxAnchors];
+    static uwb::RangingSample samples[uwb::kMaxAnchors];
     uint32_t failLogCounter = 0;
+    uint32_t epochCount      = 0;
+    uint32_t okFixCount      = 0;
 
     while (true) {
+#if CONFIG_UWB_TAG_CONSOLE
+        /* --- 1周期の先頭でだけ設定を取り込む ---
+         * ここは測距も測位も走っていない唯一の地点。ロックはシャドウコピーの
+         * コピー中だけで、測距・測位・JSON出力の間は一切保持しない。 */
+        if (consoleReady) {
+            size_t pendingCount = 0;
+            if (tagapp::takePendingTable(g_workEntries, uwb::kMaxAnchors, &pendingCount)) {
+                if (applyAnchorTable(table, g_workEntries, pendingCount)) {
+                    ESP_LOGI(TAG, "アンカー登録テーブルを更新しました（%zu 件）", pendingCount);
+#if CONFIG_UWB_TAG_ENABLE_EKF
+                    // 観測モデル（アンカー座標・台数）が変わったので EKF は組み直す。
+                    pipeline.initEkf();
+#endif
+                    // 下流の可視化にも新しいテーブルを伝える。
+                    printAnchorsLine(table);
+                } else {
+                    ESP_LOGE(TAG, "更新後のテーブルを適用できませんでした（前の設定のまま継続します）");
+                }
+            }
+        }
+#endif
+
         const size_t n = scheduler.runCycle(samples, uwb::kMaxAnchors);
         const double t = static_cast<double>(esp_timer_get_time() - bootUs) / 1e6;
 
@@ -368,8 +525,31 @@ extern "C" void app_main(void)
         haveLv3             = true;
 #endif
 
+        ++epochCount;
+        if (lv2.ok) {
+            ++okFixCount;
+        }
+
         printMeasLine(t, table, samples, n);
         printFixLine(t, scheduler.lastCycleMs(), table, samples, n, lv0, lv2, haveLv3, lv3, timing);
+
+#if CONFIG_UWB_TAG_CONSOLE
+        if (consoleReady) {
+            tagapp::Status status;
+            status.epochs      = epochCount;
+            status.okFixes     = okFixCount;
+            status.cycleMs     = scheduler.lastCycleMs();
+            status.lastOk      = lv2.ok;
+            status.p[0]        = lv2.p[0];
+            status.p[1]        = lv2.p[1];
+            status.p[2]        = lv2.p[2];
+            status.gdop        = lv2.gdop;
+            status.residualRms = lv2.residualRms;
+            status.nUsed       = lv2.nUsed;
+            status.nTotal      = lv2.nTotal;
+            tagapp::publishStatus(status);
+        }
+#endif
 
         if (!lv2.ok) {
             // 「測位不能」（有効測距不足）または解ソルバ失敗（同一平面配置の

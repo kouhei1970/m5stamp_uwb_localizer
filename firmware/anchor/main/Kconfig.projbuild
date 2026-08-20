@@ -37,13 +37,43 @@ menu "UWB Anchor Configuration"
     endchoice
 
     config UWB_ANCHOR_SHORT_ADDR
-        hex "自分のショートアドレス (initiatorAddress と対にする値)"
+        hex "自分のショートアドレスの初期値 (NVSが空のときに使う値)"
         range 0x0000 0xFFFE
         default 0x0002
         help
-            このアンカー自身のTWRショートアドレス。手持ちのStamp UWB-F 5台
-            それぞれに異なる値 (例: 0x0002, 0x0003, 0x0004, 0x0005, 0x0006)
-            を書き込んで区別する。0xFFFF はブロードキャストアドレスなので
-            使わないこと。
+            このアンカー自身のTWRショートアドレスの **初期値**。
+
+            起動時はまず NVS (components/uwb_cfgstore) を読み、保存された値が
+            あればそちらを使う。NVSが空・未初期化・破損のいずれの場合も
+            この値へフォールバックする。したがって何も設定しなければ
+            従来どおりこの値でそのまま動く。
+
+            実機5台に別々のアドレスを入れる作業は、ビルドをやり直すのではなく
+            シリアルコンソール (UWB_ANCHOR_CONSOLE) から
+
+                addr set 0x0003
+                save
+
+            で行うことを推奨する (docs/GETTING_STARTED.md §6)。
+            0xFFFF はブロードキャストアドレスなので使わないこと。
+
+    config UWB_ANCHOR_CONSOLE
+        bool "シリアルコンソール (USB-Serial/JTAG) を有効にする"
+        default y
+        help
+            有効にすると、起動時に ESP-IDF の console コンポーネント
+            (linenoise + argtable3) による REPL を専用タスクで立ち上げ、
+            USB 経由で次のコマンドを受け付ける。
+
+                addr / addr set <hex> / save / reset-config / info / reboot
+
+            測距ループとは別タスクで動き、ショートアドレスの変更は
+            次の応答から反映される。
+
+            無効にすると anchor_console.cpp 自体がビルド対象から外れ、
+            console コンポーネントへの依存も消える。NVSに保存済みの
+            アドレスで起動する機能だけは残るので、「コンソールで設定して
+            save したあと、コンソールを無効にしたファームを焼く」運用も
+            できる。
 
 endmenu

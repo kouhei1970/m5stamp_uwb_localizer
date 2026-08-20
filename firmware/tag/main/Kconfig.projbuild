@@ -53,6 +53,34 @@ menu "UWB Tag Configuration"
             ポーリングが終わり次第すぐ次の周を始める。下流の消費側の
             想定周期に合わせて意図的に更新レートを抑えたい場合に上げる。
 
+    config UWB_TAG_CONSOLE
+        bool "シリアルコンソール (USB-Serial/JTAG) を有効にする"
+        default y
+        help
+            有効にすると、起動時に ESP-IDF の console コンポーネント
+            (linenoise + argtable3) による REPL を専用タスクで立ち上げ、
+            USB 経由で次のコマンドを受け付ける。
+
+                anchor list
+                anchor set <idx> <hex_addr> <x> <y> <z>
+                anchor delay <idx> <meters>
+                anchor enable <idx> / anchor disable <idx>
+                anchor count <n>
+                output <on|off>   （JSON Lines 出力の一時停止）
+                save / reset-config / info / reboot
+
+            これにより「アンカー座標を数cm直すたびに再ビルド・再書き込み」が
+            不要になる (docs/GETTING_STARTED.md §7)。
+
+            コンソールは測位ループとは別タスクで動き、編集内容は次の測位周期
+            の先頭で取り込まれる（実装方針は main/tag_console.hpp の冒頭
+            コメントを参照）。
+
+            無効にすると tag_console.cpp 自体がビルド対象から外れ、console
+            コンポーネントへの依存も消える。NVSに保存済みのテーブルで起動する
+            機能だけは残るので、「コンソールで設定して save したあと、
+            コンソールを無効にしたファームを焼く」運用もできる。
+
     config UWB_TAG_ENABLE_EKF
         bool "毎周期 Lv3 EKF (uwb_ekf) も呼ぶ"
         default n

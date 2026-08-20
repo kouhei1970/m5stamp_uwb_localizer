@@ -26,7 +26,7 @@ UWB 測位を動かすまでの完全手順です。UWB の専門知識は前提
 | [3](#wiring) | 配線（半田付け） | 要 |
 | [4](#probe) | 疎通確認 `firmware/probe` ← **最初の関門** | 要 |
 | [5](#twr) | 1 対 1 の測距 `firmware/twr` | 要 |
-| [6](#anchors5) | アンカー 5 台の書き込み | 要 |
+| [6](#anchors5) | アンカー 5 台の準備（アドレス設定） | 要 |
 | [7](#survey) | 設置と座標入力 | 要 |
 | [8](#run-tag) | 測位 `firmware/tag` | 要 |
 | [9](#antenna-delay) | アンテナ遅延の校正 | 要 |
@@ -138,11 +138,14 @@ make test
 期待される出力（最終行）:
 
 ```
-=== 53 件中 0 件失敗 ===
+=== 132 件中 0 件失敗 ===
 ```
 
 アンカー 4 台・5 台、外れ値の棄却、欠測、同一平面配置の検出などを合成データで
-検証しています。**ここが通らないなら環境（コンパイラ）側の問題**です。
+検証しています。設定の永続化（[6.2](#anchors5-console) / [7.3](#survey)）についても、
+**NVS に置くバイト列**の往復・境界値・壊れたデータの扱いをここで検算しています
+（NVS そのものの読み書きは実機が要るので含まれません）。
+**ここが通らないなら環境（コンパイラ）側の問題**です。
 
 > `tools/test_uwb_loc/` にもテストがありますが、こちらはテストコード本体を
 > `third_party/uwb_localizer/`（gitignore 済み）から参照するため、
@@ -532,9 +535,13 @@ DS-TWR では距離をアンカー側が計算するので、**アンカー側�
 
 本番用アンカーファームは `firmware/anchor` です（常にレスポンダ。役割選択なし）。
 
-**5 台それぞれに違うショートアドレス `0x0002`〜`0x0006` を焼き込みます。**
-アドレスは Kconfig の `UWB_ANCHOR_SHORT_ADDR` で決まります
-（NVS 保存やシリアルコンソールからの変更は未実装）。
+**5 台それぞれに違うショートアドレス `0x0002`〜`0x0006` を持たせる必要がありますが、
+ビルドは 1 回で済みます。** 同じファームを 5 台に焼いてから、1 台ずつ USB でつないで
+シリアルコンソールの `addr set` → `save` でアドレスを書き分けます
+（USB-Serial/JTAG 上の REPL。`idf.py monitor` で接続した端末がそのままコンソールになります）。
+Kconfig の `UWB_ANCHOR_SHORT_ADDR` も引き続きありますが、これは
+**「NVS が空のときに使う初期値」**という位置づけに変わりました。何も設定しなければ
+従来どおりこの値で動きます（後方互換）。
 
 ### 6.1 既定値の確認
 
@@ -544,14 +551,92 @@ DS-TWR では距離をアンカー側が計算するので、**アンカー側�
 |---|---|
 | ボード | **M5 AtomS3** |
 | 方式 | **DS-TWR** |
-| ショートアドレス | `0x0002` |
+| ショートアドレス | `0x0002`（NVS が空のときの初期値） |
 
 `firmware/tag` の既定も **Stamp S3 / DS-TWR** なので、方式は揃っています。
 
-### 6.2 5 台ぶんを一括ビルドする
+<a id="anchors5-console"></a>
 
-`idf.py menuconfig` を 5 回やるのは煩雑なので、アドレスだけを差し替えた
-設定断片を作ってビルドディレクトリを分けます。**この手順は動作確認済みです。**
+### 6.2 コンソールでアドレスを書き込む（推奨）
+
+**ビルドは 1 回だけ**です。5 台とも同じ `uwb_anchor.bin` を書き込みます。
+
+```sh
+. ~/esp/esp-idf/export.sh
+cd firmware/anchor
+idf.py set-target esp32s3      # 初回のみ
+idf.py build
+```
+
+**1 台ずつ USB に挿し、そのつどポート名を確認して**書き込みます。
+
+```sh
+ls /dev/cu.usbmodem*                                   # ポート名を確認（macOS）
+# Linux なら ls /dev/ttyACM*
+idf.py -p /dev/cu.usbmodemXXXX flash monitor
+```
+
+`monitor` がそのまま端末になるので、起動ログが流れたあとにプロンプト `uwb-anchor>`
+が出たら、そこでコマンドを打ちます。**1 台目（アドレス `0x0002` にする個体）は
+Kconfig の既定値と一致するので `addr set` は不要ですが、`save` は実行しておくことを
+勧めます**（NVS に値が入り、起動ログが `(nvs)` になるので「設定済みの個体」だと
+一目で分かります）。2 台目以降は `addr set` で書き換えます。
+
+```
+uwb-anchor> addr
+short_addr = 0x0002  (Kconfig 既定値 = 0x0002, NVS = 未保存（save が必要）)
+uwb-anchor> addr set 0x0003
+short_addr = 0x0003 に変更しました（次の応答から反映）。電源を切っても残すには save を実行してください
+uwb-anchor> save
+NVS へ保存しました: short_addr = 0x0003
+uwb-anchor> reboot
+再起動します
+```
+
+再起動後の起動ログでアドレスと設定の出どころ（`nvs`）を確認します。
+
+```
+I (xxx) uwb_anchor: Phase 4 Step 2 uwb_qm33120 production anchor firmware,
+  board=AtomS3 method=DS-TWR short_addr=0x0003 (nvs)
+I (xxx) uwb_anchor: deviceId=0xDECA0314 (expect 0xDECA0314) chipName=... isInitialized=1
+I (xxx) uwb_anchor: begin() + PHY config OK, starting ANCHOR/DS-TWR loop (short_addr=0x0003)
+```
+
+`info` コマンドでも Device ID と現在のアドレスをまとめて確認できます。
+
+```
+uwb-anchor> info
+=== uwb_anchor ===
+  board        : AtomS3
+  method       : DS-TWR
+  device id    : 0xDECA0314  chip: ...
+  short_addr   : 0x0003  (起動時の設定元: nvs, Kconfig 既定値: 0x0002, NVS: 保存済み)
+  tag addr     : 0x0001   pan id: 0xDECA
+  nvs          : 使用可
+  ranging      : ok=0 fail=0 rate=0.0%
+  distance     : (まだサンプルがありません)
+  free heap    : ... bytes
+```
+
+`Ctrl-]` で `monitor` を抜けて USB を抜き、次の個体に挿し替えて
+`0x0004`・`0x0005`・`0x0006` について同じ手順を繰り返します。
+
+**書き込んだアドレスをボードにテープで貼る**などして、必ず物理的に判別できるようにしてください
+（後で座標と対応づけるときに必須）。
+
+> **アドレスに `0xFFFF` は使わないこと**（ブロードキャストアドレス。`addr set` 側でも拒否されます）。
+> タグは `0x0001` 固定です（`firmware/tag/main/main.cpp` の `TAG_SHORT_ADDR`。
+> `addr set 0x0001` もコンソール側で拒否されます）。PAN ID は両方 `0xDECA` 固定です。
+
+> コンソールを無効化したい場合は `menuconfig` → `UWB Anchor Configuration` →
+> 「シリアルコンソール (USB-Serial/JTAG) を有効にする」（`CONFIG_UWB_ANCHOR_CONSOLE`、既定 y）を外します。
+
+### 6.3 代替手段: ビルド時に焼き込む
+
+**コンソールが使えない場合や、大量に量産する場合**は、従来どおりアドレスごとに
+ビルドディレクトリを分けて焼き込むこともできます。`idf.py menuconfig` を 5 回
+やるのは煩雑なので、アドレスだけを差し替えた設定断片を作ってビルドディレクトリを
+分けます。**この手順は動作確認済みです。**
 
 ```sh
 . ~/esp/esp-idf/export.sh
@@ -576,8 +661,6 @@ grep -H UWB_ANCHOR_SHORT_ADDR build/a*/sdkconfig
 # ...
 ```
 
-### 6.3 1 台ずつ書き込む
-
 **1 台ずつ USB に挿し、そのつどポート名を確認して**書き込みます。
 **書き込んだアドレスをボードにテープで貼る**などして、必ず物理的に判別できるようにしてください
 （後で座標と対応づけるときに必須）。
@@ -591,12 +674,14 @@ idf.py -B build/a0002 -p /dev/cu.usbmodemXXXX flash monitor
 
 ```
 I (xxx) uwb_anchor: Phase 4 Step 2 uwb_qm33120 production anchor firmware,
-  board=AtomS3 method=DS-TWR short_addr=0x0002
+  board=AtomS3 method=DS-TWR short_addr=0x0002 (default)
 I (xxx) uwb_anchor: deviceId=0xDECA0314 (expect 0xDECA0314) chipName=... isInitialized=1
 I (xxx) uwb_anchor: begin() + PHY config OK, starting ANCHOR/DS-TWR loop (short_addr=0x0002)
 ```
 
-これを `a0003` 〜 `a0006` について繰り返します。
+これを `a0003` 〜 `a0006` について繰り返します。この方法で焼いた個体は
+起動ログに `(default)`（Kconfig 由来）と出ます。あとからコンソールでアドレスを
+変更すればそちらが優先され、次回起動時のログも `(nvs)` に変わります。
 
 > **アドレスに `0xFFFF` は使わないこと**（ブロードキャストアドレス）。
 > タグは `0x0001` 固定です（`firmware/tag/main/main.cpp` の `TAG_SHORT_ADDR`）。
@@ -636,7 +721,71 @@ I (xxx) uwb_anchor: begin() + PHY config OK, starting ANCHOR/DS-TWR loop (short_
 
 ### 7.3 座標を書き込む
 
-`firmware/tag/main/main.cpp` の `kAnchors[]` を実測値に置き換えます。
+**主な方法は、タグ本体のシリアルコンソールから `anchor set` で 1 件ずつ入力し、
+`save` で NVS に保存することです。** ビルド・書き込みは不要で、**次の測位周期から
+反映**されます。
+
+タグを USB で PC につなぎ、`idf.py -p /dev/cu.usbmodemXXXX monitor` で接続します。
+タグは毎周期 JSON を 2 行吐くので、**作業前に `output off` で出力を止めておくと
+打ちやすくなります**。終わったら `output on` で戻します。
+
+```
+uwb-tag> output off
+json output = off
+uwb-tag> anchor set 0 0x0002 0.000 0.000 2.400
+anchor[0] = 0x0002 (0.000, 0.000, 2.400) enabled=yes
+次の測位周期から反映されます。残すには save を実行してください
+uwb-tag> anchor set 1 0x0003 5.000 0.000 0.200
+anchor[1] = 0x0003 (5.000, 0.000, 0.200) enabled=yes
+次の測位周期から反映されます。残すには save を実行してください
+uwb-tag> anchor set 2 0x0004 5.000 5.000 2.400
+anchor[2] = 0x0004 (5.000, 5.000, 2.400) enabled=yes
+次の測位周期から反映されます。残すには save を実行してください
+uwb-tag> anchor set 3 0x0005 0.000 5.000 0.200
+anchor[3] = 0x0005 (0.000, 5.000, 0.200) enabled=yes
+次の測位周期から反映されます。残すには save を実行してください
+uwb-tag> anchor set 4 0x0006 2.500 2.500 2.400
+anchor[4] = 0x0006 (2.500, 2.500, 2.400) enabled=yes
+次の測位周期から反映されます。残すには save を実行してください
+uwb-tag> anchor list
+idx  addr       x[m]      y[m]      z[m]   delay[m]  enabled
+  0  0x0002     0.000     0.000     2.400     0.0000  yes
+  1  0x0003     5.000     0.000     0.200     0.0000  yes
+  2  0x0004     5.000     5.000     2.400     0.0000  yes
+  3  0x0005     0.000     5.000     0.200     0.0000  yes
+  4  0x0006     2.500     2.500     2.400     0.0000  yes
+件数 5 / 上限 8（うち enabled 5）  NVS: 未保存（save が必要）
+uwb-tag> save
+NVS へ保存しました: アンカー 5 件
+uwb-tag> output on
+json output = on
+```
+
+`idx`（第 1 引数）は登録テーブルの添字（0 始まり）です。**現在の件数以上の idx を
+指定すると、そこまで件数が自動的に広がります**（間のスロットは未設定＝
+`enabled=false` で埋まります）。`anchor set` で座標を入れたスロットは
+**`enabled` が自動で `true`** になり、`antenna_delay_m` は既存の値を保ったまま
+変わりません（[9.2](#antenna-delay) で別途設定します）。
+
+| 引数 | 意味 |
+|---|---|
+| 第 1 引数 (idx) | 登録テーブルの添字（0 始まり） |
+| 第 2 引数 | ショートアドレス。**[6](#anchors5) で焼いた値と一致させる**。`0x0000`〜`0xFFFE`、タグ自身の `0x0001` は不可 |
+| 第 3〜5 引数 | ワールド座標 `x y z` [m]。**巻尺の実測値**。±10000m 以内の有限値のみ |
+
+**設置後に数 cm 直したいときも、同じコマンドをその場で打ち直して `save` する
+だけです。** 再ビルド・再書き込みは不要で、次の測位周期から反映されます。
+これが今回の一番の改善点です。
+
+台数を減らしたい場合は `anchor count <n>`（1〜8）で件数そのものを変えられます。
+増えた分のスロットは未設定（`enabled=false`）になるので `anchor set` で埋めてください。
+
+---
+
+#### 代替手段: 既定値をソースに焼き込む
+
+コンソールを使わない場合は、`firmware/tag/main/main.cpp` の `kAnchors[]`
+（NVS が空のときに使われる既定値）を実測値に置き換えて再ビルドします。
 
 ```cpp
 static const uwb::AnchorEntry kAnchors[] = {
@@ -687,10 +836,15 @@ idf.py -p /dev/cu.usbmodemXXXX flash monitor
 ### 8.2 起動時に必ず見るログ
 
 ```
-I (xxx) uwb_tag: Phase 4 Step 2 uwb_tag firmware, board=Stamp S3 method=DS-TWR anchors=5
+I (xxx) uwb_tag: Phase 4 Step 2 uwb_tag firmware, board=Stamp S3 method=DS-TWR anchors=5 (nvs)
 I (xxx) uwb_tag: deviceId=0xDECA0314 ... isInitialized=1
 I (xxx) uwb_tag: begin() + PHY config OK, starting ranging loop
 ```
+
+末尾の `(nvs)` / `(default)` が設定の出どころです。[7.3](#survey) のコンソールで
+`save` 済みなら `nvs`、NVS が空・未初期化なら `kAnchors[]` の既定値を使った
+`default` になります。アンカー側の起動ログでも `short_addr=0x0003 (nvs)` のように
+同じ形式で出ます（[6.2](#anchors5-console)）。
 
 **次の警告が出たら配置がまずい**ので [7.1](#placement-rules) に戻ってください。
 
@@ -834,6 +988,11 @@ UWB の測距は電波の飛行時間を測ります。アンテナやチップ�
 として使われます（`components/uwb_loc/src/uwb_model.c`）。
 つまり **「実際より 0.35m 長く出る」なら `0.35f` を入れます。**
 
+**シリアルコンソールからでも設定できます。** `firmware/tag` 起動後に
+`anchor delay <idx> <meters>` → `save` を打てば、再ビルドせずに次の測位周期から
+反映されます（[7.3](#survey) と同じ操作方法）。`kAnchors[]` を直接編集する方法は、
+コンソールを使わない場合の代替手段として引き続き使えます。
+
 > **注意**: `antenna_delay_m` は**アンカーごと**の値であり、
 > 実際には「タグ ↔ そのアンカー」というリンク単位の合計遅延を吸収します。
 > タグを別の個体に替えたら再校正が必要です。
@@ -851,10 +1010,12 @@ UWB の測距は電波の飛行時間を測ります。アンテナやチップ�
    タグ側ログの `mean_mm` をそのまま使えます（Welford の累積平均なので待つだけ）。
    運用と同じ方式（DS-TWR）で測ること。
 3. **`遅延[m] = mean_mm/1000 − 真の距離[m]`** を計算する。
-4. 5 台ぶん繰り返し、それぞれの値を `kAnchors[]` の第 3 引数へ入れる。
+4. 5 台ぶん繰り返し、それぞれの値を `kAnchors[]` の第 3 引数へ入れるか、
+   コンソールから `anchor delay <idx> <meters>` → `save` で設定する。
 5. **温度を記録する**（2.15mm/°C で効きます）。
-6. `firmware/tag` を再ビルドして書き込み、[8.5](#first-checks) を
-   やり直す。**位置の偏りが消えているはず**です。
+6. `kAnchors[]` を編集した場合は `firmware/tag` を再ビルドして書き込む。
+   コンソールで設定した場合は `save` すればそのまま反映されている。
+   いずれの場合も [8.5](#first-checks) をやり直す。**位置の偏りが消えているはず**です。
 
 ### 9.4 手順（APS014 の本式・参考）
 
@@ -927,7 +1088,7 @@ DW3720 の OTP アドレス `0x0B` は "Antenna Delay – RFLoop" とされて�
 | 検証済み | 未検証 |
 |---|---|
 | 全ファームのビルド（警告 0・エラー 0） | **実機での Device ID 読み出し** |
-| 測位パイプラインのホスト検証（合成データ 53 件） | 実機での測距 |
+| 測位パイプラインと設定シリアライズのホスト検証（合成データ 132 件） | 実機での測距 |
 | 測位ソルバ（uwb_loc）のホストテスト | 実機での測位 |
 | ESP32-S3 上でのソルバ計算時間ベンチ | 更新レートの実測値 |
 
@@ -952,7 +1113,7 @@ DW3720 の OTP アドレス `0x0B` は "Antenna Delay – RFLoop" とされて�
 | **ch9 の PLL 再校正が未実装** | Stamp UWB-F は ch9 固定です。ユーザマニュアル §10.4 によれば **ch9 では温度が 20°C 変化したら PLL の再校正が必要**です（ch5 では不要）。アンカーは連続受信でダイ温度が周囲 +20〜30°C まで上がるため**確実に該当します**。長時間運用で受信性能が落ちる可能性があります（R10） |
 | **診断情報（NLOS 判定）を取っていない** | SDK には受信電力（RSL）と第一波電力（FP_RSL）を出す関数が揃っていますが未使用です。`RSL − FP_RSL > 6dB` は Qorvo 標準の見通し外（壁越し）指標で、これを `uwb_loc` の重み付けに渡せば NLOS 環境の精度が直接改善するはずですが未実装（R12） |
 | **アンテナ遅延が未校正** | 初期値は APS014 の典型値であって Stamp UWB-F 用ではありません（[9](#antenna-delay)） |
-| **アンカー座標・アドレスがコンパイル時定数** | NVS 保存やシリアルコンソールからの変更は未実装。座標を変えるたびに再ビルド・再書き込みが必要です |
+| **アンカー座標・アドレスの設定方法** | NVS 永続化とシリアルコンソール（`addr set` / `anchor set` 等）を実装済み。コンソールを使わない場合は Kconfig / `kAnchors[]` のコンパイル時定数も引き続き使える。**ただし実機での NVS 読み書き・コンソール動作そのものは未検証**（下記 11.5 参照） |
 | **タグのショートアドレスが固定** | `0x0001` 固定（ソース上の定数）。タグ複数台には未対応 |
 | 温度・電圧補償の API 未使用 | `dwt_xtal_temperature_compensation()` 等が未呼び出し |
 | **`firmware/twr` のアンカーアドレスはソース固定** | `0x0002` 固定です（Kconfig で変えられるのは `firmware/anchor` のほう）。1 対 1 テストでは `0x0002` を焼いた個体を使ってください |
@@ -968,6 +1129,20 @@ DW3720 の OTP アドレス `0x0B` は "Antenna Delay – RFLoop" とされて�
 | 同一平面配置では 3D の高さが決まらない | [7.1](#placement-rules) |
 | 「アンカー平面が原点を通る」判定のしきい値（0.05m） | 実測 2 点からの外挿で、**正確な境界は未特定** |
 | 更新レート | DS-TWR を 5 アンカー**逐次**で回すので、1 周 = 1 リンク時間 × 5。実測が必要（[5.4](#twr-measure)） |
+
+### 11.5 設定の永続化（NVS + コンソール）の未検証事項
+
+`components/uwb_cfgstore/`（[6.2](#anchors5-console), [7.3](#survey)）は
+**実機が無いため一切検証できていません。** ホスト側では「NVS に置くバイト列」の
+往復・境界値・破損データの検算のみ実施しています。フラッシュへの実際の
+読み書きそのものは確認できていません。
+
+| 項目 | 状況 |
+|---|---|
+| **NVS への実際の読み書き** | 未確認。ホストでは NVS に置くバイト列の往復・境界値・破損データの検算のみ実施。フラッシュ操作そのものは未確認 |
+| **USB-Serial/JTAG 上の REPL** | 未確認。linenoise の端末制御、`idf.py monitor` との相性、JSON 出力とコンソール入力が混在したときの使い勝手は実機で試していない |
+| **コンソールから設定を変えたときの測距・測位の継続性** | 未確認。`addr set` / `anchor set` 等で書き換えた瞬間に測距・測位が途切れないか未検証 |
+| **一次コンソールを UART から USB-Serial/JTAG へ変更した影響** | 未確認。`CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y` への切り替えが起動ログ・書き込み手順に与える影響は未検証 |
 
 ---
 

@@ -15,3 +15,20 @@ CONFIG_COMPILER_OPTIMIZATION_PERF=y
 # ESP32-S3 は 240MHz 対応。既定の 160MHz からそのまま 1.5 倍になる。
 # 電池駆動で消費電力が問題になる場合はここを戻すこと。
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+
+# --- パーティションテーブル（NVS 必須）---
+# components/uwb_cfgstore が設定を NVS へ保存する。ESP-IDF 既定の
+# partitions_singleapp.csv にも nvs は含まれているが、「nvs が必須である」ことを
+# リポジトリ内で明示するため独自ファイルにしてある（配置は既定と同一）。
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# --- コンソールを USB-Serial/JTAG にする ---
+# M5Stamp S3 / M5 AtomS3 は USB-UART ブリッジを持たず、USB-C は ESP32-S3 内蔵の
+# USB-Serial/JTAG に直結している。ESP-IDF の既定（UART0 が一次コンソール、
+# USB-Serial/JTAG は出力専用の二次コンソール）のままだと、ログは USB から見えるが
+# **キー入力を受け取れない**ためシリアルコンソールが機能しない。
+# 一次コンソールを USB-Serial/JTAG にすることで esp_console_new_repl_usb_serial_jtag()
+# が使えるようになる。UART0 のピン(GPIO43/44)へは出力されなくなるが、これらの
+# ボードでは元々その先に何も繋がっていない。
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y

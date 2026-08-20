@@ -10,12 +10,20 @@
  * （欠測の扱い、外れ値ゲート、同一平面/原点通過の検出と警告、
  * 「測位不能」の返し方）であり、TWRの通信そのものではないため。
  *
+ * さらに components/uwb_cfgstore のハード非依存部分（設定のシリアライズ/
+ * デシリアライズ）も同じバイナリで検算する。NVSへの実際の読み書きは
+ * ESP-IDF 依存なのでここには含めず、バイト列の往復・境界値・壊れたデータの
+ * 扱いだけを見る（実機が無い段階で検証できるのはこの層まで）。
+ *
  * third_party/uwb_localizer/c/tests/test_uwb.c と同じ CHECK() マクロの
  * 流儀（PASS/FAILをその場でカウントし、失敗時だけ内容を表示する）を踏襲する。
  */
 #include <cmath>
 #include <cstdio>
 
+#include <cstring>
+
+#include "uwb_cfgstore_blob.hpp"
 #include "uwb_qm33120_frame_match.hpp"
 #include "uwb_qm33120_units.hpp"
 #include "uwb_ranging_anchor_table.hpp"
@@ -413,6 +421,323 @@ static void scenario9_r2_frame_match()
     }
 }
 
+
+/* ==================================================================== *
+ * 10. uwb_cfgstore: 設定のシリアライズ/デシリアライズ
+ *
+ * 実機が無いので NVS そのものは叩けないが、「NVSに置くバイト列」を作る/
+ * 読む部分はホストで完全に検算できる。ここで見るのは
+ *   (a) 往復して値が1ビットも変わらないこと
+ *   (b) 境界値（件数の下限/上限、座標・遅延の上限、アドレスの端）
+ *   (c) 壊れたデータ・未初期化フラッシュを**必ず**弾くこと
+ *       （弾けば呼び出し側がコンパイル時の既定値へフォールバックする）
+ * ==================================================================== */
+
+namespace {
+
+using uwb::cfg::BlobStatus;
+
+/** 2つの AnchorEntry がビット単位で同じか（float は == で厳密比較する。
+ *  シリアライズはビットパターンを保存するので丸めは起きないはず）。 */
+bool sameEntry(const AnchorEntry& a, const AnchorEntry& b)
+{
+    return a.short_addr == b.short_addr && a.enabled == b.enabled && a.pos[0] == b.pos[0] &&
+           a.pos[1] == b.pos[1] && a.pos[2] == b.pos[2] && a.antenna_delay_m == b.antenna_delay_m;
+}
+
+/** CRC を計算し直して末尾へ書く（バイト列を意図的に改ざんしたあとに使う）。 */
+void refreshCrc(uint8_t* blob, size_t len)
+{
+    const uint32_t crc = uwb::cfg::crc32(blob, len - uwb::cfg::kBlobCrcSize);
+    uint8_t* p          = blob + len - uwb::cfg::kBlobCrcSize;
+    p[0]                 = static_cast<uint8_t>(crc & 0xFFu);
+    p[1]                 = static_cast<uint8_t>((crc >> 8) & 0xFFu);
+    p[2]                 = static_cast<uint8_t>((crc >> 16) & 0xFFu);
+    p[3]                 = static_cast<uint8_t>((crc >> 24) & 0xFFu);
+}
+
+} // namespace
+
+static void scenario10_cfgstore_roundtrip()
+{
+    std::printf("--- 10. uwb_cfgstore: アンカーテーブルの往復 ---\n");
+
+    // firmware/tag の kAnchors[] と同じ形（実運用でそのまま保存される値）。
+    const AnchorEntry src[5] = {
+        {0x0002, {0.0f, 0.0f, 2.4f}, 0.0f, true},
+        {0x0003, {5.0f, 0.0f, 0.2f}, 0.125f, true},
+        {0x0004, {5.0f, 5.0f, 2.4f}, -0.0625f, true},
+        {0x0005, {0.0f, 5.0f, 0.2f}, 0.0f, false}, // enabled=false も往復すること
+        {0x0006, {2.5f, 2.5f, 2.4f}, 0.1f, true},  // 0.1f は2進で割り切れない値
+    };
+
+    uint8_t blob[uwb::cfg::kMaxBlobSize];
+    size_t len = 0;
+    CHECK(uwb::cfg::serializeAnchorTable(src, 5, blob, sizeof(blob), &len) == BlobStatus::Ok,
+          "5件のシリアライズに失敗した");
+    CHECK(len == uwb::cfg::anchorTableBlobSize(5), "長さが anchorTableBlobSize(5)=%zu と違う (%zu)",
+          uwb::cfg::anchorTableBlobSize(5), len);
+    CHECK(len == 12 + 20 * 5 + 4, "バイト列の長さが仕様（ヘッダ12+20*件数+CRC4）と違う: %zu", len);
+
+    AnchorEntry back[kMaxAnchors];
+    size_t count = 0;
+    CHECK(uwb::cfg::deserializeAnchorTable(blob, len, back, kMaxAnchors, &count) == BlobStatus::Ok,
+          "5件のデシリアライズに失敗した");
+    CHECK(count == 5, "復元件数が違う: %zu", count);
+    for (size_t i = 0; i < 5; ++i) {
+        CHECK(sameEntry(src[i], back[i]), "エントリ%zuが往復で変化した", i);
+    }
+
+    // 件数の下限（1件）と上限（kMaxAnchors）。
+    AnchorEntry many[kMaxAnchors];
+    for (size_t i = 0; i < kMaxAnchors; ++i) {
+        many[i].short_addr      = static_cast<uint16_t>(0x0010 + i);
+        many[i].pos[0]          = static_cast<float>(i) * 1.5f;
+        many[i].pos[1]          = -static_cast<float>(i);
+        many[i].pos[2]          = 0.25f * static_cast<float>(i);
+        many[i].antenna_delay_m = 0.001f * static_cast<float>(i);
+        many[i].enabled         = ((i % 2) == 0);
+    }
+    CHECK(uwb::cfg::serializeAnchorTable(many, 1, blob, sizeof(blob), &len) == BlobStatus::Ok,
+          "1件（下限）のシリアライズに失敗した");
+    CHECK(uwb::cfg::deserializeAnchorTable(blob, len, back, kMaxAnchors, &count) == BlobStatus::Ok &&
+              count == 1 && sameEntry(many[0], back[0]),
+          "1件（下限）の往復に失敗した");
+
+    CHECK(uwb::cfg::serializeAnchorTable(many, kMaxAnchors, blob, sizeof(blob), &len) == BlobStatus::Ok,
+          "%zu件（上限）のシリアライズに失敗した", kMaxAnchors);
+    CHECK(len == uwb::cfg::kMaxBlobSize, "上限件数のときの長さが kMaxBlobSize と違う: %zu", len);
+    CHECK(uwb::cfg::deserializeAnchorTable(blob, len, back, kMaxAnchors, &count) == BlobStatus::Ok &&
+              count == kMaxAnchors,
+          "%zu件（上限）のデシリアライズに失敗した", kMaxAnchors);
+    for (size_t i = 0; i < kMaxAnchors; ++i) {
+        CHECK(sameEntry(many[i], back[i]), "上限件数のエントリ%zuが往復で変化した", i);
+    }
+
+    // 自局アドレス（アンカー側）の往復。0x0000 と 0xFFFE が端。
+    const uint16_t addrs[3] = {0x0000, 0x0002, 0xFFFE};
+    for (int i = 0; i < 3; ++i) {
+        uint8_t abuf[uwb::cfg::anchorAddrBlobSize()];
+        size_t alen  = 0;
+        uint16_t got = 0xAAAA;
+        CHECK(uwb::cfg::serializeAnchorAddr(addrs[i], abuf, sizeof(abuf), &alen) == BlobStatus::Ok,
+              "アドレス0x%04Xのシリアライズに失敗した", addrs[i]);
+        CHECK(alen == uwb::cfg::anchorAddrBlobSize() && alen == 20,
+              "アドレスのバイト列長が仕様（ヘッダ12+本体4+CRC4=20）と違う: %zu", alen);
+        CHECK(uwb::cfg::deserializeAnchorAddr(abuf, alen, &got) == BlobStatus::Ok && got == addrs[i],
+              "アドレス0x%04Xの往復に失敗した (got=0x%04X)", addrs[i], got);
+    }
+}
+
+static void scenario11_cfgstore_boundaries()
+{
+    std::printf("--- 11. uwb_cfgstore: 境界値と不正な入力 ---\n");
+
+    uint8_t blob[uwb::cfg::kMaxBlobSize];
+    size_t len = 0;
+    AnchorEntry e{0x0002, {0.0f, 0.0f, 2.4f}, 0.0f, true};
+
+    // 件数 0 と 上限+1 は拒否する。
+    CHECK(uwb::cfg::serializeAnchorTable(&e, 0, blob, sizeof(blob), &len) == BlobStatus::BadCount,
+          "件数0がBadCountにならなかった");
+    CHECK(uwb::cfg::serializeAnchorTable(&e, kMaxAnchors + 1, blob, sizeof(blob), &len) ==
+              BlobStatus::BadCount,
+          "件数が上限超なのにBadCountにならなかった");
+
+    // 出力バッファが1バイト足りない。
+    CHECK(uwb::cfg::serializeAnchorTable(&e, 1, blob, uwb::cfg::anchorTableBlobSize(1) - 1, &len) ==
+              BlobStatus::TooShort,
+          "出力バッファ不足がTooShortにならなかった");
+
+    // nullptr。
+    CHECK(uwb::cfg::serializeAnchorTable(nullptr, 1, blob, sizeof(blob), &len) == BlobStatus::NullArg,
+          "entries=nullptrがNullArgにならなかった");
+    CHECK(uwb::cfg::deserializeAnchorTable(blob, 32, nullptr, kMaxAnchors, nullptr) == BlobStatus::NullArg,
+          "out=nullptrがNullArgにならなかった");
+
+    // 座標の上限ちょうどは通り、少し超えると弾く。
+    AnchorEntry lim{0x0002, {uwb::cfg::kMaxCoordM, -uwb::cfg::kMaxCoordM, 0.0f}, uwb::cfg::kMaxAntennaDelayM,
+                     true};
+    CHECK(uwb::cfg::isValidAnchorEntry(lim), "座標・遅延が上限ちょうどなのに弾かれた");
+    CHECK(uwb::cfg::serializeAnchorTable(&lim, 1, blob, sizeof(blob), &len) == BlobStatus::Ok,
+          "上限ちょうどのエントリを書けなかった");
+
+    AnchorEntry over = lim;
+    over.pos[0]       = uwb::cfg::kMaxCoordM * 1.001f;
+    CHECK(!uwb::cfg::isValidAnchorEntry(over), "座標が上限超なのに通った");
+    CHECK(uwb::cfg::serializeAnchorTable(&over, 1, blob, sizeof(blob), &len) == BlobStatus::BadEntry,
+          "座標が上限超なのにBadEntryにならなかった");
+
+    AnchorEntry overDelay = lim;
+    overDelay.antenna_delay_m = uwb::cfg::kMaxAntennaDelayM * 1.001f;
+    CHECK(uwb::cfg::serializeAnchorTable(&overDelay, 1, blob, sizeof(blob), &len) == BlobStatus::BadEntry,
+          "アンテナ遅延が上限超なのにBadEntryにならなかった");
+
+    // NaN / Inf は書かせない（測位ソルバへ渡ると全体が壊れる）。
+    AnchorEntry nan = lim;
+    nan.pos[2]       = std::nanf("");
+    CHECK(!uwb::cfg::isValidAnchorEntry(nan), "NaN座標が通った");
+    CHECK(uwb::cfg::serializeAnchorTable(&nan, 1, blob, sizeof(blob), &len) == BlobStatus::BadEntry,
+          "NaN座標がBadEntryにならなかった");
+
+    AnchorEntry inf = lim;
+    inf.pos[1]       = HUGE_VALF;
+    CHECK(uwb::cfg::serializeAnchorTable(&inf, 1, blob, sizeof(blob), &len) == BlobStatus::BadEntry,
+          "Inf座標がBadEntryにならなかった");
+
+    // ブロードキャストアドレスは自局にもアンカーにも使えない。
+    CHECK(!uwb::cfg::isValidShortAddr(0xFFFF), "0xFFFFが有効アドレス扱いされた");
+    CHECK(uwb::cfg::isValidShortAddr(0xFFFE), "0xFFFEが無効アドレス扱いされた");
+    AnchorEntry bcast = lim;
+    bcast.short_addr   = 0xFFFF;
+    CHECK(uwb::cfg::serializeAnchorTable(&bcast, 1, blob, sizeof(blob), &len) == BlobStatus::BadEntry,
+          "アンカーの0xFFFFがBadEntryにならなかった");
+    uint8_t abuf[uwb::cfg::anchorAddrBlobSize()];
+    CHECK(uwb::cfg::serializeAnchorAddr(0xFFFF, abuf, sizeof(abuf), nullptr) == BlobStatus::BadEntry,
+          "自局アドレスの0xFFFFがBadEntryにならなかった");
+
+    // 受け側の容量が足りない場合（保存は5件、受けは3件ぶんしか無い）。
+    const AnchorEntry five[5] = {
+        {0x0002, {0.0f, 0.0f, 2.4f}, 0.0f, true}, {0x0003, {5.0f, 0.0f, 0.2f}, 0.0f, true},
+        {0x0004, {5.0f, 5.0f, 2.4f}, 0.0f, true}, {0x0005, {0.0f, 5.0f, 0.2f}, 0.0f, true},
+        {0x0006, {2.5f, 2.5f, 2.4f}, 0.0f, true},
+    };
+    CHECK(uwb::cfg::serializeAnchorTable(five, 5, blob, sizeof(blob), &len) == BlobStatus::Ok,
+          "5件のシリアライズに失敗した");
+    AnchorEntry small[3];
+    size_t count = 0;
+    CHECK(uwb::cfg::deserializeAnchorTable(blob, len, small, 3, &count) == BlobStatus::TooShort,
+          "受け側の容量不足がTooShortにならなかった");
+}
+
+static void scenario12_cfgstore_corruption()
+{
+    std::printf("--- 12. uwb_cfgstore: 壊れたデータ・未初期化フラッシュ ---\n");
+
+    const AnchorEntry src[4] = {
+        {0x0002, {0.0f, 0.0f, 2.4f}, 0.0f, true},
+        {0x0003, {5.0f, 0.0f, 0.2f}, 0.0f, true},
+        {0x0004, {5.0f, 5.0f, 2.4f}, 0.0f, true},
+        {0x0005, {0.0f, 5.0f, 0.2f}, 0.0f, true},
+    };
+    uint8_t good[uwb::cfg::kMaxBlobSize];
+    size_t len = 0;
+    CHECK(uwb::cfg::serializeAnchorTable(src, 4, good, sizeof(good), &len) == BlobStatus::Ok,
+          "基準となるバイト列を作れなかった");
+
+    AnchorEntry out[kMaxAnchors];
+    size_t count = 0;
+    uint8_t bad[uwb::cfg::kMaxBlobSize];
+
+    // (1) 未初期化フラッシュ。全0 と 全0xFF のどちらも「設定が無い」と
+    //     判定できること（＝呼び出し側が既定値へ倒せること）。
+    std::memset(bad, 0x00, len);
+    CHECK(uwb::cfg::deserializeAnchorTable(bad, len, out, kMaxAnchors, &count) == BlobStatus::BadMagic,
+          "全0のバイト列がBadMagicにならなかった");
+    std::memset(bad, 0xFF, len);
+    CHECK(uwb::cfg::deserializeAnchorTable(bad, len, out, kMaxAnchors, &count) == BlobStatus::BadMagic,
+          "全0xFFのバイト列がBadMagicにならなかった");
+
+    // (2) 短すぎる（書き込み途中で電源が落ちた等）。
+    CHECK(uwb::cfg::deserializeAnchorTable(good, 0, out, kMaxAnchors, &count) == BlobStatus::TooShort,
+          "長さ0がTooShortにならなかった");
+    CHECK(uwb::cfg::deserializeAnchorTable(good, uwb::cfg::kBlobHeaderSize + uwb::cfg::kBlobCrcSize - 1, out,
+                                            kMaxAnchors, &count) == BlobStatus::TooShort,
+          "ヘッダ+CRC未満がTooShortにならなかった");
+
+    // (3) フォーマット版が違う（将来の版で書かれた設定を読んだ場合）。
+    std::memcpy(bad, good, len);
+    bad[4] = static_cast<uint8_t>(uwb::cfg::kBlobVersion + 1);
+    refreshCrc(bad, len);
+    CHECK(uwb::cfg::deserializeAnchorTable(bad, len, out, kMaxAnchors, &count) == BlobStatus::BadVersion,
+          "版違いがBadVersionにならなかった");
+
+    // (4) 種別が違う（アドレスのキーにテーブルが入っていた等）。
+    CHECK(uwb::cfg::deserializeAnchorAddr(good, len, nullptr) == BlobStatus::NullArg,
+          "outAddr=nullptrがNullArgにならなかった");
+    uint16_t addr = 0;
+    CHECK(uwb::cfg::deserializeAnchorAddr(good, len, &addr) == BlobStatus::BadKind,
+          "テーブルのバイト列をアドレスとして読んだのにBadKindにならなかった");
+
+    // (5) CRC不一致（1ビット化け）。**CRCを直さずに**中身だけ書き換える。
+    std::memcpy(bad, good, len);
+    bad[uwb::cfg::kBlobHeaderSize + 4] ^= 0x01u; // 先頭エントリの pos[0] の最下位バイト
+    CHECK(uwb::cfg::deserializeAnchorTable(bad, len, out, kMaxAnchors, &count) == BlobStatus::BadCrc,
+          "1ビット化けがBadCrcにならなかった");
+
+    // (6) 件数だけ改ざん（長さと合わなくなる）。CRCも直しておく＝
+    //     CRCでは検出できないので、長さの整合で弾く必要がある。
+    std::memcpy(bad, good, len);
+    bad[8] = 5; // count 4 -> 5
+    refreshCrc(bad, len);
+    CHECK(uwb::cfg::deserializeAnchorTable(bad, len, out, kMaxAnchors, &count) == BlobStatus::BadLength,
+          "件数改ざん（長さ不整合）がBadLengthにならなかった");
+
+    // (7) 件数が上限超。
+    std::memcpy(bad, good, len);
+    bad[8] = static_cast<uint8_t>(kMaxAnchors + 1);
+    bad[9] = 0;
+    refreshCrc(bad, len);
+    CHECK(uwb::cfg::deserializeAnchorTable(bad, len, out, kMaxAnchors, &count) == BlobStatus::BadCount,
+          "件数が上限超なのにBadCountにならなかった");
+
+    // (8) 件数0。
+    std::memcpy(bad, good, len);
+    bad[8] = 0;
+    bad[9] = 0;
+    refreshCrc(bad, len);
+    CHECK(uwb::cfg::deserializeAnchorTable(bad, len, out, kMaxAnchors, &count) == BlobStatus::BadCount,
+          "件数0がBadCountにならなかった");
+
+    // (9) enabled が 0/1 以外（CRCは通るが値としてありえない）。
+    std::memcpy(bad, good, len);
+    bad[uwb::cfg::kBlobHeaderSize + 2] = 0x7F;
+    refreshCrc(bad, len);
+    CHECK(uwb::cfg::deserializeAnchorTable(bad, len, out, kMaxAnchors, &count) == BlobStatus::BadEntry,
+          "enabledが0/1以外なのにBadEntryにならなかった");
+
+    // (10) 座標にNaNが入っている（CRCは通る）。ソルバへ渡す前に弾くこと。
+    std::memcpy(bad, good, len);
+    const uint8_t nanBits[4] = {0x00, 0x00, 0xC0, 0x7F}; // quiet NaN (LE)
+    std::memcpy(bad + uwb::cfg::kBlobHeaderSize + 4, nanBits, 4);
+    refreshCrc(bad, len);
+    CHECK(uwb::cfg::deserializeAnchorTable(bad, len, out, kMaxAnchors, &count) == BlobStatus::BadEntry,
+          "NaN座標がBadEntryにならなかった");
+
+    // (11) 座標が桁違い（約 1.99e30 m）。CRCは通るが範囲外。
+    std::memcpy(bad, good, len);
+    const uint8_t hugeBits[4] = {0xCA, 0xF2, 0x49, 0x71}; // 1e30f (LE)
+    std::memcpy(bad + uwb::cfg::kBlobHeaderSize + 4, hugeBits, 4);
+    refreshCrc(bad, len);
+    CHECK(uwb::cfg::deserializeAnchorTable(bad, len, out, kMaxAnchors, &count) == BlobStatus::BadEntry,
+          "桁違いの座標がBadEntryにならなかった");
+
+    // (12) アドレスのバイト列に 0xFFFF が入っている（CRCは通る）。
+    uint8_t abuf[uwb::cfg::anchorAddrBlobSize()];
+    size_t alen = 0;
+    CHECK(uwb::cfg::serializeAnchorAddr(0x0003, abuf, sizeof(abuf), &alen) == BlobStatus::Ok,
+          "アドレスのバイト列を作れなかった");
+    abuf[uwb::cfg::kBlobHeaderSize + 0] = 0xFF;
+    abuf[uwb::cfg::kBlobHeaderSize + 1] = 0xFF;
+    refreshCrc(abuf, alen);
+    CHECK(uwb::cfg::deserializeAnchorAddr(abuf, alen, &addr) == BlobStatus::BadEntry,
+          "アドレス0xFFFFがBadEntryにならなかった");
+
+    // (13) CRC-32 そのものの検算（既知ベクトル "123456789" -> 0xCBF43926）。
+    const uint8_t vec[9] = {'1', '2', '3', '4', '5', '6', '7', '8', '9'};
+    CHECK(uwb::cfg::crc32(vec, sizeof(vec)) == 0xCBF43926u, "CRC-32の既知ベクトルが合わない (0x%08lX)",
+          static_cast<unsigned long>(uwb::cfg::crc32(vec, sizeof(vec))));
+
+    // (14) ログ表示に使う名前が必ず返ること（nullptrを返さない）。
+    const BlobStatus all[] = {BlobStatus::Ok,        BlobStatus::TooShort,  BlobStatus::BadMagic,
+                              BlobStatus::BadVersion, BlobStatus::BadKind,   BlobStatus::BadCount,
+                              BlobStatus::BadLength,  BlobStatus::BadCrc,    BlobStatus::BadEntry,
+                              BlobStatus::NullArg};
+    for (size_t i = 0; i < sizeof(all) / sizeof(all[0]); ++i) {
+        CHECK(uwb::cfg::blobStatusName(all[i]) != nullptr, "blobStatusName()がnullptrを返した (i=%zu)", i);
+    }
+}
+
 int main()
 {
     std::printf("=== tools/test_pipeline: uwb_ranging 測位パイプライン 合成データ検証 ===\n");
@@ -428,6 +753,9 @@ int main()
     scenario7_r1_us_to_uus();
     scenario8_r8_sfd_timeout_auto();
     scenario9_r2_frame_match();
+    scenario10_cfgstore_roundtrip();
+    scenario11_cfgstore_boundaries();
+    scenario12_cfgstore_corruption();
 
     std::printf("\n=== %d 件中 %d 件失敗 ===\n", g_run, g_fail);
     return (g_fail == 0) ? 0 : 1;

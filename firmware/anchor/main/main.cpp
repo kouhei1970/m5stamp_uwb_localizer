@@ -26,8 +26,13 @@
  * こちらでも平均/標準偏差を出す。firmware/twr のANCHOR側ログには無かった
  * 成功率(%)は本ファームで追加した。
  *
- * NVS保存・シリアルコンソールからのショートアドレス変更は未実装(将来課題)。
- * 現時点ではKconfigの UWB_ANCHOR_SHORT_ADDR の値を書き込み時に焼き込む形。
+ * ショートアドレスは **NVS に保存された値を優先し、無ければ Kconfig の
+ * UWB_ANCHOR_SHORT_ADDR を既定値として使う**(components/uwb_cfgstore)。
+ * NVS が空・未初期化・破損のいずれでも必ず既定値へフォールバックするので、
+ * 購入者が何も設定しなければ従来どおり Kconfig の値でそのまま動く。
+ * 実行時の変更は USB-Serial/JTAG 上のシリアルコンソール(anchor_console.cpp、
+ * CONFIG_UWB_ANCHOR_CONSOLE で無効化可)から addr set / save で行う。
+ * これにより「5台に別アドレスを焼くために5回ビルドし直す」必要が無くなる。
  *
  * 【docs/REIMPL_PLAN.md R3-1/R9】以下の各 static constexpr は、旧
  * third_party/M5Stamp-UWB/examples の .ino 値をそのまま踏襲していたが、
@@ -44,8 +49,13 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include "uwb_cfgstore.hpp"
 #include "uwb_port.h"
 #include "uwb_qm33120.hpp"
+
+#if CONFIG_UWB_ANCHOR_CONSOLE
+#include "anchor_console.hpp"
+#endif
 
 #if CONFIG_UWB_ANCHOR_BOARD_ATOMS3
 #include "boards/atoms3.h"
@@ -72,10 +82,31 @@ static constexpr uint16_t PAN_ID = 0xDECA;
 // タグ側(initiator)のショートアドレス。firmware/tag(別タスクで作成予定)の
 // 実装が固まるまでは、firmware/twr と同じくここでは固定値として扱う。
 static constexpr uint16_t TAG_SHORT_ADDR = 0x0001;
-// このアンカー自身のショートアドレス。Kconfigの UWB_ANCHOR_SHORT_ADDR
-// (main/Kconfig.projbuild) をそのまま使う。実機5台それぞれに異なる値を
-// 書き込んで区別する運用のため、ソース上の固定値にはしない。
-static constexpr uint16_t ANCHOR_SHORT_ADDR = CONFIG_UWB_ANCHOR_SHORT_ADDR;
+// このアンカー自身のショートアドレスの **既定値**。Kconfigの
+// UWB_ANCHOR_SHORT_ADDR (main/Kconfig.projbuild) は
+// 「NVSが空のときの初期値」という位置づけに変わった。実運用では
+// シリアルコンソールの addr set / save で個体ごとに設定する。
+static constexpr uint16_t ANCHOR_SHORT_ADDR_DEFAULT = CONFIG_UWB_ANCHOR_SHORT_ADDR;
+
+// 起動時に確定するショートアドレス。NVSに保存があればその値、無ければ
+// ANCHOR_SHORT_ADDR_DEFAULT。コンソール無効時はこの値が最後まで使われる。
+static uint16_t g_shortAddr = ANCHOR_SHORT_ADDR_DEFAULT;
+
+/**
+ * @brief いま有効なショートアドレスを返す。測距ループが1回ごとに呼ぶ。
+ *
+ * コンソール有効時は共有状態(ミューテックス保護)から読むので、addr set の
+ * 結果が次の応答から反映される。無効時は起動時に確定した値を返すだけで、
+ * 従来と同じく分岐も同期も入らない。
+ */
+static inline uint16_t currentShortAddr()
+{
+#if CONFIG_UWB_ANCHOR_CONSOLE
+    return anchorapp::currentShortAddr();
+#else
+    return g_shortAddr;
+#endif
+}
 
 /**
  * @brief 距離サンプル(mm)の平均・標準偏差をオンライン計算する
@@ -101,6 +132,29 @@ struct DistanceStats {
         return (count < 2) ? 0.0 : std::sqrt(m2 / static_cast<double>(count - 1));
     }
 };
+
+/**
+ * @brief 測距統計をコンソール(info コマンド)へ公開する。
+ *
+ * コンソール無効時は空関数になり、呼び出しは最適化で消える(従来と同じ挙動)。
+ * SS-TWR ではAnchor側で距離を計算しないので、距離統計は空のまま渡す。
+ */
+static inline void publishStats(uint32_t okCount, uint32_t failCount, const DistanceStats& dist)
+{
+#if CONFIG_UWB_ANCHOR_CONSOLE
+    anchorapp::Stats s;
+    s.ok      = okCount;
+    s.fail    = failCount;
+    s.samples = dist.count;
+    s.meanMm  = dist.mean;
+    s.stdMm   = dist.stddev();
+    anchorapp::publishStats(s);
+#else
+    (void)okCount;
+    (void)failCount;
+    (void)dist;
+#endif
+}
 
 /**
  * @brief boards 以下のヘッダの BOARD_UWB_PORT_CONFIG を uwb::Config へコピーする。
@@ -146,12 +200,12 @@ static constexpr uint32_t RESULT_RX_AFTER_FINAL_TX_DLY_UUS    = 200;
 static constexpr uint8_t RESULT_REPEAT_COUNT                  = 1;
 static constexpr uint32_t RESULT_REPEAT_GAP_MS                = 3;
 
-static uwb::DSRangeConfig makeRangeConfig()
+static uwb::DSRangeConfig makeRangeConfig(uint16_t selfAddr)
 {
     uwb::DSRangeConfig range;
     range.panId                          = PAN_ID;
     range.initiatorAddress               = TAG_SHORT_ADDR;
-    range.responderAddress               = ANCHOR_SHORT_ADDR;
+    range.responderAddress               = selfAddr;
     range.responseRxAfterTxDelayUus      = RESPONSE_RX_AFTER_TX_DLY_UUS;
     range.responseTxDelayUus             = RESPONSE_TX_DLY_UUS;
     range.finalTxDelayUus                = FINAL_TX_DLY_UUS;
@@ -172,13 +226,16 @@ static void runRole(uwb::Qm33120& uwb)
     DistanceStats stats;
 
     while (1) {
-        const uwb::DSResponderResult result = uwb.respondDSRange(makeRangeConfig());
+        // ショートアドレスは1回ごとに読み直す。コンソールから addr set された
+        // 場合、進行中の1回のTWRには影響させず、次の応答から新しい値になる。
+        const uwb::DSResponderResult result = uwb.respondDSRange(makeRangeConfig(currentShortAddr()));
         if (!result.success) {
             if (result.error == uwb::Error::RxTimeout) {
                 // まだPollが来ていないだけ。原本のANCHOR例と同じく無視して再ループ。
                 continue;
             }
             failCount++;
+            publishStats(respCount, failCount, stats);
             if ((failCount % ANCHOR_LOG_INTERVAL) == 0) {
                 const uint32_t total = respCount + failCount;
                 const float rate =
@@ -191,6 +248,7 @@ static void runRole(uwb::Qm33120& uwb)
 
         respCount++;
         stats.add(result.distanceM * 1000.0f);
+        publishStats(respCount, failCount, stats);
         if ((respCount % ANCHOR_LOG_INTERVAL) != 0) {
             continue;
         }
@@ -218,12 +276,12 @@ static constexpr uint32_t RANGE_HOST_TIMEOUT_MS         = 10;
 static constexpr uint32_t RESPONSE_RX_AFTER_TX_DLY_UUS  = 1500;
 static constexpr uint32_t RESPONSE_TX_DLY_UUS           = 3000;
 
-static uwb::RangeConfig makeRangeConfig()
+static uwb::RangeConfig makeRangeConfig(uint16_t selfAddr)
 {
     uwb::RangeConfig range;
     range.panId                     = PAN_ID;
     range.initiatorAddress          = TAG_SHORT_ADDR;
-    range.responderAddress          = ANCHOR_SHORT_ADDR;
+    range.responderAddress          = selfAddr;
     range.responseRxAfterTxDelayUus = RESPONSE_RX_AFTER_TX_DLY_UUS;
     range.responseTxDelayUus        = RESPONSE_TX_DLY_UUS;
     range.rxTimeoutUus              = RX_TIMEOUT_UUS;
@@ -236,13 +294,15 @@ static void runRole(uwb::Qm33120& uwb)
     uint32_t respCount = 0, failCount = 0;
 
     while (1) {
-        const uwb::ResponderResult result = uwb.respondRange(makeRangeConfig());
+        // ショートアドレスは1回ごとに読み直す（DS-TWR側と同じ理由）。
+        const uwb::ResponderResult result = uwb.respondRange(makeRangeConfig(currentShortAddr()));
         if (!result.success) {
             if (result.error == uwb::Error::RxTimeout) {
                 // まだPollが来ていないだけ。原本のANCHOR例と同じく無視して再ループ。
                 continue;
             }
             failCount++;
+            publishStats(respCount, failCount, DistanceStats{});
             if ((failCount % ANCHOR_LOG_INTERVAL) == 0) {
                 const uint32_t total = respCount + failCount;
                 const float rate =
@@ -254,6 +314,7 @@ static void runRole(uwb::Qm33120& uwb)
         }
 
         respCount++;
+        publishStats(respCount, failCount, DistanceStats{});
         if ((respCount % ANCHOR_LOG_INTERVAL) != 0) {
             continue;
         }
@@ -270,8 +331,15 @@ static void runRole(uwb::Qm33120& uwb)
 
 extern "C" void app_main(void)
 {
-    ESP_LOGI(TAG, "Phase 4 Step 2 uwb_qm33120 production anchor firmware, board=%s method=%s short_addr=0x%04X",
-             BOARD_NAME, METHOD_NAME, ANCHOR_SHORT_ADDR);
+    /* --- NVS からショートアドレスを読む（無ければKconfig既定値） ---
+     * ConfigStore::init() が失敗しても loadAnchorAddr() は必ず既定値を返すので、
+     * ここでは戻り値を見て中断しない。NVS破損で起動しなくなるのを避ける方針。 */
+    uwb::ConfigStore::init();
+    const uwb::ConfigSource addrSource =
+        uwb::ConfigStore::loadAnchorAddr(ANCHOR_SHORT_ADDR_DEFAULT, &g_shortAddr);
+
+    ESP_LOGI(TAG, "Phase 4 Step 2 uwb_qm33120 production anchor firmware, board=%s method=%s short_addr=0x%04X (%s)",
+             BOARD_NAME, METHOD_NAME, g_shortAddr, uwb::configSourceName(addrSource));
 
     uwb::Qm33120 uwbDevice;
     const uwb::Config cfg = makeConfigFromBoard();
@@ -295,7 +363,31 @@ extern "C" void app_main(void)
         return;
     }
     ESP_LOGI(TAG, "begin() + PHY config OK, starting ANCHOR/%s loop (short_addr=0x%04X)", METHOD_NAME,
-             ANCHOR_SHORT_ADDR);
+             g_shortAddr);
+
+#if CONFIG_UWB_ANCHOR_CONSOLE
+    /* --- シリアルコンソール（別タスクで動く REPL）を起動する ---
+     * 共有状態の初期化に失敗した場合や REPL が立たなかった場合でも、
+     * 測距そのものは g_shortAddr のまま継続する（設定変更ができなくなるだけ）。 */
+    anchorapp::StaticInfo consoleInfo;
+    consoleInfo.boardName   = BOARD_NAME;
+    consoleInfo.methodName  = METHOD_NAME;
+    consoleInfo.chipName    = uwbDevice.chipName();
+    consoleInfo.deviceId    = uwbDevice.deviceId();
+    consoleInfo.defaultAddr = ANCHOR_SHORT_ADDR_DEFAULT;
+    consoleInfo.tagAddr     = TAG_SHORT_ADDR;
+    consoleInfo.panId       = PAN_ID;
+    consoleInfo.source      = addrSource;
+    if (anchorapp::sharedInit(g_shortAddr, consoleInfo)) {
+        const esp_err_t consoleErr = anchorapp::consoleStart();
+        if (consoleErr == ESP_OK) {
+            ESP_LOGI(TAG, "シリアルコンソールを起動しました（help でコマンド一覧）");
+        } else {
+            ESP_LOGE(TAG, "シリアルコンソールを起動できませんでした (err=%s)。測距は継続します",
+                     esp_err_to_name(consoleErr));
+        }
+    }
+#endif
 
     runRole(uwbDevice);
 }
