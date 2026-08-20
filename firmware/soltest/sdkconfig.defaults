@@ -1,0 +1,21 @@
+CONFIG_IDF_TARGET="esp32s3"
+
+# このアプリは実機の UWB ハードウェア（uwb_port / qm33120w_sdk）に一切
+# 依存しない。合成データ（既知アンカー配置＋既知タグ座標から計算した
+# 理論距離）で uwb_loc（測位ソルバ）が ESP32-S3 上で動くことだけを見る。
+# そのため firmware/probe 等にある FreeRTOS tick=1000Hz 設定
+# （DS-TWR の遅延送信ウィンドウ対策）はここでは不要。
+
+# --- 性能計測アプリ固有の設定（docs/PLATFORM_TUNING.md 参照）---
+#
+# ESP-IDF の既定は CONFIG_COMPILER_OPTIMIZATION_DEBUG (-Og)。
+# 本アプリはサイクル計測が目的なので、実運用ファーム相当の最適化レベルで
+# 測らないと数字に意味がない（ホスト側の比較ベンチも -O2 で取っている）。
+# build/compile_commands.json で実フラグが -Og になっていることを確認した上で
+# -O2 系の CONFIG_COMPILER_OPTIMIZATION_PERF に切り替える。
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+
+# ESP32-S3 は 240MHz 対応だが既定は 160MHz。本アプリは速度計測が目的で
+# 消費電力は問題にならないので 240MHz にする（他の firmware/* は電池駆動の
+# 実運用を想定するため既定 160MHz のままにしている。ここだけの変更）。
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y

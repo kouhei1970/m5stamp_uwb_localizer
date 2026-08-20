@@ -1,0 +1,60 @@
+menu "uwb_loc (測位ソルバ) Configuration"
+
+    config UWB_LOC_MAX_ANCHORS
+        int "同時に扱えるアンカー数の上限 (UWB_MAX_ANCHORS)"
+        range 4 16
+        default 8
+        help
+            uwb_loc.h の UWB_MAX_ANCHORS を上書きする。アンカー座標配列や
+            観測バッファなど、静的に確保する領域の大きさに影響する
+            （台数を絞るほど RAM を節約できる）。
+
+            本プロジェクトの運用構成はアンカー4〜8台想定
+            （docs/PLAN.md の「運用構成」参照）であり、取り込み元の既定値
+            16 のままだと使わない分の RAM を無駄に確保してしまう。そのため
+            既定値は 8 とする。
+
+            なお実際に静的配列のサイズへ効くのは主に UWB_MAX_MEAS
+            （1エポックの観測数上限）側で、UWB_MAX_ANCHORS はアンカー配列
+            自体の確保を呼び出し側に委ねている（uwb_config.anchors は
+            借用のみでライブラリ側はコピーしない）ため、この値そのものは
+            サンプルコード（examples/03_replay.c 等）が固定長配列を
+            確保する際の目安として使われる。アンカー台数を増やす予定が
+            あるなら、この値も合わせて引き上げること。
+
+    config UWB_LOC_MAX_MEAS
+        int "1エポックあたりの観測数上限 (UWB_MAX_MEAS)"
+        range 4 32
+        default 8
+        help
+            uwb_loc.h の UWB_MAX_MEAS を上書きする。Lv0〜Lv2 の残差・
+            ヤコビアン・重みなどの作業配列や、EKF の立ち上げ待ちバッファの
+            大きさに直接効く（スタック使用量に最も影響するパラメータ）。
+
+            1エポックの観測数はアンカー台数と概ね一致するので、
+            UWB_LOC_MAX_ANCHORS と同じ値（既定 8）にしておけば十分。
+
+    config UWB_LOC_ID_LEN
+        int "アンカーIDの文字列長 (UWB_ID_LEN、終端含む)"
+        range 1 32
+        default 16
+        help
+            uwb_loc.h の UWB_ID_LEN を上書きする。uwb_anchor.id の
+            文字列バッファ長（終端 NUL を含む）。ID を使わず添字だけで
+            アンカーを識別するなら 1 まで縮めてよい。
+
+    config UWB_LOC_USE_FLOAT
+        bool "uwb_real を float にする (UWB_USE_FLOAT)"
+        default n
+        help
+            uwb_loc.h の UWB_USE_FLOAT を有効にし、uwb_real を double から
+            float に切り替える。ROM/RAM は節約できるが、取り込み元
+            third_party/uwb_localizer/c/README.md が明記している通り、
+            Beck法（uwb_beck_gtrs、Lv2 の初期値作りに使う）の二分法や
+            共分散の計算は有効桁が少ない float だと桁落ちしやすい。
+
+            そのため既定は OFF（double のまま）とする。float 化を試すのは、
+            まず double で測位精度・EKFの追従を検証してから、ROM/RAM が
+            本当に足りない場合の最終手段とすること。
+
+endmenu

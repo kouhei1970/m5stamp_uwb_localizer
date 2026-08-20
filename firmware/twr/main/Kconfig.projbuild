@@ -1,0 +1,57 @@
+menu "UWB TWR Configuration"
+
+    choice UWB_TWR_BOARD
+        prompt "Target host board"
+        default UWB_TWR_BOARD_STAMPS3
+        help
+            Select which host board's pin definitions (boards/stamps3.h or
+            boards/atoms3.h, at the repo root) main.cpp uses to configure
+            uwb::Qm33120.
+
+        config UWB_TWR_BOARD_STAMPS3
+            bool "M5Stamp S3"
+
+        config UWB_TWR_BOARD_ATOMS3
+            bool "M5 AtomS3"
+
+    endchoice
+
+    choice UWB_TWR_ROLE
+        prompt "Device role"
+        default UWB_TWR_ROLE_TAG
+        help
+            TAG (initiator) starts one ranging exchange every 200ms and logs
+            success rate / distance statistics. ANCHOR (responder) blocks in
+            a loop responding to polls; RxTimeout (no poll received yet) is
+            treated as normal and not logged. Flash one board as TAG and a
+            second board as ANCHOR (same PAN ID / addresses / PHY, i.e. same
+            defaults) to range between them.
+
+        config UWB_TWR_ROLE_TAG
+            bool "TAG (initiator)"
+
+        config UWB_TWR_ROLE_ANCHOR
+            bool "ANCHOR (responder)"
+
+    endchoice
+
+    choice UWB_TWR_METHOD
+        prompt "Ranging method"
+        default UWB_TWR_METHOD_SS
+        help
+            SS-TWR (single-sided, requestRange()/respondRange()): one
+            Poll/Response exchange, distance computed on the TAG side.
+            DS-TWR (double-sided, requestDSRange()/respondDSRange()):
+            adds a Final exchange and a Result frame; distance is computed
+            on the ANCHOR side and relayed back to the TAG. Both sides of a
+            link must use the same method.
+
+        config UWB_TWR_METHOD_SS
+            bool "SS-TWR"
+
+        config UWB_TWR_METHOD_DS
+            bool "DS-TWR"
+
+    endchoice
+
+endmenu

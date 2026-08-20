@@ -1,0 +1,11 @@
+idf_component_register(
+    SRCS
+        "deca_compat.c"
+        "deca_interface.c"
+        "deca_rsl.c"
+        "dw3720/dw3720_device.c"
+        "lib/qmath/src/qmath.c"
+    INCLUDE_DIRS
+        "."
+        "dw3720"
+)

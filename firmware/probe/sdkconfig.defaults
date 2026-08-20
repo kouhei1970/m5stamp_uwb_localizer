@@ -1,0 +1,19 @@
+CONFIG_IDF_TARGET="esp32s3"
+
+# --- FreeRTOS tick = 1000Hz（重要）---
+# 移植元の Arduino-ESP32 は FreeRTOS tick 1000Hz が既定で、M5Stamp-UWB の
+# 受信待ちループは delay(1) = 1ms 刻みでポーリングしている。
+# ESP-IDF の既定 100Hz のままだと vTaskDelay(pdMS_TO_TICKS(1)) が 10ms 刻みになり、
+# 移植元と挙動が変わる。特に TWR の遅延送信（dwt_setdelayedtrxtime で指定した
+# 時刻までに送信を起動する必要がある）では、10ms もタスクが止まると
+# 送信ウィンドウを取り逃す。移植元と同じ 1000Hz に合わせる。
+CONFIG_FREERTOS_HZ=1000
+
+# --- ESP32-S3 専用最適化（本リポジトリは ESP32-S3 + M5Stack UWB 専用）---
+# 既定の CONFIG_COMPILER_OPTIMIZATION_DEBUG は -Og でビルドされる。
+# 測位計算（uwb_loc）は演算律速なので -O2 にする。
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+
+# ESP32-S3 は 240MHz 対応。既定の 160MHz からそのまま 1.5 倍になる。
+# 電池駆動で消費電力が問題になる場合はここを戻すこと。
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y

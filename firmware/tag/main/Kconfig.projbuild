@@ -1,0 +1,90 @@
+menu "UWB Tag Configuration"
+
+    choice UWB_TAG_BOARD
+        prompt "ホストボード"
+        default UWB_TAG_BOARD_STAMPS3
+        help
+            main.cpp が uwb::Qm33120 の設定に使うピン定義
+            （リポジトリ直下の boards/stamps3.h / boards/atoms3.h）を選ぶ。
+
+        config UWB_TAG_BOARD_STAMPS3
+            bool "M5Stamp S3"
+
+        config UWB_TAG_BOARD_ATOMS3
+            bool "M5 AtomS3"
+
+    endchoice
+
+    choice UWB_TAG_METHOD
+        prompt "測距方式"
+        default UWB_TAG_METHOD_DS
+        help
+            SS-TWR (requestRange()): Poll/Response の1往復。距離はTag側で計算。
+            DS-TWR (requestDSRange()): さらにFinal/Result往復が加わり、距離は
+            Anchor側で計算されTagへ返送される。firmware/anchor 側の設定
+            （firmware/anchor/main/Kconfig.projbuild）と必ず同じ方式にすること。
+            既定はDS-TWR（本プロジェクトの本番運用の判断。SS-TWRよりクロック
+            ドリフトの影響を受けにくい代わりに、アンカーあたり往復が1回増える）。
+
+        config UWB_TAG_METHOD_SS
+            bool "SS-TWR"
+
+        config UWB_TAG_METHOD_DS
+            bool "DS-TWR"
+
+    endchoice
+
+    config UWB_TAG_PER_ANCHOR_INTERVAL_MS
+        int "同一周内でアンカーへの測距を始める間隔の最小値 [ms]"
+        range 0 5000
+        default 0
+        help
+            uwb::SchedulerConfig::perAnchorIntervalMs に渡す値。0なら前の
+            アンカーの測距が終わり次第すぐ次へ進む（最速）。R6（更新レート）
+            の実測・調整のためにあえて間隔を空けたい場合に上げる
+            （docs/PLAN.md 参照）。
+
+    config UWB_TAG_CYCLE_INTERVAL_MS
+        int "1周終えてから次の周を始めるまでの間隔の最小値 [ms]"
+        range 0 60000
+        default 0
+        help
+            uwb::SchedulerConfig::cycleIntervalMs に渡す値。0なら前の周の
+            ポーリングが終わり次第すぐ次の周を始める。下流の消費側の
+            想定周期に合わせて意図的に更新レートを抑えたい場合に上げる。
+
+    config UWB_TAG_ENABLE_EKF
+        bool "毎周期 Lv3 EKF (uwb_ekf) も呼ぶ"
+        default n
+        help
+            有効にすると、Lv0/Lv2の呼び出しと同じ単一タスクから
+            uwb::PositioningPipeline::updateEkf() を毎周期呼ぶ
+            （uwb_ekf はスレッド安全でないため。uwb_ranging_pipeline.hpp
+            参照）。JSON LinesのfixログにLv3のセクションと計算時間
+            (solve_us_lv3) が追加される。既定は無効
+            （Lv0/Lv2の本番経路の検証にはEKFの状態管理までは不要なため）。
+
+    config UWB_TAG_AUTO_2D_FALLBACK
+        bool "アンカー平面が原点を通ると検出された場合、dim=2(高さ固定)へ自動フォールバックする"
+        default y
+        help
+            docs/ANCHOR_PLACEMENT.md / PROGRESS.md Phase 4 に記録されている
+            既知の現象: 登録済みアンカーが全て同一平面上にあり、かつその
+            平面がワールド原点をほぼ通っている場合（床にアンカーを並べる
+            構成で z~=0 になりがち）、Lv2 は毎周期 ok=0 を返す。
+            このオプションが有効で、起動時にその条件が検出されたときは、
+            main.cpp が AnchorTable::setDimension2D(UWB_TAG_FIXED_Z_MM/1000.0f)
+            を呼び、x,yだけは解けるようにする（高さは固定値になり解かれない）。
+            生の ok=0 失敗をそのまま見たい場合（配置を調整している最中など）は
+            無効にする。
+
+    config UWB_TAG_FIXED_Z_MM
+        int "dim=2フォールバック時に固定する高さ [mm]"
+        range -10000 10000
+        default 1200
+        depends on UWB_TAG_AUTO_2D_FALLBACK
+        help
+            UWB_TAG_AUTO_2D_FALLBACK が発動したときのみ使われる。
+            ワールド座標系でのタグの想定運用高さを設定すること。
+
+endmenu

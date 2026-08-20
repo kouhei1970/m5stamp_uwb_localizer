@@ -1,0 +1,27 @@
+# ESP-IDF build artifacts
+build/
+sdkconfig
+sdkconfig.old
+managed_components/
+dependencies.lock
+
+# Python
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store
+
+# Editors
+.vscode/
+.idea/
+
+# Local reference clones (not vendored into this repo's git history;
+# only the qm33120w_sdk subset is copied into components/, see THIRD_PARTY_LICENSES.md)
+third_party/
+
+# Vendor reference documents fetched for research (docs/refs/).
+# Several Decawave/Qorvo PDFs carry "confidential / no reproduction permitted"
+# footers, so they must NOT be committed. Source URLs are recorded in the
+# research notes instead.
+docs/refs/

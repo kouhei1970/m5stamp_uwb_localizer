@@ -1,0 +1,49 @@
+menu "UWB Anchor Configuration"
+
+    choice UWB_ANCHOR_BOARD
+        prompt "Target host board"
+        default UWB_ANCHOR_BOARD_STAMPS3
+        help
+            Select which host board's pin definitions (boards/stamps3.h or
+            boards/atoms3.h, at the repo root) main.cpp uses to configure
+            uwb::Qm33120.
+
+        config UWB_ANCHOR_BOARD_STAMPS3
+            bool "M5Stamp S3"
+
+        config UWB_ANCHOR_BOARD_ATOMS3
+            bool "M5 AtomS3"
+
+    endchoice
+
+    choice UWB_ANCHOR_METHOD
+        prompt "Ranging method"
+        default UWB_ANCHOR_METHOD_DS
+        help
+            DS-TWR (double-sided, respondDSRange()): adds a Final exchange
+            and a Result frame; distance is computed on this ANCHOR side and
+            relayed back to the TAG. 本プロジェクトの本番運用では DS-TWR を
+            優先する方針のため、既定値は DS-TWR とする。
+            SS-TWR (single-sided, respondRange()): one Poll/Response
+            exchange, distance is computed on the TAG side instead. TAG側も
+            同じ方式を選ぶ必要がある。
+
+        config UWB_ANCHOR_METHOD_DS
+            bool "DS-TWR (default, production)"
+
+        config UWB_ANCHOR_METHOD_SS
+            bool "SS-TWR"
+
+    endchoice
+
+    config UWB_ANCHOR_SHORT_ADDR
+        hex "自分のショートアドレス (initiatorAddress と対にする値)"
+        range 0x0000 0xFFFE
+        default 0x0002
+        help
+            このアンカー自身のTWRショートアドレス。手持ちのStamp UWB-F 5台
+            それぞれに異なる値 (例: 0x0002, 0x0003, 0x0004, 0x0005, 0x0006)
+            を書き込んで区別する。0xFFFF はブロードキャストアドレスなので
+            使わないこと。
+
+endmenu

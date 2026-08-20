@@ -1,0 +1,19 @@
+menu "UWB Probe Configuration"
+
+    choice UWB_PROBE_BOARD
+        prompt "Target host board"
+        default UWB_PROBE_BOARD_STAMPS3
+        help
+            Select which host board's pin definitions (boards/stamps3.h or
+            boards/atoms3.h, at the repo root) main.c uses to configure
+            uwb_port.
+
+        config UWB_PROBE_BOARD_STAMPS3
+            bool "M5Stamp S3"
+
+        config UWB_PROBE_BOARD_ATOMS3
+            bool "M5 AtomS3"
+
+    endchoice
+
+endmenu
