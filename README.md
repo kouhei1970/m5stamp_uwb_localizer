@@ -61,7 +61,7 @@ StampFly（マルチコプター機体）には依存しない汎用のスタッ
 |---|---:|---|
 | [M5Stamp UWB Module (QM33120W)](https://docs.m5stack.com/en/stamp/Stamp_UWB) （SKU `S017`）<br>または [M5Stamp UWB Module with FPC (QM33120W)](https://docs.m5stack.com/en/stamp/Stamp_UWB_F) （SKU `S017-F`） | **6** | UWB モジュール。**半田パッドを使うのでどちらでもよい** |
 | [M5StampS3A](https://docs.m5stack.com/en/core/M5StampS3A) | **1** | タグ（移動体）のホスト。**旧 M5StampS3（A 無し）と完全互換**（電源とアンテナが改良された現行版） |
-| [M5 AtomS3](https://docs.m5stack.com/en/core/AtomS3) | **5** | アンカー（固定局）のホスト |
+| [M5 AtomS3](https://docs.m5stack.com/en/core/AtomS3) | **5** | アンカー（固定局）のホスト **AtomS3R（現行）/ 無印 AtomS3（在庫限り）のどちらでも可**（IMU/地磁気を使わないため互換と推定。**実機未検証**） |
 
 **モジュールとホストは半田付けで接続します**（1.27mm ピッチのキャステレーションホール）。
 FPC コネクタ経由でも構いませんが、0.5mm 12P の変換基板が別途必要です。
