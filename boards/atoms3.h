@@ -28,16 +28,22 @@
  * - RST/IRQ: 本来 Grove ポートの I2C (SDA/SCL) に使われる G1/G2 を転用。
  *   これにより Grove I2C は使用不可になる（トレードオフとして明記）。
  *
- * WAKEUP と GP7 は UWB_PORT_PIN_UNUSED（未配線）とする。理由:
- * AtomS3 のクリーンな空き GPIO 6 本は SCK/MOSI/MISO/CS/RST/IRQ で使い切って
- * おり、残る物理ピンは G38/G39 のみだが、これらはオンボード IMU(MPU6886)
- * の I2C バスと共用（かつ底面ヘッダにも同じ信号が出ている）ため転用は
- * 安全でない。機能面での支障は無い: 本モジュールの最小配線要件は
+ * WAKEUP と GP7 は UWB_PORT_PIN_UNUSED（未配線）とする。
+ * 機能面での支障は無い: 本モジュールの最小配線要件は
  * GND/VCC/CLK/MOSI(CDI)/MISO(CDO)/CS のみであり、本ドライバはポーリング
- * 方式で動作するため IRQ 自体も必須ではない（AtomS3 では一応 IRQ は G2 に
- * 配線している）。WAKEUP 未配線時は uwb_port_wakeup_device_with_io() が
- * CS パルスによるフォールバック経路を使う
- * （components/uwb_port/src/uwb_port.c 実装済み、追加対応不要）。
+ * 方式で動作するため IRQ 自体も必須ではない（AtomS3 でも IRQ は G2 に配線）。
+ * WAKEUP 未配線時は uwb_port_wakeup_device_with_io() が CS パルスによる
+ * フォールバック経路を使う（components/uwb_port/src/uwb_port.c 実装済み）。
+ *
+ * ■ G38 / G39 は I2C として空けてある（ToF による高さ自動計測のため）
+ * 底面ヘッダには G38 / G39 も出ており、これらはオンボード IMU(MPU6886) の
+ * I2C バスである。I2C はバスなので、アドレスが衝突しなければデバイスを
+ * 追加できる（MPU6886 = 0x68、VL53L1X 系 = 0x29）。
+ * したがって「GPIO を別用途に転用する」のではなく「I2C バスに相乗りする」
+ * 形になり、SPI/RST/IRQ を一切削らずに ToF 距離センサを増設できる。
+ * docs/SURVEY_SPEC.md の「高さの自動計測」を参照。
+ *
+ * 想定: G38 = SDA, G39 = SCL（**実物で要確認**）
  */
 #define BOARD_ATOMS3_UWB_PORT_CONFIG                                     \
     {                                                                    \
