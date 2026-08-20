@@ -44,7 +44,7 @@ UWB 測位を動かすまでの完全手順です。UWB の専門知識は前提
 | 品目 | 数量 | 備考 |
 |---|---:|---|
 | **M5Stamp UWB Module (QM33120W)**（SKU `S017`）<br>または **M5Stamp UWB Module with FPC (QM33120W)**（SKU `S017-F`） | **6** | Qorvo QM33120W (DW3720) 搭載。**半田パッドを使うのでどちらでもよい** |
-| **M5Stamp S3** | **1** | タグ（移動体）のホスト |
+| **M5StampS3A** | **1** | タグ（移動体）のホスト **旧 M5StampS3（A 無し）と完全互換** |
 | **M5 AtomS3** | **5** | アンカー（固定局）のホスト |
 | USB-C ケーブル（データ通信対応） | 1〜 | 充電専用ケーブルでは書き込めない |
 | USB 電源（アンカー給電用） | 5 | モバイルバッテリ・USB ハブ等 |
@@ -246,11 +246,11 @@ idf.py build
 > キャステレーションは側面に出ているのでパッドの物理位置は表裏で変わりませんが、
 > **左右の見え方が変わります**。（`docs/SOLDER_PADS.md` §1.4, §1.7）
 
-### 3.2 タグ用の配線（M5Stamp S3 × 1台）
+### 3.2 タグ用の配線（M5StampS3A × 1台）
 
-Stamp S3 は GPIO に余裕があるので**フル配線**します。
+M5StampS3A は GPIO に余裕があるので**フル配線**します。
 
-| UWB パッド | 信号 | Stamp S3 | 必須 |
+| UWB パッド | 信号 | M5StampS3A | 必須 |
 |---:|---|---|:-:|
 | 2 | VCC_3V3 | **3V3** | ● |
 | 11 | DW_CLK | **G12** | ● |
@@ -354,7 +354,7 @@ AtomS3 は空き GPIO が実質 6 本しかないので、WAKEUP と GP7 は未�
 
 ### 4.1 書き込み
 
-Stamp S3 / AtomS3 はどちらも ESP32-S3 のネイティブ USB でつながります。
+M5StampS3A / AtomS3 はどちらも ESP32-S3 のネイティブ USB でつながります。
 
 ```sh
 . ~/esp/esp-idf/export.sh
@@ -367,7 +367,7 @@ ls /dev/cu.usbmodem*
 idf.py set-target esp32s3
 ```
 
-**M5Stamp S3（既定）の場合:**
+**M5StampS3A（既定）の場合:**
 
 ```sh
 idf.py build
@@ -385,7 +385,7 @@ idf.py -p /dev/cu.usbmodemXXXX flash monitor
 
 > **書き込みモードに入れないとき**: 通常は `idf.py flash` が自動でリセットして
 > 書き込めますが、失敗する場合は手動でダウンロードモードに入れます。
-> M5Stamp S3 は中央のボタンを押しながら USB を挿す、
+> M5StampS3A は中央のボタンを押しながら USB を挿す、
 > AtomS3 は側面のリセットボタンを 2 秒ほど長押しします。
 > （**この操作は本リポジトリでは実機確認していません**。M5Stack の各製品ページを参照）
 
@@ -394,7 +394,7 @@ idf.py -p /dev/cu.usbmodemXXXX flash monitor
 ### 4.2 期待される出力
 
 ```
-I (xxx) uwb_probe: Phase 1 UWB probe acceptance test, board=Stamp S3
+I (xxx) uwb_probe: Phase 1 UWB probe acceptance test, board=M5StampS3A
 I (xxx) uwb_probe: L1: raw DEV_ID = 0xDECA0314 (expect 0xDECA0314) -> OK
 I (xxx) uwb_probe: L2: dwt_probe + dwt_readdevid = 0xDECA0314 (expect 0xDECA0314) -> OK
 I (xxx) uwb_probe: === L1: PASS / L2: PASS ===
@@ -453,7 +453,7 @@ I (xxx) uwb_probe: L1 (periodic): raw DEV_ID = 0xDECA0314
 
 ### 5.2 ビルドと書き込み
 
-タグ役（Stamp S3 + M5Stamp UWB Module）とアンカー役（AtomS3 + M5Stamp UWB Module）を
+タグ役（M5StampS3A + M5Stamp UWB Module）とアンカー役（AtomS3 + M5Stamp UWB Module）を
 1 台ずつ用意します。ビルドディレクトリと `sdkconfig` を分けると、
 2 つの設定を行き来せずに済みます。
 
@@ -461,7 +461,7 @@ I (xxx) uwb_probe: L1 (periodic): raw DEV_ID = 0xDECA0314
 . ~/esp/esp-idf/export.sh
 cd firmware/twr
 
-# --- タグ役: Stamp S3 / TAG / SS-TWR（すべて既定値） ---
+# --- タグ役: M5StampS3A / TAG / SS-TWR（すべて既定値） ---
 mkdir -p build/tag_ss
 idf.py -B build/tag_ss -D SDKCONFIG=build/tag_ss/sdkconfig build
 
@@ -560,7 +560,7 @@ Kconfig の `UWB_ANCHOR_SHORT_ADDR` も引き続きありますが、これは
 | 方式 | **DS-TWR** |
 | ショートアドレス | `0x0002`（NVS が空のときの初期値） |
 
-`firmware/tag` の既定も **Stamp S3 / DS-TWR** なので、方式は揃っています。
+`firmware/tag` の既定も **M5StampS3A / DS-TWR** なので、方式は揃っています。
 
 <a id="anchors5-console"></a>
 
@@ -836,14 +836,14 @@ idf.py build
 idf.py -p /dev/cu.usbmodemXXXX flash monitor
 ```
 
-既定は **Stamp S3 / DS-TWR / EKF 無効 / 2D 自動フォールバック有効**です。
+既定は **M5StampS3A / DS-TWR / EKF 無効 / 2D 自動フォールバック有効**です。
 
 **アンカー 5 台に先に電源を入れてから**タグを起動してください。
 
 ### 8.2 起動時に必ず見るログ
 
 ```
-I (xxx) uwb_tag: Phase 4 Step 2 uwb_tag firmware, board=Stamp S3 method=DS-TWR anchors=5 (nvs)
+I (xxx) uwb_tag: Phase 4 Step 2 uwb_tag firmware, board=M5StampS3A method=DS-TWR anchors=5 (nvs)
 I (xxx) uwb_tag: deviceId=0xDECA0314 ... isInitialized=1
 I (xxx) uwb_tag: begin() + PHY config OK, starting ranging loop
 ```

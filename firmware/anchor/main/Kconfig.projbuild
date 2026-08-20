@@ -9,7 +9,7 @@ menu "UWB Anchor Configuration"
             uwb::Qm33120.
 
         config UWB_ANCHOR_BOARD_STAMPS3
-            bool "M5Stamp S3"
+            bool "M5StampS3A"
 
         config UWB_ANCHOR_BOARD_ATOMS3
             bool "M5 AtomS3"

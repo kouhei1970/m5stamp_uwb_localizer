@@ -11,7 +11,7 @@
  *   info                  Device ID / チップ名 / 現在の設定 / 測距統計
  *   reboot                再起動
  *
- * REPL のデバイスは USB-Serial/JTAG を既定とする（M5Stamp S3 / M5 AtomS3 は
+ * REPL のデバイスは USB-Serial/JTAG を既定とする（M5StampS3A / M5 AtomS3 は
  * USB-CDC で PC につながるため。sdkconfig.defaults で
  * CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y にしてある）。UART をコンソールに
  * 選んだ構成でもビルドが通るよう、下の #if で使う API を切り替える。

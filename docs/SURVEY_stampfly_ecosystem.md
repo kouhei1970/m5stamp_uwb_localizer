@@ -34,7 +34,7 @@
   → これを解消する形で `vehicle_new` が設計されている
 
 ## ビルド系
-- **ESP-IDF のみ**（PlatformIO なし）。ターゲット **esp32s3**（M5StampS3）
+- **ESP-IDF のみ**（PlatformIO なし）。ターゲット **esp32s3**（M5StampS3A）
 - IDF バージョン: `firmware/vehicle/dependencies.lock` に `idf: 5.5.2`
 - component 命名規則: **`sf_<layer>_<name>`**（例 `sf_hal_bmi270`）
 - 外部取得は Component Manager 経由（`managed_components/espressif__led_strip` のみ）

@@ -1,13 +1,13 @@
 /**
  * @file main.c
  * @brief Phase 1 acceptance test: verify SPI connectivity to the Qorvo
- *        QM33120W/DW3720 (M5Stack M5Stamp UWB Module) over components/uwb_port,
+ *        QM33120W/DW3720 (M5Stamp UWB Module) over components/uwb_port,
  *        via two independent checks (L1: raw SPI DEV_ID read, L2:
  *        dwt_probe()+dwt_readdevid()), mirroring
  *        third_party/M5Stamp-UWB/src/M5Stamp_UWB.cpp's begin()/probe().
  *
  * Board selection: Kconfig choice UWB_PROBE_BOARD (see
- * main/Kconfig.projbuild), default M5Stamp S3. Pin definitions live in
+ * main/Kconfig.projbuild), default M5StampS3A. Pin definitions live in
  * boards/stamps3.h / boards/atoms3.h at the repo root (PROVISIONAL, not yet
  * verified against real wiring - see the warning banner in those headers).
  */
@@ -27,7 +27,7 @@
 #else
 #include "boards/stamps3.h"
 #define BOARD_UWB_PORT_CONFIG BOARD_STAMPS3_UWB_PORT_CONFIG
-#define BOARD_NAME            "Stamp S3"
+#define BOARD_NAME            "M5StampS3A"
 #endif
 
 static const char *TAG = "uwb_probe";

@@ -8,7 +8,7 @@ menu "UWB Tag Configuration"
             （リポジトリ直下の boards/stamps3.h / boards/atoms3.h）を選ぶ。
 
         config UWB_TAG_BOARD_STAMPS3
-            bool "M5Stamp S3"
+            bool "M5StampS3A"
 
         config UWB_TAG_BOARD_ATOMS3
             bool "M5 AtomS3"

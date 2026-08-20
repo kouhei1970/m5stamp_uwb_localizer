@@ -5,8 +5,8 @@
 ピン機能制約（strapping 等）の問題ではない。
 
 ## メインMCU
-- **ESP32-S3FN8**（Xtensa LX7 デュアル 240MHz、内蔵Flash 8MB）@ StampS3
-- StampS3 が露出する GPIO は 23本:
+- **ESP32-S3FN8**（Xtensa LX7 デュアル 240MHz、内蔵Flash 8MB）@ M5StampS3A
+- M5StampS3A が露出する GPIO は 23本:
   G0,G1,G2,G3,G4,G5,G6,G7,G8,G9,G10,G11,G12,G13,G14,G15,G39,G40,G41,G42,G43,G44,G46
 - ※ローカル文書の「PSRAM 2MB」記載は ESP32-S3**FN8** の命名則と矛盾（PSRAM非搭載の疑い）。要実機確認
 
@@ -74,4 +74,4 @@ GROVE は 1系統あたり信号2本のみ。**本数が足りない。**
 ## 未確認事項
 - GROVE の供給電流定格
 - G5/G10/G41/G42 が物理パッドとして存在するか
-- StampS3 の PSRAM 有無
+- M5StampS3A の PSRAM 有無

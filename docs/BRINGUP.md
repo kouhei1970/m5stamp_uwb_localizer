@@ -22,7 +22,7 @@
 
 ## 用意するもの
 
-- **M5Stamp S3** または **M5 AtomS3**（ESP32-S3 ホストボード）
+- **M5StampS3A** または **M5 AtomS3**（ESP32-S3 ホストボード）
 - **M5Stamp UWB Module (QM33120W)**（SKU `S017`）<br>  または **M5Stamp UWB Module with FPC (QM33120W)**（SKU `S017-F`）。**どちらでも可**
 - 接続手段（下記）
 - **3.3V 電源**（モジュールは 3.3V 単一供給。**5V は入れないこと**）
@@ -79,7 +79,7 @@
 
 | | SCK | MOSI | MISO | CS | RST | IRQ | WAKEUP | GP7 |
 |---|---|---|---|---|---|---|---|---|
-| Stamp S3 | G12 | G11 | G13 | G10 | G6 | G7 | G8 | 未配線 |
+| M5StampS3A | G12 | G11 | G13 | G10 | G6 | G7 | G8 | 未配線 |
 | AtomS3 | G7 | G6 | G5 | G8 | G1 | G2 | 未配線 | 未配線 |
 
 定義は [`boards/stamps3.h`](../boards/stamps3.h) / [`boards/atoms3.h`](../boards/atoms3.h)。
@@ -109,7 +109,7 @@ cd firmware/probe
 
 idf.py set-target esp32s3
 
-# ボード選択（既定は Stamp S3）
+# ボード選択（既定は M5StampS3A）
 idf.py menuconfig      # → UWB Probe Configuration → Target host board
 
 idf.py build
@@ -123,7 +123,7 @@ idf.py -p /dev/cu.usbmodemXXXX flash monitor    # macOS。Linux は /dev/ttyACM*
 ## 期待される出力（受入基準）
 
 ```
-I (xxx) uwb_probe: Phase 1 UWB probe acceptance test, board=Stamp S3
+I (xxx) uwb_probe: Phase 1 UWB probe acceptance test, board=M5StampS3A
 I (xxx) uwb_probe: L1: raw DEV_ID = 0xDECA0314 (expect 0xDECA0314) -> OK
 I (xxx) uwb_probe: L2: dwt_probe + dwt_readdevid = 0xDECA0314 (expect 0xDECA0314) -> OK
 I (xxx) uwb_probe: === L1: PASS / L2: PASS ===

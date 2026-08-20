@@ -60,7 +60,7 @@ StampFly（マルチコプター機体）には依存しない汎用のスタッ
 | 品目 | 数量 | 役割 |
 |---|---:|---|
 | [M5Stamp UWB Module (QM33120W)](https://docs.m5stack.com/en/stamp/Stamp_UWB) （SKU `S017`）<br>または [M5Stamp UWB Module with FPC (QM33120W)](https://docs.m5stack.com/en/stamp/Stamp_UWB_F) （SKU `S017-F`） | **6** | UWB モジュール。**半田パッドを使うのでどちらでもよい** |
-| [M5Stamp S3](https://docs.m5stack.com/en/core/StampS3) | **1** | タグ（移動体）のホスト |
+| [M5StampS3A](https://docs.m5stack.com/en/core/M5StampS3A) | **1** | タグ（移動体）のホスト。**旧 M5StampS3（A 無し）と完全互換**（電源とアンテナが改良された現行版） |
 | [M5 AtomS3](https://docs.m5stack.com/en/core/AtomS3) | **5** | アンカー（固定局）のホスト |
 
 **モジュールとホストは半田付けで接続します**（1.27mm ピッチのキャステレーションホール）。
@@ -130,7 +130,7 @@ I (xxx) uwb_probe: === L1: PASS / L2: PASS ===
 
 > **M5 AtomS3 で動かす場合**は `idf.py menuconfig` →
 > `UWB Probe Configuration` → `Target host board` → `M5 AtomS3` に切り替えてください
-> （`firmware/probe` の既定は M5Stamp S3）。
+> （`firmware/probe` の既定は M5StampS3A）。
 
 **→ ここから先の完全な手順は [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md) へ。**
 配線・5 台への書き込み・座標入力・測位・アンテナ遅延の校正まで通しで書いてあります。
@@ -159,7 +159,7 @@ m5stack_uwb/
 │   └── SURVEY_*.md          事前調査資料
 │
 ├── boards/                  ホストボードのピン定義（※ 暫定値。実配線で要検証）
-│   ├── stamps3.h            M5Stamp S3
+│   ├── stamps3.h            M5StampS3A
 │   └── atoms3.h             M5 AtomS3
 │
 ├── components/

@@ -120,10 +120,10 @@ SKU `S017` = M5Stamp UWB Module（リポジトリの `Products/[SKU_Name]/` 構�
 
 → **側面から半田付けできる**。ジャンパ線の直付けが可能。
 
-**傍証**: 同じリポジトリの `Stamp-S3-SMD.kicad_mod`（M5Stamp S3 の SMD 実装用
+**傍証**: 同じリポジトリの `Stamp-S3-SMD.kicad_mod`（M5StampS3A の SMD 実装用
 ランドパターン）も **1.27mm ピッチ**の SMD ランドが両辺に並ぶ同型式で、
-M5Stamp S3 は公式に側面キャステレーションを持つ。**Stamp シリーズ共通の作法**。
-ただし Stamp S3 のランドは 1.8 × 0.8mm と外側へ大きく張り出しているのに対し、
+M5StampS3A は公式に側面キャステレーションを持つ。**Stamp シリーズ共通の作法**。
+ただし M5StampS3A のランドは 1.8 × 0.8mm と外側へ大きく張り出しているのに対し、
 **M5Stamp UWB Module は 0.8 × 0.6mm と最小限**である（4.4 節の変換基板の話に関係する）。
 
 ### 1.3 寸法（フットプリント原点基準、KiCad 座標系 +Y は下）
@@ -297,14 +297,14 @@ SPI の 4 本が 2 本の GND に挟まれる並びなので、
 
 ---
 
-## 3. Stamp S3 / AtomS3 との配線表
+## 3. M5StampS3A / AtomS3 との配線表
 
 ホスト側ピン番号は `boards/stamps3.h` / `boards/atoms3.h` の**暫定値**と一致させてある。
 **どちらも実配線前に現物と照合すること**（両ファイルの冒頭コメント参照）。
 
-### 3.1 M5Stamp S3（推奨）
+### 3.1 M5StampS3A（推奨）
 
-| UWB パッド | 信号 | Stamp S3 | 備考 |
+| UWB パッド | 信号 | M5StampS3A | 備考 |
 |---:|---|---|---|
 | 11 | DW_CLK | **G12** | FSPICLK（IO_MUX ネイティブ） |
 | 9 | DW_CDI | **G11** | FSPID（MOSI） |
@@ -493,7 +493,7 @@ S017-F にも同じパッドがあること。
 ### 5.3 電気的に確認
 
 - [ ] 3.3V 供給時の実消費電流（アイドル / レンジング中 / TX 時ピーク）
-- [ ] Stamp S3 / AtomS3 の 3V3 レールの電圧降下
+- [ ] M5StampS3A / AtomS3 の 3V3 レールの電圧降下
 - [ ] 実際に通った `spi_fast_hz`（16MHz が通るか）と、そのときの配線長
 - [ ] ホスト側ピン番号（`boards/stamps3.h` / `boards/atoms3.h`）が
       現物のシルクと一致しているか

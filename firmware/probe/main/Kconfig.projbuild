@@ -9,7 +9,7 @@ menu "UWB Probe Configuration"
             uwb_port.
 
         config UWB_PROBE_BOARD_STAMPS3
-            bool "M5Stamp S3"
+            bool "M5StampS3A"
 
         config UWB_PROBE_BOARD_ATOMS3
             bool "M5 AtomS3"

@@ -1,4 +1,4 @@
-# 調査3: M5Stack M5Stamp UWB Module ハードウェア仕様 (2026-08-19)
+# 調査3: M5Stamp UWB Module ハードウェア仕様 (2026-08-19)
 
 ## 結論（計画の要）
 **M5Stamp UWB Module は SPI 直結専用。UART/AT コマンド方式は存在しない。**

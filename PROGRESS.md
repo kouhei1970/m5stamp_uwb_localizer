@@ -1,7 +1,7 @@
 # StampFly UWB ドライバ開発 進捗記録
 
 対象:
-- UWBモジュール: M5Stack M5Stamp UWB Module (https://docs.m5stack.com/en/stamp/Stamp_UWB_F)
+- UWBモジュール: M5Stamp UWB Module (https://docs.m5stack.com/en/stamp/Stamp_UWB_F)
 - 既存ドライバ資産: https://github.com/kouhei1970/uwb_localizer
 - 最終ターゲット: https://github.com/M5Fly-kanazawa/stampfly_ecosystem
 - 接続構想: StampFly の GROVE 端子を SPI に設定して接続
@@ -85,7 +85,7 @@
       （dwt_spi_s の5関数 / deca_sleep / deca_usleep / decamutexon / decamutexoff / GPIO）
 - [x] `boards/stamps3.h`, `boards/atoms3.h`
 - [x] 立ち上げ手順を docs/BRINGUP.md に整備（配線・書き込み・切り分け表）
-- [ ] **受入条件: Stamp S3 で Device ID 0xDECA0314 を読み出せる** ← **実機作業待ち（ブロック中）**
+- [ ] **受入条件: M5StampS3A で Device ID 0xDECA0314 を読み出せる** ← **実機作業待ち（ブロック中）**
 - [ ] 同じことを AtomS3 でもピン定義の差し替えだけで確認 ← 実機作業待ち
 
 ### Phase 1 実装完了 (2026-08-19) — ビルド通過
@@ -128,10 +128,10 @@ slow レートは `dwt_probe()`/初期化で使う経路そのものなので、
 #### ピン割当（暫定・実配線で要検証）
 | | SCK | MOSI | MISO | CS | RST | IRQ | WAKEUP | GP7 |
 |---|---|---|---|---|---|---|---|---|
-| Stamp S3 | G12 | G11 | G13 | G10 | G6 | G7 | G8 | G9 |
+| M5StampS3A | G12 | G11 | G13 | G10 | G6 | G7 | G8 | G9 |
 | AtomS3 | G7 | G6 | G5 | G8 | G1 | G2 | 未配線 | 未配線 |
 
-- Stamp S3 の SCK/MOSI/MISO/CS は ESP32-S3 の FSPI ネイティブ IO_MUX ピン（G12/G11/G13/G10）
+- M5StampS3A の SCK/MOSI/MISO/CS は ESP32-S3 の FSPI ネイティブ IO_MUX ピン（G12/G11/G13/G10）
 - AtomS3 は空きGPIOが6本しかなく、RST/IRQ は Grove 端子(G1/G2)を転用。
   WAKEUP/GP7 は割り当て先が無く未配線（最小配線は GND/VCC/CLK/MOSI/MISO/CS のみで足り、
   ドライバはポーリング方式なので機能上は問題ない）
@@ -149,7 +149,7 @@ slow レートは `dwt_probe()`/初期化で使う経路そのものなので、
   （L1: 生SPIでの DEV_ID 読み出し / L2: dwt_probe()+dwt_readdevid()、
   いずれも 5 回リトライ・20ms 間隔、以降 1 秒周期で L1 を再実行し安定性を確認）。
   ボード選択は Kconfig choice（`UWB_PROBE_BOARD_STAMPS3` 既定 / `UWB_PROBE_BOARD_ATOMS3`）
-- `idf.py set-target esp32s3` → クリーン `idf.py build`（Stamp S3 既定設定、AtomS3 選択の
+- `idf.py set-target esp32s3` → クリーン `idf.py build`（M5StampS3A 既定設定、AtomS3 選択の
   両方）で警告ゼロのビルド成功を確認
 - **ビルド検証まで完了。実機での Device ID 読み出し確認は未実施
   （実機書き込み不可のため、次のセッションでの宿題）**
@@ -173,9 +173,9 @@ slow レートは `dwt_probe()`/初期化で使う経路そのものなので、
   （components/ 配下にそのまま置ける、または git submodule / managed component）
 
 ### 追加要件2（2026-08-19 ユーザ指示）
-単体動作の想定ホストボードは **M5Stamp S3 / M5 AtomS3**（いずれも ESP32-S3）。
+単体動作の想定ホストボードは **M5StampS3A / M5 AtomS3**（いずれも ESP32-S3）。
 汎用DevKitではなく、この2種で動くことを前提に設計・検証する。
-- M5Stamp S3: Stamp 形状。GPIO はピンヘッダ/パッドに露出、GROVE端子あり
+- M5StampS3A: Stamp 形状。GPIO はピンヘッダ/パッドに露出、GROVE端子あり
 - AtomS3: GROVE(HY2.0-4P) 1系統 + 内部でLCD/ボタン等が GPIO を消費
 - → 使えるGPIO本数の制約が両ボードで異なるため、**SPI(4線+IRQ+RST) が
   引けるか / UART(2線) で足りるか**が構成選択に直結する
@@ -288,9 +288,9 @@ ESP-IDF 既定の 100Hz のままだと `vTaskDelay(pdMS_TO_TICKS(1))` が **10m
 - `firmware/twr`: TAG/ANCHOR × SS/DS の4通り全部を `rm -rf build sdkconfig` →
   `set-target esp32s3` → `build` のクリアビルドで検証、**全て警告0・エラー0**。
   AtomS3設定（ANCHOR+SS, TAG+SS）でもクリアビルド成功、警告0
-- `firmware/devtest`: StampS3(SENDER)/AtomS3(RECEIVER) ともクリアビルド成功、警告0
+- `firmware/devtest`: M5StampS3A(SENDER)/AtomS3(RECEIVER) ともクリアビルド成功、警告0
   （uwb_qm33120.cppの変更を含めても壊れていないことを確認）
-- `firmware/probe`: StampS3/AtomS3 ともクリアビルド成功、警告0
+- `firmware/probe`: M5StampS3A/AtomS3 ともクリアビルド成功、警告0
 
 ##### 原本から意図的に変えた点
 - **`uwb_qm33120.cpp` への唯一の変更**: `struct Qm33120::Impl` の定義
@@ -353,7 +353,7 @@ ESP-IDF 既定の 100Hz のままだと `vTaskDelay(pdMS_TO_TICKS(1))` が **10m
    Tag側は最初の1つを受け取れば成立を判定する実装（cpp:1141同等）。
    電波環境が悪い場所で resultRepeatCount/resultRepeatGapMs のチューニングが
    要るか確認する
-5. Stamp S3 / AtomS3 それぞれのピン配置（`boards/stamps3.h`/`boards/atoms3.h`）
+5. M5StampS3A / AtomS3 それぞれのピン配置（`boards/stamps3.h`/`boards/atoms3.h`）
    がまだ実配線未検証（Phase 1 のブロック中の受入条件）なので、TWR以前に
    Device ID 読み出し自体をまず確認すること
 
@@ -557,7 +557,7 @@ src/uwb_nls.c:342:18: error: variable 'wsum' set but not used [-Werror,-Wunused-
 常時レスポンダとして待ち受けるだけの専用ファーム。役割選択なし
 （`firmware/twr` と異なり常にANCHOR固定）。`UWB_ANCHOR_SHORT_ADDR`（hex、既定
 `0x0002`）をKconfigで個体ごとに設定でき、実機5台にそれぞれ異なる値を焼き込む
-運用を想定。方式（SS/DS、既定DS-TWR）・ボード（Stamp S3/AtomS3）選択、
+運用を想定。方式（SS/DS、既定DS-TWR）・ボード（M5StampS3A/AtomS3）選択、
 成功率(%)込みの統計ログを実装。**NVS保存・シリアルコンソールからの変更は
 未実装（将来課題）**。
 
@@ -580,13 +580,13 @@ residual_rms/excluded・1周の所要時間・各レベルのソルバ計算時�
 
 #### ビルド検証（メインが実施・再現確認）
 - `firmware/tag`: `rm -rf build sdkconfig` → `set-target esp32s3` → `build` の
-  クリアビルドを **Stamp S3/DS-TWR(既定)**、**AtomS3/SS-TWR/EKF有効**、
+  クリアビルドを **M5StampS3A/DS-TWR(既定)**、**AtomS3/SS-TWR/EKF有効**、
   **AtomS3/DS-TWR**、**dim=2自動フォールバックOFF** の4通りで実施、
-  **全て警告0・エラー0**。最終的に既定設定（Stamp S3/DS-TWR、
+  **全て警告0・エラー0**。最終的に既定設定（M5StampS3A/DS-TWR、
   `uwb_tag.bin` 0x4a6c0 bytes）へ復元
-- `firmware/anchor`: サブエージェントが Stamp S3/AtomS3 × SS-TWR/DS-TWR の
+- `firmware/anchor`: サブエージェントが M5StampS3A/AtomS3 × SS-TWR/DS-TWR の
   4通りをクリアビルドで警告0・エラー0を確認。メインが既定設定
-  （Stamp S3/DS-TWR、`UWB_ANCHOR_SHORT_ADDR=0x0002`）で再現確認
+  （M5StampS3A/DS-TWR、`UWB_ANCHOR_SHORT_ADDR=0x0002`）で再現確認
   （`uwb_anchor.bin` 0x42730 bytes）
 - 既存 `firmware/probe`/`firmware/devtest`/`firmware/twr`/`firmware/soltest` を
   メインが全てクリアビルドで再検証、**全て警告0・エラー0**（無傷）
@@ -911,11 +911,11 @@ compile_commands.json で確認）:
 
 | 役割 | ボード | 台数 | UWB |
 |---|---|---|---|
-| **タグ（移動体）** | **M5Stamp S3** | 1 | M5Stamp UWB Module |
+| **タグ（移動体）** | **M5StampS3A** | 1 | M5Stamp UWB Module |
 | **アンカー（固定局）** | **M5 AtomS3** | 5 | M5Stamp UWB Module |
 
-- `firmware/tag` の既定ボード = StampS3（変更なし）
-- **`firmware/anchor` の既定ボードを StampS3 → AtomS3 に変更**（ビルド確認済み）
+- `firmware/tag` の既定ボード = M5StampS3A（変更なし）
+- **`firmware/anchor` の既定ボードを M5StampS3A → AtomS3 に変更**（ビルド確認済み）
 
 ### この割り当てで注意すべき点
 - **AtomS3 は空きGPIOが6本しかない**（`boards/atoms3.h` 参照）。
@@ -924,7 +924,7 @@ compile_commands.json で確認）:
 - **IRQ が取れているのは重要**。R6（IRQ駆動化）で効くのは
   **レスポンダ側の折り返し時間**（`POLL_RX_TO_RESP_TX_DLY`）であり、
   レスポンダ＝アンカー＝AtomS3 だから。ここが IRQ 化できないと R5 の遅延短縮が頭打ちになる
-- StampS3 は GPIO に余裕があり、8本フル配線できる
+- M5StampS3A は GPIO に余裕があり、8本フル配線できる
 
 ### 接続方法の変更（同日ユーザ要望）
 FPC（0.5mm 12P）ではなく、**モジュールに出ている半田付け用パッドを使う**。

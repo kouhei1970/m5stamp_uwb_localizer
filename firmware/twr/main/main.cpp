@@ -5,7 +5,7 @@
  * respondRange() / requestDSRange() / respondDSRange()).
  *
  * Kconfig で選ぶ3軸 (main/Kconfig.projbuild):
- *   - ボード: M5Stamp S3 / M5 AtomS3        (boards ディレクトリ配下の
+ *   - ボード: M5StampS3A / M5 AtomS3        (boards ディレクトリ配下の
  *     stamps3.h / atoms3.h でピン定義切替。firmware/probe, firmware/devtest
  *     と同じ作法)
  *   - ロール: TAG(initiator) / ANCHOR(responder)
@@ -51,7 +51,7 @@
 #else
 #include "boards/stamps3.h"
 #define BOARD_UWB_PORT_CONFIG BOARD_STAMPS3_UWB_PORT_CONFIG
-#define BOARD_NAME            "Stamp S3"
+#define BOARD_NAME            "M5StampS3A"
 #endif
 
 #if CONFIG_UWB_TWR_ROLE_ANCHOR
