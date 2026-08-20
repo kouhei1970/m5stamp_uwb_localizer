@@ -9,7 +9,7 @@
  *   - ロール選択自体が無い(常にANCHOR)。
  *   - 自分のショートアドレスをKconfig(UWB_ANCHOR_SHORT_ADDR)で個体ごとに
  *     設定できる(firmware/twr は ANCHOR_SHORT_ADDR がソース上の固定値
- *     0x0002 だった)。手持ちのM5Stamp UWB Module with FPC 5台それぞれに異なる値を書き込んで
+ *     0x0002 だった)。手持ちのM5Stamp UWB Module 5台それぞれに異なる値を書き込んで
  *     区別する運用を想定している。
  *
  * Kconfig で選ぶ2軸 (main/Kconfig.projbuild):

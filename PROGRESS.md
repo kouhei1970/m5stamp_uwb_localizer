@@ -1,7 +1,7 @@
 # StampFly UWB ドライバ開発 進捗記録
 
 対象:
-- UWBモジュール: M5Stack M5Stamp UWB Module with FPC (https://docs.m5stack.com/en/stamp/Stamp_UWB_F)
+- UWBモジュール: M5Stack M5Stamp UWB Module (https://docs.m5stack.com/en/stamp/Stamp_UWB_F)
 - 既存ドライバ資産: https://github.com/kouhei1970/uwb_localizer
 - 最終ターゲット: https://github.com/M5Fly-kanazawa/stampfly_ecosystem
 - 接続構想: StampFly の GROVE 端子を SPI に設定して接続
@@ -21,7 +21,7 @@
       - /Users/kouhei/tmp/github/M5StampFly (M5Fly-kanazawa)
 - [x] 調査1: uwb_localizer のアーキテクチャ / 移植性 → docs/SURVEY_uwb_localizer.md
 - [x] 調査2: stampfly_ecosystem のドライバ追加作法 / SPIバス構成 → docs/SURVEY_stampfly_ecosystem.md
-- [x] 調査3: M5Stamp UWB Module with FPC ハード仕様（チップ・I/F・ピン・電源）→ docs/SURVEY_m5stamp_uwb_module.md
+- [x] 調査3: M5Stamp UWB Module ハード仕様（チップ・I/F・ピン・電源）→ docs/SURVEY_m5stamp_uwb_module.md
 - [x] 調査4: StampFly GROVE 端子のGPIO割当と SPI 転用可否 → docs/SURVEY_stampfly_grove.md
 
 ### Phase 0 完了 (2026-08-19)
@@ -30,7 +30,7 @@
 **判定: 実現可能。ただし当初構想からの修正が3点。**
 1. uwb_localizer にチップドライバ/測距シーケンスは無い（測位層のみ）
    → レンジング層は M5Stack 公式 Arduino ライブラリを ESP-IDF へ移植して新規作成
-2. M5Stamp UWB Module with FPC のコネクタは GROVE ではなく 0.5mm 12P FPC、電源は 3.3V 単一
+2. M5Stamp UWB Module のコネクタは GROVE ではなく 0.5mm 12P FPC、電源は 3.3V 単一
    → FPC変換 + 5V→3.3V 降圧の小基板が必要
 3. StampFly の GROVE 1系統(2本)では SPI 不可 → 2系統併用(4本)で IRQ 無しポーリング、
    または空きGPIO(G5/G10/G41/G42)へ直付け
@@ -46,7 +46,7 @@
         → StampFly の GROVE 2系統案（IRQ線なし）がそのまま成立する
 
 ### 確定した前提（ユーザ回答 2026-08-19）
-- 保有ハード: **M5Stamp UWB Module with FPC ×6 を購入済み**（2026-08-19 ユーザ指示で確定）
+- 保有ハード: **M5Stamp UWB Module ×6 を購入済み**（2026-08-19 ユーザ指示で確定）
 - **アンカー台数は固定しない。4台以上の任意台数に対応する**（同日ユーザ指示）
   - アンカー登録テーブル（アドレス + 3D座標 + 有効フラグ）駆動。**台数はテーブル長で決まる**
   - 下限は 3D で4台、2D（高さ既知）で3台
@@ -166,7 +166,7 @@ slow レートは `dwt_probe()`/初期化で使う経路そのものなので、
 - コア（レンジング処理・測位演算・プロトコル）は StampFly 依存を一切持たない
 - ハード依存はプラットフォーム抽象層（SPI/UART/時刻/ログ）に隔離し、差し替え可能にする
 - 単体で動く成果物を用意する:
-  - タグ側ファームウェア（M5Stamp UWB Module with FPC + 汎用 ESP32-S3 ボードで測位が動く）
+  - タグ側ファームウェア（M5Stamp UWB Module + 汎用 ESP32-S3 ボードで測位が動く）
   - アンカー側の設定 or ファームウェア
   - 測位結果を確認する手段（シリアル出力 / ホスト側ツール）
 - stampfly_ecosystem へは「ESP-IDF コンポーネントとして取り込める形」で提供する
@@ -911,8 +911,8 @@ compile_commands.json で確認）:
 
 | 役割 | ボード | 台数 | UWB |
 |---|---|---|---|
-| **タグ（移動体）** | **M5Stamp S3** | 1 | M5Stamp UWB Module with FPC |
-| **アンカー（固定局）** | **M5 AtomS3** | 5 | M5Stamp UWB Module with FPC |
+| **タグ（移動体）** | **M5Stamp S3** | 1 | M5Stamp UWB Module |
+| **アンカー（固定局）** | **M5 AtomS3** | 5 | M5Stamp UWB Module |
 
 - `firmware/tag` の既定ボード = StampS3（変更なし）
 - **`firmware/anchor` の既定ボードを StampS3 → AtomS3 に変更**（ビルド確認済み）

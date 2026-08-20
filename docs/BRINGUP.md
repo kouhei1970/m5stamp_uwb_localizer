@@ -7,7 +7,7 @@
 **半田パッドと FPC ケーブルは信号の並びが違う。** 側面ラベルがパッド、下部の帯が FPC。
 
 
-**`firmware/probe` を書き込み、M5Stamp UWB Module with FPC の Device ID `0xDECA0314` が読めることを
+**`firmware/probe` を書き込み、M5Stamp UWB Module の Device ID `0xDECA0314` が読めることを
 確認する** ——ここだけに絞った受入確認手順です。
 これが通れば、以降の TWR 移植（Phase 2）はソフトウェアだけの話になります。
 
@@ -23,7 +23,7 @@
 ## 用意するもの
 
 - **M5Stamp S3** または **M5 AtomS3**（ESP32-S3 ホストボード）
-- **M5Stamp UWB Module with FPC**（無印 `S017` / FPC コネクタ実装済み `S017-F` のどちらでも可）
+- **M5Stamp UWB Module (QM33120W)**（SKU `S017`）<br>  または **M5Stamp UWB Module with FPC (QM33120W)**（SKU `S017-F`）。**どちらでも可**
 - 接続手段（下記）
 - **3.3V 電源**（モジュールは 3.3V 単一供給。**5V は入れないこと**）
 - ESP-IDF **v5.5.2**

@@ -1,6 +1,6 @@
 # m5stack_uwb
 
-**M5Stamp UWB Module with FPC (QM33120W)**（Qorvo QM33120W = DW3720 系を搭載）を
+**M5Stamp UWB Module (QM33120W)**（FPC コネクタ実装済みの **M5Stamp UWB Module with FPC (QM33120W)** でも可。Qorvo QM33120W = DW3720 系を搭載）を
 **ESP32-S3 ホストボード**から ESP-IDF で使うための、**測距 + 測位スタック**です。
 
 タグ 1 台とアンカー 4 台以上で、**屋内の 3 次元位置**を求めて JSON Lines で吐きます。
@@ -59,7 +59,7 @@ StampFly（マルチコプター機体）には依存しない汎用のスタッ
 
 | 品目 | 数量 | 役割 |
 |---|---:|---|
-| [M5Stamp UWB Module with FPC (QM33120W)](https://docs.m5stack.com/en/stamp/Stamp_UWB_F) （SKU `S017-F`）<br>または [M5Stamp UWB Module (QM33120W)](https://docs.m5stack.com/en/stamp/Stamp_UWB) （SKU `S017`） | **6** | UWB モジュール。**半田パッドを使うのでどちらでもよい** |
+| [M5Stamp UWB Module (QM33120W)](https://docs.m5stack.com/en/stamp/Stamp_UWB) （SKU `S017`）<br>または [M5Stamp UWB Module with FPC (QM33120W)](https://docs.m5stack.com/en/stamp/Stamp_UWB_F) （SKU `S017-F`） | **6** | UWB モジュール。**半田パッドを使うのでどちらでもよい** |
 | [M5Stamp S3](https://docs.m5stack.com/en/core/StampS3) | **1** | タグ（移動体）のホスト |
 | [M5 AtomS3](https://docs.m5stack.com/en/core/AtomS3) | **5** | アンカー（固定局）のホスト |
 

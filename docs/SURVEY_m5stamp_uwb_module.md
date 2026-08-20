@@ -1,13 +1,13 @@
-# 調査3: M5Stack M5Stamp UWB Module with FPC ハードウェア仕様 (2026-08-19)
+# 調査3: M5Stack M5Stamp UWB Module ハードウェア仕様 (2026-08-19)
 
 ## 結論（計画の要）
-**M5Stamp UWB Module with FPC は SPI 直結専用。UART/AT コマンド方式は存在しない。**
+**M5Stamp UWB Module は SPI 直結専用。UART/AT コマンド方式は存在しない。**
 コネクタは **HY2.0-4P GROVE ではなく 0.5mm ピッチ 12P FPC**。
 
 ## チップ
 - **Qorvo QM33120W**（QM33120WTR13, WLCSP52, 3.1x3.5mm）
 - IEEE 802.15.4-2020 / 802.15.4z-2020 (BPRF)、ch5/ch9 対応
-  （M5Stamp UWB Module with FPC は **ch9 固定運用**、中心周波数 7987.2MHz）
+  （M5Stamp UWB Module は **ch9 固定運用**、中心周波数 7987.2MHz）
 - 公式ドライバソースに `dw3720_device.c` / `dw3720_deca_regs.h` があり、
   デバイスID は `0xDECA0314` を返す → **DW3720 系レジスタ体系を継承**
   （Qorvo は Decawave を買収。既存 DW3000 系の知見がそのまま効く）
@@ -28,7 +28,7 @@
 ### 注意: 「Unit UWB」との混同厳禁
 M5Stack の**別製品**「Unit UWB」(SKU U100) は UART+AT コマンド方式
 （STM32F103 + Ai-Thinker BU01 = DW1000ベース、115200bps、`AT+switchdis=` 等）。
-**M5Stamp UWB Module with FPC とは別チップ・別I/F。** uwb_localizer が対応する RYUW122 も AT 型。
+**M5Stamp UWB Module とは別チップ・別I/F。** uwb_localizer が対応する RYUW122 も AT 型。
 → 本件では **AT コマンド資産は一切使えない**。
 
 ## ピンアサイン

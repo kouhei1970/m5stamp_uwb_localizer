@@ -29,7 +29,7 @@
  *    正しい pgDelay/txPower が適用されるようになった（従来はチャネルに
  *    関係なくChannel9用の既定値がそのまま使われていた。
  *    uwb_qm33120.cpp の recommendedPHYProfile() 参照）。Channel9
- *    （M5Stamp UWB Module with FPCが実際に使う唯一のチャネル）の既定値自体は変更なし。
+ *    （M5Stamp UWB Moduleが実際に使う唯一のチャネル）の既定値自体は変更なし。
  */
 #pragma once
 

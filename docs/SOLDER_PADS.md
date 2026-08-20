@@ -1,4 +1,4 @@
-# M5Stamp UWB Module / M5Stamp UWB Module with FPC 半田付けパッド（キャステレーション）調査 (2026-08-20)
+# M5Stamp UWB Module / M5Stamp UWB Module 半田付けパッド（キャステレーション）調査 (2026-08-20)
 
 FPC を使わずに **モジュール側面の半田付けパッドへ直接配線する**ための資料。
 FPC を使う場合は `BRINGUP.md` の該当節を参照。
@@ -54,7 +54,7 @@ FPC を使う場合は `BRINGUP.md` の該当節を参照。
 | ショップ（無印 S017） | https://shop.m5stack.com/products/m5stamp-uwb-module-qm33120w | ○ |
 | ショップ（**S017-F**） | https://shop.m5stack.com/products/m5stamp-uwb-module-with-fpc-qm33120w | ○ |
 | Arduino チュートリアル | https://docs.m5stack.com/en/arduino/projects/stamp/stamp_uwb | ○ |
-| M5Stamp UWB Module with FPC（EN） | https://docs.m5stack.com/en/stamp/Stamp_UWB_F | **×**（接続不可） |
+| M5Stamp UWB Module（EN） | https://docs.m5stack.com/en/stamp/Stamp_UWB_F | **×**（接続不可） |
 
 **キャステレーションに関する公式の原文**
 

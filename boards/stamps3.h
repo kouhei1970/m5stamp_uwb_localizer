@@ -1,7 +1,7 @@
 /**
  * @file stamps3.h
  * @brief Board pin definition for M5Stamp S3 (ESP32-S3FN8, no PSRAM) as the
- *        host board driving a Qorvo QM33120W/DW3720 (M5Stack M5Stamp UWB Module with FPC)
+ *        host board driving a Qorvo QM33120W/DW3720 (M5Stack M5Stamp UWB Module)
  *        module via components/uwb_port.
  *
  * ============================================================

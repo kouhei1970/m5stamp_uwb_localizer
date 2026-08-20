@@ -24,7 +24,7 @@ namespace uwb {
 
 /**
  * @brief ESP-IDF interface for probing, initializing, and transmitting with
- * a Qorvo QM33120W/DW3720 (M5Stack M5Stamp UWB Module with FPC) module via components/uwb_port.
+ * a Qorvo QM33120W/DW3720 (M5Stack M5Stamp UWB Module) module via components/uwb_port.
  */
 class Qm33120 {
 public:
