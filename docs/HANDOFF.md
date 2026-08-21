@@ -28,13 +28,13 @@
 3. `INIT_FAILED` が **出ないこと**（`dwt_checkidlerc()` 待ちタイムアウト。レビュー M-2 の対策確認）
 
 **実機到着前にできることは実質もう無い。** 旧版の「すぐ着手できる」項目 A〜F は前回セッションで
-すべて完了しており、本セッションでレビュー #6（外れ値棄却）・#7（ライセンス同梱）も解消した。
+すべて完了しており、本セッションでレビュー #6（外れ値棄却）・#7（ライセンス同梱）も解消し、
+すべてコミット・push 済み（`dffcde5`、CI green）。
 強いてやるなら以下の任意項目のみ:
 
 - `uwb_math` の `uwb_sym3_solve_sphere` と Beck のλ探索の共通化（反復の形が同型。任意）
-- **本セッションの未コミット変更（§1）をレビューしてコミットする。**
-  本セッションは指示によりコミットしていない。ホスト側4種と ESP-IDF 側（soltest / tag / anchor）は
-  本セッション中にビルド・テストとも確認済み
+- `v0.2.0` を切るかどうかの判断（§1 Release 参照。全件コミット済みなので
+  `git tag v0.2.0 && git push --tags` だけで CI が zip を作る）
 
 ---
 
@@ -45,23 +45,27 @@
 
 | リポジトリ | 状態 |
 |---|---|
-| **m5stamp_uwb_localizer**（本体） | GitHub 公開済み `kouhei1970/m5stamp_uwb_localizer`（public）。HEAD は `4ab98e2`。未コミットの変更あり（下記） |
+| **m5stamp_uwb_localizer**（本体） | GitHub 公開済み `kouhei1970/m5stamp_uwb_localizer`（public）。HEAD は `dffcde5`。未コミットの変更なし（ワークツリーはクリーン、origin/main と一致） |
 | **uwb_localizer**（上流） | **2026-08-21 に凍結・独立**（`42daea9`。上流 `667551e` を取り込み）。以後 `components/uwb_loc/` は本リポジトリで独立して開発する。**上流は見ない** |
 | stampfly_ecosystem | `third_party/stampfly_ecosystem` に読み取り専用クローンあり。**書き込み禁止** |
 | 一次資料（PDF/公式API） | `docs/refs/`。**`.gitignore` 済み**（再配布禁止文書を含む） |
 
-### 前回 HANDOFF（`d9a7dbc`）以降のコミット（HEAD `4ab98e2`、すべて CI 緑）
+### 前回 HANDOFF（`d9a7dbc`）以降のコミット（HEAD `dffcde5`。`42daea9` のみ CI 失敗）
+
+`42daea9` は float ビルドの loc テストが落ちた（gcc の FMA 縮約に関する事故。§3「float の検証」の由来）。
+`98385fe` で修正済み。他はすべて CI 緑。
 
 | コミット | 内容 |
 |---|---|
 | `bce1096` | 実機投入前の最終レビューと Critical 1・High 3 修正（DS-TWR の PRETOC、SPI 16MHz 切替、タグのメインタスクスタック、`decamutexon`） |
-| `42daea9` | 上流 `uwb_localizer` を凍結（上流 `667551e`）・最終状態に同期・独立宣言 |
+| `42daea9` | 上流 `uwb_localizer` を凍結（上流 `667551e`）・最終状態に同期・独立宣言（**CI 失敗**。float の loc テストが FMA 縮約事故で落ちた） |
 | `4298c08` | `tests/host/` へホストテストを統合、`docs/archive/` を新設、線形代数コンポーネント `uwb_math` を新設 |
-| `98385fe` | `uwb_loc` / `uwb_survey` を `uwb_math` ベースのスカラー展開に書き換え、一般 LU / Jacobi を全廃 |
+| `98385fe` | `uwb_loc` / `uwb_survey` を `uwb_math` ベースのスカラー展開に書き換え、一般 LU / Jacobi を全廃（`42daea9` の float ビルド失敗を修正） |
 | `4de9c68` | 外部の実機報告（GOROman 氏 gist）を反映、`begin()` にソフトリセットを追加 |
 | `4ab98e2` | 公式回路図で電源系統・FPC/パッド対応を確定、電源電圧の記述を裏付け直す |
+| `dffcde5` | 測量の leave-one-out 外れ値棄却・キラリティ入力、`uwb_math` へ LDLᵀ / `solve_sphere` / `null_vector` 統合、Release zip へのライセンス同梱、`firmware/soltest/.cache/clangd/index/*.idx` の untrack |
 
-### 未コミット（ワークツリーに現存。本セッションでビルド・テストとも確認済み）
+### `dffcde5` でコミットした内容（前回 HANDOFF 時点では未コミットだったもの）
 
 1. **Release zip へのライセンス同梱**（レビュー #7 対応）
    `.github/workflows/build.yml` / `README.md` / `THIRD_PARTY_LICENSES.md` / `docs/PREBUILT_BINARIES.md`。
@@ -73,11 +77,9 @@
 3. **`uwb_math` へ LDLᵀ・`solve_sphere`・`null_vector` 等を統合**
    `components/uwb_math/{include,src}` / `components/uwb_loc/src/{uwb_closed_form.c,uwb_internal.h,uwb_nls.c}` /
    `docs/MATH_AUDIT_2026-08-21.md` / `tests/host/math/test_math.c`。
-   `uwb_loc` 側・`uwb_survey` 側とも新 API への差し替えが完了している
-   （セッション序盤に一時的にビルドが壊れる瞬間があったが、これは並行して動いている別セッションが
-   `uwb_survey.c` を編集中だったため。現在は解消し、全スイート green）。
+   `uwb_loc` 側・`uwb_survey` 側とも新 API への差し替えが完了している。
 
-### ホストテスト（本セッションで `make -C tests test` を再実行して確認）
+### ホストテスト（`make -C tests all` = test / strict / float を再実行して確認。float ビルドの回帰は 591,184 件）
 
 | スイート | 件数 | 失敗 |
 |---|---:|---:|
@@ -94,25 +96,22 @@
 
 `firmware/{probe,devtest,twr,soltest,tag,anchor}`。
 
-- `probe` / `devtest` / `twr` は今回の未コミット差分（`uwb_math` 系）の影響を受けない。
-  直近 CI（`4ab98e2`, 3m5s, green）でカバー済み。
+- 直近 CI（`dffcde5`, 3m6s, green）で 6 種ともカバー済み。
 - `soltest` / `tag` / `anchor` は `uwb_loc` 経由で `uwb_math` を使うため、本セッションで
   `idf.py fullclean && idf.py build` により再確認した。**3種とも警告 0・エラー 0**
   （`soltest` は `uwb_survey` も直接リンクしており、A-2/A-4 込みで確認できている）。
 
 ### CI
 
-直近 push（`4ab98e2`）は green。未コミットの差分（上記）はまだ push していないので
-CI はまだ流れていない。ホスト4種と ESP-IDF 側（soltest/tag/anchor）は本セッションで
-ローカル確認済み。
+直近 push（`dffcde5`）は green。未 push の差分は無い。
 
 ### Release
 
-`v0.1.0`（タグは `9be9000`、2026-08-21 13:17 作成）は**古い**。以後 9 コミット
+`v0.1.0`（タグは `9be9000`、2026-08-21 13:17 作成）は**古い**。以後 10 コミット
 （レビューの Critical/High 修正、上流凍結、`uwb_math` 化、GOROman 報告反映、回路図確認、
-未コミットのライセンス同梱を含む）が乗っていない。**特に DS-TWR の Critical バグ修正
+ライセンス同梱を含む）が乗っていない。**特に DS-TWR の Critical バグ修正
 （`bce1096`）より前なので、`v0.1.0` の DS-TWR ビルドは実機で確実に失敗する。**
-`v0.2.0` を切るなら（未コミット分をコミットしたうえで）`git tag` するだけで CI が
+`v0.2.0` を切るなら `git tag v0.2.0 && git push --tags` するだけで CI が
 14 通りの zip をライセンス同梱込みで作る。
 
 ---
@@ -200,7 +199,7 @@ Web 取得は `WebFetch` / `curl` に限定し、サブエージェントにも�
 
 ## 5. 文書の地図
 
-現役 21 本（+ 経緯を記録した archive 8 本）。索引は **[`docs/README.md`](README.md)**。
+現役 22 本（+ 経緯を記録した archive 8 本）。索引は **[`docs/README.md`](README.md)**。
 
 ```
 README.md                    購入者の入口（リポジトリ直下）
@@ -255,7 +254,6 @@ docs/archive/                 経緯文書（現役8本 + archive自身のREADME
 | `uwb_math` の共通化 | `uwb_sym3_solve_sphere` と Beck のλ探索の共通化（反復の形が同型） |
 | 測量 leave-one-out の計算量 | n=8 の外れ値入りで最大 ~5000 回のコレスキー/solve（S3 の double で数秒の可能性）。設置時1回として許容しているが、実機で時間を測るとなお良い |
 | 測量の2本外れ値（同一ノード共有） | greedy leave-one-out の既知の限界（総当たりの leave-two-out は組合せ数が多すぎる）。記録のみで未対応 |
-| `.cache` の untrack | `firmware/soltest/.cache/clangd/index/*.idx` がまだ git 追跡されている（`git rm -r --cached firmware/soltest/.cache/`）。レビュー §5 |
 | SPDX ヘッダ | `components/qm33120w_sdk/` 以外に SPDX ヘッダ・著作権表示が無い。レビュー §5（Low-Medium） |
 
 ---

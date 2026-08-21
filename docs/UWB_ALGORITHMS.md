@@ -389,8 +389,7 @@ $$
 左辺を展開する。 $\lVert x - y\rVert^2 = (x-y)^\top(x-y) = x^\top x - 2x^\top y + y^\top y$ なので
 
 $$
-\lVert p \rVert^2 - 2a_i^\top p + \lVert a_i \rVert^2 = r_i^2
-\tag{2.1}
+\lVert p \rVert^2 - 2a_i^\top p + \lVert a_i \rVert^2 = r_i^2 \qquad (2.1)
 $$
 
 ここで**重要な観察**をする。この式で $p$ について非線形なのは
@@ -400,8 +399,7 @@ $\lVert p \rVert^2$ の項**だけ**で、しかもその項は**添字 $i$ を�
 だから、基準となるアンカー $j$ の式
 
 $$
-\lVert p \rVert^2 - 2a_j^\top p + \lVert a_j \rVert^2 = r_j^2
-\tag{2.2}
+\lVert p \rVert^2 - 2a_j^\top p + \lVert a_j \rVert^2 = r_j^2 \qquad (2.2)
 $$
 
 を式 (2.1) から引けば、 $\lVert p \rVert^2$ が消える。
@@ -411,8 +409,7 @@ $$
 $$
 
 $$
-2(a_j - a_i)^\top p = r_i^2 - r_j^2 - \lVert a_i\rVert^2 + \lVert a_j\rVert^2
-\tag{2.3}
+2(a_j - a_i)^\top p = r_i^2 - r_j^2 - \lVert a_i\rVert^2 + \lVert a_j\rVert^2 \qquad (2.3)
 $$
 
 **左辺は $p$ について線形**になった。これを $i \ne j$ について並べれば
@@ -596,15 +593,13 @@ $$
 よって、 $\lambda$ を決めれば $y$ が決まる。
 
 $$
-\boxed{\ y(\lambda) = (A^\top W A + \lambda D)^{-1}(A^\top W b - \lambda f)\ }
-\tag{3.1}
+\boxed{\ y(\lambda) = (A^\top W A + \lambda D)^{-1}(A^\top W b - \lambda f)\ } \qquad (3.1)
 $$
 
 あとは**拘束を満たすような $\lambda$ を 1 つ見つけるだけ**。その条件が
 
 $$
-\varphi(\lambda) \equiv y(\lambda)^\top D\,y(\lambda) + 2f^\top y(\lambda) = 0
-\tag{3.2}
+\varphi(\lambda) \equiv y(\lambda)^\top D\,y(\lambda) + 2f^\top y(\lambda) = 0 \qquad (3.2)
 $$
 
 この $\varphi$ を**永年方程式** (secular equation) と呼ぶ。
@@ -782,8 +777,7 @@ $$
 
 $$
 \hat{p} = \arg\min_p\ S(p), \qquad
-S(p) = \sum_{i=1}^{n} w_i \bigl(z_i - h_i(p)\bigr)^2, \quad w_i = \frac{1}{\sigma_i^2}
-\tag{4.1}
+S(p) = \sum_{i=1}^{n} w_i \bigl(z_i - h_i(p)\bigr)^2, \quad w_i = \frac{1}{\sigma_i^2} \qquad (4.1)
 $$
 
 **重み付き最小二乗が最尤推定 (MLE) そのものになる。** これが
@@ -824,8 +818,7 @@ $$
 $$
 
 $$
-\boxed{\ (J^\top W J)\,\Delta = J^\top W e, \qquad p \leftarrow p + \Delta\ }
-\tag{4.2}
+\boxed{\ (J^\top W J)\,\Delta = J^\top W e, \qquad p \leftarrow p + \Delta\ } \qquad (4.2)
 $$
 
 これが**正規方程式**で、 $d \times d$ (3 次元なら $3\times3$) の連立 1 次方程式。
@@ -847,8 +840,7 @@ $W = \mathrm{diag}(w_1,\dots,w_n)$。
 そこで**対角に少し足して**無理やり正則にする。
 
 $$
-\left(J^\top W J + \lambda\,\frac{\mathrm{tr}(J^\top W J)}{d} I\right)\Delta = J^\top W e
-\tag{4.3}
+\left(J^\top W J + \lambda\,\frac{\mathrm{tr}(J^\top W J)}{d} I\right)\Delta = J^\top W e \qquad (4.3)
 $$
 
 $\mathrm{tr}(\cdot)/d$ で割っているのは**スケールを合わせる**ため
@@ -871,8 +863,7 @@ $\Delta \approx \frac{1}{\lambda \cdot \text{const}} J^\top W e$ となり、
 推定量の共分散の近似になる。
 
 $$
-\mathrm{Cov}(\hat{p}) \approx (J^\top W J)^{-1}
-\tag{4.4}
+\mathrm{Cov}(\hat{p}) \approx (J^\top W J)^{-1} \qquad (4.4)
 $$
 
 (なぜそうなるかは [§8.1](#81-フィッシャー情報行列) で改めて見る。)
@@ -1580,8 +1571,7 @@ $$
 
 $$
 D_{ij}^2 = \lVert x_i - x_j\rVert^2 = \lVert x_i\rVert^2 - 2x_i^\top x_j + \lVert x_j\rVert^2
-= B_{ii} - 2B_{ij} + B_{jj}
-\tag{9.1}
+= B_{ii} - 2B_{ij} + B_{jj} \qquad (9.1)
 $$
 
 $B_{ij}$ について解くと

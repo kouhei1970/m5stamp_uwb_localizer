@@ -321,7 +321,7 @@ W ... respondDSRange: Poll<-TAG: peer=0x0001 とタイミングプリセット�
 | 4 | G38 が SDA か SCL か | 実験 9（ToF） | 入れ替える | |
 | 5 | 無印 AtomS3 と AtomS3R の互換性 | 実験 1 | ボード定義を分ける | |
 | 6 | **IRQ がアクティブ HIGH か** | 実験 7 | 極性を変える（`GPIO_INTR_NEGEDGE`） | |
-| 7 | `pin_rst` 未配線で `dwt_softreset` だけで復旧できるか | 実験 1（StampFly 構成） | RST 配線が必須になる | 外部報告（公式ライブラリ + XIAO ESP32-C6、`dwt_softreset()`+待ちで温間リセットの `CONFIG_FAILED` が解消）で裏付けあり。本リポジトリの `begin()` にも同様のソフトリセットを追加中。本リポジトリのコードでは未 |
+| 7 | `pin_rst` 未配線で `dwt_softreset` だけで復旧できるか | 実験 1（StampFly 構成） | RST 配線が必須になる | 外部報告（公式ライブラリ + XIAO ESP32-C6、`dwt_softreset()`+待ちで温間リセットの `CONFIG_FAILED` が解消）で裏付けあり。本リポジトリの `begin()` にも同様のソフトリセット + `dwt_checkidlerc()` 待ちを追加済み（`4de9c68`）。実機では未確認 |
 | 8 | アンテナ遅延の実値 | 実験 4 | 校正値を入れる | |
 | 9 | StampFly GROVE は電池電圧（~3.0〜4.35V）。供給能力と LDO 後の 3.3V で 60mA 取れるか | 実験 10 | 機体バッテリから直接取る | |
 | 10 | 折返し時間の実測（プリセットの根拠） | 実験 8 | プリセットの数値を見直す（**版番号を上げること**） | |
