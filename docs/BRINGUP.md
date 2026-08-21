@@ -7,7 +7,7 @@
 **半田パッドと FPC ケーブルは信号の並びが違う。** 側面ラベルがパッド、下部の帯が FPC。
 
 
-**`firmware/probe` を書き込み、M5Stamp UWB Module の Device ID `0xDECA0314` が読めることを
+**`firmware/probe` を書き込み、M5Stamp UWB Module（通称 M5Stamp UWB）の Device ID `0xDECA0314` が読めることを
 確認する** ——ここだけに絞った受入確認手順です。
 これが通れば、以降の TWR 移植（Phase 2）はソフトウェアだけの話になります。
 

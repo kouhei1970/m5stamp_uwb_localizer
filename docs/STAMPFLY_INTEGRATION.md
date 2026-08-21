@@ -666,10 +666,10 @@ R を小さく設定すると、ESKF が UWB を信用して**短期精度が悪
 
 | # | 欠落 | 該当 | 対処 |
 |---|---|---|---|
-| 1 | **`RangingSample` に絶対タイムスタンプが無い** | `components/uwb_ranging/include/uwb_ranging_types.hpp:52-58`（`elapsed_ms` のみ） | `uint64_t t_us` を追加。§3.3 の周内スミア対策に必須 |
+| 1 | ~~**`RangingSample` に絶対タイムスタンプが無い**~~ | **解決済 (2026-08-21)**: `int64_t t_us` を追加（`components/uwb_ranging/include/uwb_ranging_types.hpp:62`）。測距開始の直前に `esp_timer_get_time()` を刻む | — |
 | 2 | **`PositionResult` にタイムスタンプが無い** | 同 `:110-131` | 周の中央時刻を持たせる |
 | 3 | `Config::port_already_initialized` は既にある | `components/uwb_qm33120/include/uwb_qm33120_types.hpp:93` | **StampFly 統合を見越して用意済み**。`sf_board` が SPI を初期化する構成にそのまま乗る |
-| 4 | IRQ 未使用（R6 未実装） | `docs/REIMPL_PLAN.md:145` | §5 の配線次第。**ポーリング経路は必ず残すこと** |
+| 4 | ~~IRQ 未使用（R6 未実装）~~ | **解決済 (2026-08-21)**: アンカー側の IRQ 経路は実装済み（`UWB_ENABLE_IRQ`、既定は無効・極性は実機未検証）。**タグ側は方針として IRQ 非依存のまま**（`docs/IRQ_POLICY.md`） | ポーリング経路は第一級のまま残してある |
 
 ### StampFly 側（`firmware/vehicle`）— 追加が必要なもの
 

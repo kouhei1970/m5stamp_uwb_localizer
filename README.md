@@ -2,61 +2,37 @@
 
 ![m5stamp_uwb_localizer](assets/social_card.png)
 
-**M5Stamp UWB Module (QM33120W)**（通称 **M5Stamp UWB**。FPC コネクタ実装済みの
-**M5Stamp UWB Module with FPC (QM33120W)** でも可。Qorvo QM33120W = DW3720 系を搭載）を
-**ESP32-S3 ホストボード**から ESP-IDF で使うための、**測距 + 測位スタック**です。
+**M5Stamp UWB Module (QM33120W)**（通称 **M5Stamp UWB**）を **ESP32-S3** から
+**ESP-IDF** で使い、**屋内の 3 次元位置**を求めて JSON Lines で吐くスタックです。
+タグ 1 台 + アンカー 4 台以上で動きます。
 
-> **⚠️ これは M5Stack 公式のリポジトリではありません。** 個人（[@kouhei1970](https://github.com/kouhei1970)）が
-> 作っている非公式の実装です。公式の Arduino ライブラリは
-> [`m5stack/M5Stamp-UWB`](https://github.com/m5stack/M5Stamp-UWB) です。
+> ### ⚠️ このコードは実機で一度も動作確認していません
+> ビルドは通り、測位計算は PC 上の合成データで検証済みですが、
+> **実機での SPI 疎通・測距・測位はすべて未確認**です。
+> 「動作実績のあるライブラリ」ではなく、**一次資料から積み上げた実装と検証手順の一式**です。
+> → [現状をもう少し詳しく](#現状をもう少し詳しく)
 >
-> | | 公式 `m5stack/M5Stamp-UWB` | 本リポジトリ |
-> |---|---|---|
-> | フレームワーク | Arduino | **ESP-IDF** |
-> | 範囲 | 1 対 1 の測距まで | **測距 + 屋内3次元測位 + 自動測量** |
-> | 位置づけ | — | 公式ライブラリを**移植元の一つ**として参照（`third_party/M5Stamp-UWB`） |
-
-タグ 1 台とアンカー 4 台以上で、**屋内の 3 次元位置**を求めて JSON Lines で吐きます。
-StampFly（マルチコプター機体）には依存しない汎用のスタックで、StampFly への統合は
-本リポジトリの成果物を使う下流の作業と位置づけています。
-
-> ただし**タグ側のハードウェア構成だけは、StampFly にそのまま載せられるよう互換性を意図的に維持**しています
-> （GROVE 2系統4本だけで動く ＝ IRQ / RST 無しのポーリングで成立する）。
-> **このリポジトリを単体で使う人が StampFly を用意する必要は一切ありません。**
-> 方針の詳細は [`docs/PLAN.md` §1](docs/PLAN.md) を参照。
+> **これは M5Stack 公式のリポジトリではありません。**
+> 公式の Arduino ライブラリは [`m5stack/M5Stamp-UWB`](https://github.com/m5stack/M5Stamp-UWB) です。
+> → [このリポジトリの位置づけ](#このリポジトリの位置づけ)
 
 ---
 
-> **本文で使う主な略語**: **UWB**（Ultra-Wideband、超広帯域無線）／**FPC**（Flexible Printed
-> Circuit、フレキシブル基板）／**IRQ**（Interrupt ReQuest、割り込み要求）／**TWR**（Two-Way
-> Ranging、双方向測距）／**UUS**（UWB microsecond、1 UUS = 1.02564 µs。実マイクロ秒ではない）
->
-> **UWB まわりの略語が分からないときは [`docs/GLOSSARY.md`](docs/GLOSSARY.md)（用語集）を引いてください。**
+## 📖 どこから読むか
 
-## ⚠️ 現状（先に読んでください）
+ドキュメントは 26 本あります。**全部読む必要はありません。**
+下から自分に合う入口を選んでください。索引は **[`docs/README.md`](docs/README.md)**。
 
-**このリポジトリのコードは、実機で一度も動作確認していません。**
+| あなたは | 入口 | その次 |
+|---|---|---|
+| 🔰 **UWB を知らない。原理から勉強したい** | **[`docs/UWB_PRIMER.md`](docs/UWB_PRIMER.md)**<br>なぜ電波で cm が測れるのか | [`UWB_ALGORITHMS.md`](docs/UWB_ALGORITHMS.md)（測位の数理） |
+| 🔧 **買った。動かしたい** | **[`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md)**<br>BOM から測位までの完全手順 | [`EXPERIMENT_PLAN.md`](docs/EXPERIMENT_PLAN.md)（進める順序） |
+| ⚡ **とにかく書き込んで試したい** | **[`docs/PREBUILT_BINARIES.md`](docs/PREBUILT_BINARIES.md)**<br>ESP-IDF を入れずに書き込む | [`BRINGUP.md`](docs/BRINGUP.md)（最初の関門） |
+| 🛠 **中身を読みたい・改造したい** | **[`docs/PLAN.md`](docs/PLAN.md)**<br>全体設計と方針 | [`REIMPL_PLAN.md`](docs/REIMPL_PLAN.md)（なぜこの実装か） |
+| 📋 **引き継ぐ・続きをやる** | **[`docs/HANDOFF.md`](docs/HANDOFF.md)**<br>現在地と次の一手 | [`SOURCE_POLICY.md`](docs/SOURCE_POLICY.md)（過去の誤りの記録） |
 
-| | 状況 |
-|---|---|
-| ビルド | 全ファーム **警告 0・エラー 0**（ESP-IDF v5.5.2 / ESP32-S3） |
-| 測位パイプライン | ホスト（PC）上の合成データで検証済み（**188 件のチェック全通過**。設定のシリアライズ/デシリアライズ、遅延プリセット、フレーム照合の検算を含む） |
-| 測位ソルバ（uwb_loc） | 上流 [uwb_localizer](https://github.com/kouhei1970/uwb_localizer) のホストテストで検証済み |
-| ソルバの計算時間 | ESP32-S3 実機用ベンチを実装済み（**実行は未**） |
-| **実機での SPI 疎通（Device ID 読み出し）** | **未確認** |
-| **実機での測距・測位** | **未確認** |
-
-- 製品自体が新しく、コミュニティの作例もほとんどありません。
-- **半田付けパッドの向き（pin 1 がどちら側か）は実物で確認が必要**です。公式の
-  PINMAP 画像が配信サーバから取得できず、設計データからは左右を確定できていません。
-  → [`docs/GETTING_STARTED.md` §3.1](docs/GETTING_STARTED.md#orientation) の
-  **テスターによる導通試験を必ず実施してください**（間違えると電源逆接で壊れます）。
-- 未確認事項の一覧は [`docs/SOLDER_PADS.md`](docs/SOLDER_PADS.md) §5 と
-  [`docs/GETTING_STARTED.md` §11](docs/GETTING_STARTED.md#limitations) にあります。
-
-つまりこれは「動作実績のあるライブラリ」ではなく、**一次資料から積み上げた実装と、
-その検証手順の一式**です。実機での最初の 1 件が取れたら、そこがこのプロジェクトの
-本当のスタート地点になります。
+**略語が分からないときは [`docs/GLOSSARY.md`](docs/GLOSSARY.md)、
+単位（UUS / DTU）で混乱したら [`docs/UNITS.md`](docs/UNITS.md)。**
 
 ---
 
@@ -73,38 +49,32 @@ StampFly（マルチコプター機体）には依存しない汎用のスタッ
 | **JSON Lines 出力**（測距値・位置・GDOP・残差・棄却情報・周期時間） | 実装済み |
 | アンテナ遅延の補正（値はアンカーごとに設定） | 実装済み（**校正手順は手動**） |
 | **シリアルコンソールによる実行時設定**（アンカーのアドレス・座標を NVS に保存。再ビルド不要） | 実装済み（実機未検証） |
-| IRQ 駆動 / ch9 PLL 再校正 / NLOS 判定 | **未実装**（[§既知の制約](docs/GETTING_STARTED.md#limitations)） |
+| **IRQ 駆動**（アンカー側。既定は無効） | 実装済み（**極性が実機未検証**。[`docs/IRQ_POLICY.md`](docs/IRQ_POLICY.md)） |
+| **TWR 遅延プリセットと版不一致の自動検出** | 実装済み（[`docs/TIMING_PRESETS.md`](docs/TIMING_PRESETS.md)） |
+| ch9 PLL 再校正 / NLOS 判定 | **未実装**（[§既知の制約](docs/GETTING_STARTED.md#limitations)） |
 
 ---
 
-## 必要なもの
+## すぐ試す
 
-### ハードウェア（検証構成: タグ 1 + アンカー 5）
+### A. ビルド済みバイナリを使う（ESP-IDF 不要）
 
-| 品目 | 数量 | 役割 |
-|---|---:|---|
-| [M5Stamp UWB Module (QM33120W)](https://docs.m5stack.com/en/stamp/Stamp_UWB) （SKU `S017`）<br>または [M5Stamp UWB Module with FPC (QM33120W)](https://docs.m5stack.com/en/stamp/Stamp_UWB_F) （SKU `S017-F`） | **6** | UWB モジュール。**半田パッドを使うのでどちらでもよい** |
-| [M5StampS3A](https://docs.m5stack.com/en/core/M5StampS3A) | **1** | タグ（移動体）のホスト。**旧 M5StampS3（A 無し）と完全互換**（電源とアンテナが改良された現行版） |
-| [M5 AtomS3](https://docs.m5stack.com/en/core/AtomS3) | **5** | アンカー（固定局）のホスト **AtomS3R（現行）/ 無印 AtomS3（在庫限り）のどちらでも可**（IMU/地磁気を使わないため互換と推定。**実機未検証**） |
+GitHub Actions がビルドした**そのまま書き込めるバイナリ**があります。
 
-**モジュールとホストは半田付けで接続します**（1.27mm ピッチのキャステレーションホール）。
-FPC コネクタ経由でも構いませんが、0.5mm 12P の変換基板が別途必要です。
+```sh
+# 例: 疎通確認ファーム（M5StampS3A 用）
+curl -LO https://github.com/kouhei1970/m5stamp_uwb_localizer/releases/latest/download/probe-stamps3.zip
+unzip probe-stamps3.zip
+esptool.py --chip esp32s3 -p /dev/cu.usbmodemXXXX write_flash 0x0 merged-firmware.bin
+```
 
-### 工具・材料
+ブラウザからでも書けます（<https://espressif.github.io/esptool-js/> でオフセット `0x0`）。
+14 通りの構成を用意してあります → **[`docs/PREBUILT_BINARIES.md`](docs/PREBUILT_BINARIES.md)**
 
-**AWG30 相当の細線**、**1.6mm C 型以下のこて先**、フラックス、拡大鏡、
-**テスター（向きの確認に必須）**、線の根元を固定する接着剤、
-**巻尺（アンカー座標の実測用）**、USB-C ケーブル。
+> **⚠ ピン定義（`boards/*.h`）は実機未検証の暫定値**を焼き込んであります。
+> 配線が [`docs/GETTING_STARTED.md` §3](docs/GETTING_STARTED.md#wiring) と違えば動きません。
 
-> 詳細な BOM は [`docs/GETTING_STARTED.md` §1](docs/GETTING_STARTED.md#bom)。
-
-### ソフトウェア
-
-**ESP-IDF v5.5.2**
-
----
-
-## 5 分クイックスタート
+### B. 自分でビルドする（5 分）
 
 **実機がなくてもここまでできます。**
 
@@ -166,6 +136,60 @@ I (xxx) uwb_probe: === L1: PASS / L2: PASS ===
 
 ---
 
+## 現状をもう少し詳しく
+
+**このリポジトリのコードは、実機で一度も動作確認していません。**
+
+| | 状況 |
+|---|---|
+| ビルド | 全ファーム **警告 0・エラー 0**（ESP-IDF v5.5.2 / ESP32-S3） |
+| 測位パイプライン | ホスト（PC）上の合成データで検証済み（**188 件のチェック全通過**。設定のシリアライズ/デシリアライズ、遅延プリセット、フレーム照合の検算を含む） |
+| 測位ソルバ（uwb_loc） | 上流 [uwb_localizer](https://github.com/kouhei1970/uwb_localizer) のホストテストで検証済み |
+| ソルバの計算時間 | ESP32-S3 実機用ベンチを実装済み（**実行は未**） |
+| **実機での SPI 疎通（Device ID 読み出し）** | **未確認** |
+| **実機での測距・測位** | **未確認** |
+
+- 製品自体が新しく、コミュニティの作例もほとんどありません。
+- **半田付けパッドの向き（pin 1 がどちら側か）は実物で確認が必要**です。公式の
+  PINMAP 画像が配信サーバから取得できず、設計データからは左右を確定できていません。
+  → [`docs/GETTING_STARTED.md` §3.1](docs/GETTING_STARTED.md#orientation) の
+  **テスターによる導通試験を必ず実施してください**（間違えると電源逆接で壊れます）。
+- 未確認事項の一覧は [`docs/SOLDER_PADS.md`](docs/SOLDER_PADS.md) §5 と
+  [`docs/GETTING_STARTED.md` §11](docs/GETTING_STARTED.md#limitations) にあります。
+
+つまりこれは「動作実績のあるライブラリ」ではなく、**一次資料から積み上げた実装と、
+その検証手順の一式**です。実機での最初の 1 件が取れたら、そこがこのプロジェクトの
+本当のスタート地点になります。
+
+---
+
+## 必要なもの
+
+### ハードウェア（検証構成: タグ 1 + アンカー 5）
+
+| 品目 | 数量 | 役割 |
+|---|---:|---|
+| [M5Stamp UWB Module (QM33120W)](https://docs.m5stack.com/en/stamp/Stamp_UWB) （SKU `S017`）<br>または [M5Stamp UWB Module with FPC (QM33120W)](https://docs.m5stack.com/en/stamp/Stamp_UWB_F) （SKU `S017-F`） | **6** | UWB モジュール。**半田パッドを使うのでどちらでもよい** |
+| [M5StampS3A](https://docs.m5stack.com/en/core/M5StampS3A) | **1** | タグ（移動体）のホスト。**旧 M5StampS3（A 無し）と完全互換**（電源とアンテナが改良された現行版） |
+| [M5 AtomS3](https://docs.m5stack.com/en/core/AtomS3) | **5** | アンカー（固定局）のホスト **AtomS3R（現行）/ 無印 AtomS3（在庫限り）のどちらでも可**（IMU/地磁気を使わないため互換と推定。**実機未検証**） |
+
+**モジュールとホストは半田付けで接続します**（1.27mm ピッチのキャステレーションホール）。
+FPC コネクタ経由でも構いませんが、0.5mm 12P の変換基板が別途必要です。
+
+### 工具・材料
+
+**AWG30 相当の細線**、**1.6mm C 型以下のこて先**、フラックス、拡大鏡、
+**テスター（向きの確認に必須）**、線の根元を固定する接着剤、
+**巻尺（アンカー座標の実測用）**、USB-C ケーブル。
+
+> 詳細な BOM は [`docs/GETTING_STARTED.md` §1](docs/GETTING_STARTED.md#bom)。
+
+### ソフトウェア
+
+**ESP-IDF v5.5.2**
+
+---
+
 ## ディレクトリ構成
 
 ```
@@ -176,6 +200,7 @@ m5stamp_uwb_localizer/
 ├── PROGRESS.md              開発進捗ログ（何がどこまで検証済みか）
 │
 ├── docs/
+│   ├── README.md            ★ ドキュメント索引（ここから探す）
 │   ├── GETTING_STARTED.md   ★ 買ってから測位が出るまでの完全手順
 │   ├── EXPERIMENT_PLAN.md   ★ 実機到着後の実験計画とフラグ有効化の順序
 │   ├── UWB_PRIMER.md        ★ UWB 入門（なぜ電波で cm が測れるのか）
@@ -266,6 +291,26 @@ firmware/tag ──┬─ uwb_ranging ─┬─ uwb_loc          （ハード非
 
 ---
 
+## このリポジトリの位置づけ
+
+**M5Stack 公式ではありません。** 個人（[@kouhei1970](https://github.com/kouhei1970)）が
+作っている非公式の実装です。
+
+| | 公式 [`m5stack/M5Stamp-UWB`](https://github.com/m5stack/M5Stamp-UWB) | 本リポジトリ |
+|---|---|---|
+| フレームワーク | Arduino | **ESP-IDF** |
+| 範囲 | 1 対 1 の測距まで | **測距 + 屋内3次元測位 + 自動測量** |
+| 位置づけ | — | 公式ライブラリを**移植元の一つ**として参照 |
+
+**StampFly（マルチコプター機体）には依存しません。** 想定利用者は
+**このリポジトリを単体で試す人**で、StampFly を用意する必要は一切ありません。
+
+> ただし**タグ側のハードウェア構成だけは、StampFly にそのまま載せられるよう
+> 互換性を意図的に維持**しています（GROVE 2系統4本だけで動く ＝ IRQ / RST 無しの
+> ポーリングで成立する）。方針の詳細は [`docs/PLAN.md` §1](docs/PLAN.md)。
+
+---
+
 ## ライセンス
 
 **このリポジトリは複数のライセンスが混在しています。**
@@ -289,16 +334,12 @@ firmware/tag ──┬─ uwb_ranging ─┬─ uwb_loc          （ハード非
 
 ---
 
-## 開発計画・進捗
+## 進捗と計画
 
-- **用語集（略語の意味）**: [`docs/GLOSSARY.md`](docs/GLOSSARY.md)
-- **ビルド済みバイナリで試す（ESP-IDF 不要）**: [`docs/PREBUILT_BINARIES.md`](docs/PREBUILT_BINARIES.md)
-- **UWB 入門（原理から）**: [`docs/UWB_PRIMER.md`](docs/UWB_PRIMER.md)
-- 測位アルゴリズムの導出: [`docs/UWB_ALGORITHMS.md`](docs/UWB_ALGORITHMS.md)
-- **実機が届いたら**: [`docs/EXPERIMENT_PLAN.md`](docs/EXPERIMENT_PLAN.md)
-- **手順書**: [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md)
-- 設計方針・フェーズ計画: [`docs/PLAN.md`](docs/PLAN.md)
-- 単位（UUS / DTU）のリファレンス: [`docs/UNITS.md`](docs/UNITS.md)
-- 事前調査資料: [`docs/`](docs/) 配下の `SURVEY_*.md`
-- 進捗ログ: [`PROGRESS.md`](PROGRESS.md)
-- 既知の課題: [`docs/REIMPL_PLAN.md`](docs/REIMPL_PLAN.md) / [`docs/CRITICAL_REVIEW.md`](docs/CRITICAL_REVIEW.md)
+| | |
+|---|---|
+| **ドキュメント索引** | **[`docs/README.md`](docs/README.md)** |
+| 現在地・次の一手 | [`docs/HANDOFF.md`](docs/HANDOFF.md) |
+| 進捗ログ | [`PROGRESS.md`](PROGRESS.md) |
+| 全体設計・フェーズ計画 | [`docs/PLAN.md`](docs/PLAN.md) |
+| 既知の課題 | [`docs/REIMPL_PLAN.md`](docs/REIMPL_PLAN.md) / [`docs/CRITICAL_REVIEW.md`](docs/CRITICAL_REVIEW.md) |

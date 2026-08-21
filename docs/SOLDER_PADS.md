@@ -1,4 +1,4 @@
-# M5Stamp UWB Module / M5Stamp UWB Module 半田付けパッド（キャステレーション）調査 (2026-08-20)
+# M5Stamp UWB Module（通称 M5Stamp UWB）半田付けパッド（キャステレーション）調査 (2026-08-20)
 
 FPC を使わずに **モジュール側面の半田付けパッドへ直接配線する**ための資料。
 FPC を使う場合は `BRINGUP.md` の該当節を参照。
