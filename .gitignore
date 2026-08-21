@@ -2,6 +2,8 @@
 build/
 # clangd のキャッシュ (firmware/*/.cache/)
 .cache/
+# CI が生成する sdkconfig 断片 (.github/workflows/build.yml)
+ci.defaults
 sdkconfig
 sdkconfig.old
 managed_components/

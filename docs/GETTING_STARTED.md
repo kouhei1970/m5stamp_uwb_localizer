@@ -1,6 +1,6 @@
 # はじめかた — 買ってから測位が出るまで
 
-M5Stack **M5Stamp UWB Module** を 6 個買った人が、**タグ 1 台 + アンカー 5 台**の
+M5Stack **M5Stamp UWB Module**（通称 **M5Stamp UWB**）を 6 個買った人が、**タグ 1 台 + アンカー 5 台**の
 UWB（Ultra-Wideband、超広帯域無線）測位を動かすまでの完全手順です。UWB の専門知識は前提にしません。
 
 > ### 先に読んでほしいこと（正直な現状）
@@ -119,7 +119,7 @@ idf.py --version      # → ESP-IDF v5.5.2
 ### 2.2 リポジトリの取得
 
 ```sh
-git clone <このリポジトリの URL> m5stamp_uwb_localizer
+git clone https://github.com/kouhei1970/m5stamp_uwb_localizer.git
 cd m5stamp_uwb_localizer
 ```
 

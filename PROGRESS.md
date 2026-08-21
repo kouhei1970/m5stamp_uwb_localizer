@@ -6,7 +6,7 @@
 - 最終ターゲット: https://github.com/M5Fly-kanazawa/stampfly_ecosystem
 - 接続構想: StampFly の GROVE 端子を SPI に設定して接続
 
-作業ディレクトリ: /Users/kouhei/tmp/github/m5stack_uwb
+作業ディレクトリ: /Users/kouhei/tmp/github/m5stamp_uwb_localizer
 
 ---
 

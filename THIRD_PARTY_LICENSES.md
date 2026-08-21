@@ -29,8 +29,21 @@ MIT License, Copyright (c) 2026 Kouhei Ito
 `c/src/{uwb_internal,uwb_linalg}.h`）を、`third_party/uwb_localizer/`
 （コミット `8d0edc057ed05cf6b4af91df329999fe2343f515`）からそのまま vendoring したものです。
 ロジックは無改造で、ESP-IDF 用の `CMakeLists.txt` / `Kconfig` を追加しただけです。
-全文は取り込み元の [`third_party/uwb_localizer/LICENSE`](third_party/uwb_localizer/LICENSE)
-（本リポジトリの [`LICENSE`](LICENSE) と同一の MIT）を参照してください。
+全文は上流の [`LICENSE`](https://github.com/kouhei1970/uwb_localizer/blob/HEAD/LICENSE)（本リポジトリの [`LICENSE`](LICENSE) と同一の MIT）を
+参照してください。**`third_party/` は `.gitignore` されているので、clone しただけでは
+ローカルには存在しません**（参照用クローンを手元に置いている場合のみ
+`third_party/uwb_localizer/LICENSE` にあります）。
+
+## `docs/UWB_ALGORITHMS.md` — MIT（文書の移植）
+
+MIT License, Copyright (c) 2026 Kouhei Ito
+
+[kouhei1970/uwb_localizer](https://github.com/kouhei1970/uwb_localizer) の
+[`docs/UWB_ALGORITHMS.md`](https://github.com/kouhei1970/uwb_localizer/blob/HEAD/docs/UWB_ALGORITHMS.md)
+を本リポジトリ向けに改訂して移植したものです。
+**数式・導出・章立ては原典のまま**で、追加したのは本リポジトリの実装への対応づけ、
+本リポジトリでは未使用の節（TDoA / AoA）の注記、`SolverLevel` に `Lv1` が無いことの
+注記、および相対リンクの張り替えです。文書冒頭にも同じ出典を明記しています。
 
 ## `components/uwb_qm33120/` — MIT（M5Stack 由来の移植コードを含む）
 

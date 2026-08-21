@@ -108,6 +108,11 @@ FPC コネクタ経由でも構いませんが、0.5mm 12P の変換基板が別
 
 **実機がなくてもここまでできます。**
 
+> **ESP-IDF を入れずに試したい場合**は、GitHub Actions がビルドした
+> **そのまま書き込めるバイナリ**が [Releases](https://github.com/kouhei1970/m5stamp_uwb_localizer/releases)
+> と Actions の artifact にあります。→ [`docs/PREBUILT_BINARIES.md`](docs/PREBUILT_BINARIES.md)
+> （**ただしピン定義は実機未検証の暫定値**なので、配線が本書と違うと動きません）
+
 ```sh
 # 1) ESP-IDF v5.5.2（未導入なら）
 mkdir -p ~/esp && cd ~/esp
@@ -118,7 +123,7 @@ cd ~/esp/esp-idf && ./install.sh esp32s3
 . ~/esp/esp-idf/export.sh
 
 # 3) このリポジトリ
-git clone <このリポジトリの URL> m5stamp_uwb_localizer
+git clone https://github.com/kouhei1970/m5stamp_uwb_localizer.git
 cd m5stamp_uwb_localizer
 
 # 4) 測位計算が正しく動くことを PC 上で確認（ESP-IDF 不要）
@@ -172,9 +177,20 @@ m5stamp_uwb_localizer/
 │
 ├── docs/
 │   ├── GETTING_STARTED.md   ★ 買ってから測位が出るまでの完全手順
+│   ├── EXPERIMENT_PLAN.md   ★ 実機到着後の実験計画とフラグ有効化の順序
+│   ├── UWB_PRIMER.md        ★ UWB 入門（なぜ電波で cm が測れるのか）
+│   ├── UWB_ALGORITHMS.md    測位アルゴリズムの導出（上流からの移植・改訂版）
+│   ├── GLOSSARY.md          用語集（略語の正式名称と意味）
+│   ├── UNITS.md             UUS / DTU / 実µs の単位リファレンス
 │   ├── SOLDER_PADS.md       半田パッドの寸法・配線・アンテナ禁止領域
 │   ├── BRINGUP.md           Phase 1（SPI 疎通）の受入確認手順
 │   ├── ANCHOR_PLACEMENT.md  アンカー配置ルール（実測にもとづく）
+│   ├── IRQ_POLICY.md        IRQ を使うかどうかの方針
+│   ├── TIMING_PRESETS.md    TWR 遅延プリセットと版不一致検出
+│   ├── SURVEY_SPEC.md       アンカー座標の自動測量の仕様
+│   ├── STAMPFLY_INTEGRATION.md  StampFly 位置制御への統合検討
+│   ├── SOURCE_POLICY.md     資料の格付けと、過去の誤りの記録
+│   ├── HANDOFF.md           次セッションへの申し送り
 │   ├── PLAN.md              全体設計・フェーズ計画
 │   ├── REIMPL_PLAN.md       TWR 層の課題一覧（R1〜R12）
 │   ├── CRITICAL_REVIEW.md   移植元コードの問題点の詳細分析
@@ -182,15 +198,20 @@ m5stamp_uwb_localizer/
 │   ├── PLATFORM_TUNING.md   ESP32-S3 固有の最適化調査
 │   └── SURVEY_*.md          事前調査資料
 │
+├── assets/                  製品写真・公式ピンマップ・SNS カード
+│
 ├── boards/                  ホストボードのピン定義（※ 暫定値。実配線で要検証）
-│   ├── stamps3.h            M5StampS3A
-│   └── atoms3.h             M5 AtomS3
+│   ├── stamps3.h            M5StampS3A（タグ単体構成）
+│   ├── atoms3.h             M5 AtomS3 / AtomS3R（アンカー。構成 A/B を Kconfig で切替）
+│   └── stampfly.h           StampFly 搭載時のタグ（GROVE 2系統4本 = SPI）
 │
 ├── components/
 │   ├── qm33120w_sdk/        Qorvo 提供の QM33120W/DW3720 チップドライバ SDK
-│   ├── uwb_port/            ESP-IDF 向けプラットフォーム抽象層（SPI/GPIO/時刻/排他）
-│   ├── uwb_qm33120/         C++ ラッパ（初期化・PHY 設定・SS/DS-TWR）
+│   ├── uwb_port/            ESP-IDF 向けプラットフォーム抽象層（SPI/GPIO/IRQ/時刻/排他）
+│   ├── uwb_qm33120/         C++ ラッパ（初期化・PHY 設定・SS/DS-TWR・遅延プリセット）
 │   ├── uwb_ranging/         アンカー登録テーブル / スケジューラ / 測位パイプライン
+│   ├── uwb_cfgstore/        NVS 永続化 + シリアルコンソール
+│   ├── uwb_survey/          アンカー座標の自動測量（MDS + Gauss-Newton + ゲージ固定）
 │   └── uwb_loc/             測位ソルバ（Lv0 / Lv2 / EKF）
 │
 ├── firmware/
@@ -203,6 +224,7 @@ m5stamp_uwb_localizer/
 │
 ├── tools/
 │   ├── test_pipeline/       ★ 測位パイプラインのホスト検証（実機不要、`make test`）
+│   ├── test_survey/         自動測量の計算のホスト検証
 │   └── test_uwb_loc/        測位ソルバのホスト検証（上流クローンが別途必要）
 │
 └── third_party/             上流リポジトリの参照クローン（gitignore 済み・ビルド対象外）
@@ -270,6 +292,7 @@ firmware/tag ──┬─ uwb_ranging ─┬─ uwb_loc          （ハード非
 ## 開発計画・進捗
 
 - **用語集（略語の意味）**: [`docs/GLOSSARY.md`](docs/GLOSSARY.md)
+- **ビルド済みバイナリで試す（ESP-IDF 不要）**: [`docs/PREBUILT_BINARIES.md`](docs/PREBUILT_BINARIES.md)
 - **UWB 入門（原理から）**: [`docs/UWB_PRIMER.md`](docs/UWB_PRIMER.md)
 - 測位アルゴリズムの導出: [`docs/UWB_ALGORITHMS.md`](docs/UWB_ALGORITHMS.md)
 - **実機が届いたら**: [`docs/EXPERIMENT_PLAN.md`](docs/EXPERIMENT_PLAN.md)

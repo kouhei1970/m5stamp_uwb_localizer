@@ -1,0 +1,259 @@
+name: build
+
+# 目的は2つ。
+#  1. ホスト側テストとファームのビルドが壊れていないことを常に確認する
+#  2. **ESP-IDF を入れていない人がそのまま書き込めるバイナリ**を配る
+#     （docs/PREBUILT_BINARIES.md）
+#
+# ⚠ 配布バイナリは boards/*.h のピン定義を焼き込んだものです。
+#   そのピン定義は**実機未検証の暫定値**なので、配線が違えば動きません。
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+env:
+  IDF_VERSION: v5.5.2
+
+jobs:
+  # ---------------------------------------------------------------- #
+  # ホスト側テスト（ESP-IDF 不要。実機も不要）
+  # ---------------------------------------------------------------- #
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # tools/test_uwb_loc は上流のテストコード本体を参照する。
+      # third_party/ は .gitignore 済みなのでここで取得する。
+      - name: Fetch upstream uwb_localizer (for test_uwb_loc)
+        run: |
+          git clone --depth 1 https://github.com/kouhei1970/uwb_localizer.git \
+            third_party/uwb_localizer
+
+      - name: test_pipeline
+        run: make -C tools/test_pipeline test
+
+      - name: test_survey
+        run: make -C tools/test_survey test
+
+      - name: test_uwb_loc
+        run: make -C tools/test_uwb_loc test
+
+      # ESP-IDF ビルドとは警告設定が違うので、ホスト側も -Werror で別途通す
+      # （docs/HANDOFF.md「落とし穴」3）。3つとも strict ターゲットを持つ。
+      - name: strict build
+        run: |
+          make -C tools/test_pipeline strict
+          make -C tools/test_survey   strict
+          make -C tools/test_uwb_loc  strict
+
+  # ---------------------------------------------------------------- #
+  # ファームウェアのビルド → 書き込み可能なバイナリを artifact に
+  # ---------------------------------------------------------------- #
+  firmware:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # --- 実験1: SPI 疎通確認 ---
+          - name: probe-stamps3
+            app: probe
+            kconfig: |
+              CONFIG_UWB_PROBE_BOARD_STAMPS3=y
+          - name: probe-atoms3-pinoutA
+            app: probe
+            kconfig: |
+              CONFIG_UWB_PROBE_BOARD_ATOMS3=y
+              CONFIG_UWB_BOARD_ATOMS3_PINOUT_A=y
+          - name: probe-atoms3-pinoutB
+            app: probe
+            kconfig: |
+              CONFIG_UWB_PROBE_BOARD_ATOMS3=y
+              CONFIG_UWB_BOARD_ATOMS3_PINOUT_B=y
+          - name: probe-stampfly
+            app: probe
+            kconfig: |
+              CONFIG_UWB_PROBE_BOARD_STAMPFLY=y
+
+          # --- 実験2/3: 1対1の測距 ---
+          - name: twr-tag-ss
+            app: twr
+            kconfig: |
+              CONFIG_UWB_TWR_BOARD_STAMPS3=y
+              CONFIG_UWB_TWR_ROLE_TAG=y
+              CONFIG_UWB_TWR_METHOD_SS=y
+          - name: twr-anchor-ss
+            app: twr
+            kconfig: |
+              CONFIG_UWB_TWR_BOARD_ATOMS3=y
+              CONFIG_UWB_TWR_ROLE_ANCHOR=y
+              CONFIG_UWB_TWR_METHOD_SS=y
+          - name: twr-tag-ds
+            app: twr
+            kconfig: |
+              CONFIG_UWB_TWR_BOARD_STAMPS3=y
+              CONFIG_UWB_TWR_ROLE_TAG=y
+              CONFIG_UWB_TWR_METHOD_DS=y
+          - name: twr-anchor-ds
+            app: twr
+            kconfig: |
+              CONFIG_UWB_TWR_BOARD_ATOMS3=y
+              CONFIG_UWB_TWR_ROLE_ANCHOR=y
+              CONFIG_UWB_TWR_METHOD_DS=y
+
+          # --- 実験5/6: 本番。アドレスと座標は実行時にコンソールで設定するので
+          #     **5台とも同じバイナリでよい** ---
+          - name: anchor-atoms3-pinoutA-ds
+            app: anchor
+            kconfig: |
+              CONFIG_UWB_ANCHOR_BOARD_ATOMS3=y
+              CONFIG_UWB_BOARD_ATOMS3_PINOUT_A=y
+              CONFIG_UWB_ANCHOR_METHOD_DS=y
+          - name: anchor-atoms3-pinoutB-ds
+            app: anchor
+            kconfig: |
+              CONFIG_UWB_ANCHOR_BOARD_ATOMS3=y
+              CONFIG_UWB_BOARD_ATOMS3_PINOUT_B=y
+              CONFIG_UWB_ANCHOR_METHOD_DS=y
+          - name: tag-stamps3-ds
+            app: tag
+            kconfig: |
+              CONFIG_UWB_TAG_BOARD_STAMPS3=y
+              CONFIG_UWB_TAG_METHOD_DS=y
+          - name: tag-stampfly-ds
+            app: tag
+            kconfig: |
+              CONFIG_UWB_TAG_BOARD_STAMPFLY=y
+              CONFIG_UWB_TAG_METHOD_DS=y
+
+          # --- 実験7/8: IRQ + AnchorIrq プリセット。
+          #     **この2つは必ずセットで使うこと**（片側だけ焼くと測距が成立しない） ---
+          - name: anchor-atoms3-pinoutB-ds-fast
+            app: anchor
+            kconfig: |
+              CONFIG_UWB_ANCHOR_BOARD_ATOMS3=y
+              CONFIG_UWB_BOARD_ATOMS3_PINOUT_B=y
+              CONFIG_UWB_ANCHOR_METHOD_DS=y
+              CONFIG_UWB_ENABLE_IRQ=y
+              CONFIG_UWB_TIMING_PROFILE_ANCHOR_IRQ=y
+          - name: tag-stamps3-ds-fast
+            app: tag
+            kconfig: |
+              CONFIG_UWB_TAG_BOARD_STAMPS3=y
+              CONFIG_UWB_TAG_METHOD_DS=y
+              CONFIG_UWB_TIMING_PROFILE_ANCHOR_IRQ=y
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # matrix の値をスクリプト本文に直接展開すると、YAML のインデントが
+      # そのまま混入して Kconfig が読めなくなる。env 経由で渡し、行頭の
+      # 空白を落としてから書き出す。
+      - name: Write CI sdkconfig fragment
+        env:
+          KCONFIG: ${{ matrix.kconfig }}
+        run: |
+          set -eu
+          printf '%s\n' "$KCONFIG" | sed 's/^[[:space:]]*//' \
+            > "firmware/${{ matrix.app }}/ci.defaults"
+          echo "--- firmware/${{ matrix.app }}/ci.defaults ---"
+          cat -A "firmware/${{ matrix.app }}/ci.defaults" | head -20
+
+      - name: Build
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: ${{ env.IDF_VERSION }}
+          target: esp32s3
+          path: firmware/${{ matrix.app }}
+          command: >-
+            idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;ci.defaults" build
+            && idf.py merge-bin -o merged-firmware.bin
+
+      - name: Collect artifacts
+        run: |
+          set -eu
+          out="dist/${{ matrix.name }}"
+          mkdir -p "$out"
+          b="firmware/${{ matrix.app }}/build"
+          cp "$b/merged-firmware.bin" "$out/"
+          cp "$b/flasher_args.json"   "$out/" || true
+          cp "$b"/*.bin               "$out/" || true
+          cp firmware/${{ matrix.app }}/ci.defaults "$out/kconfig-used.txt"
+          {
+            echo "# ${{ matrix.name }}"
+            echo
+            echo "app: firmware/${{ matrix.app }}"
+            echo "commit: ${{ github.sha }}"
+            echo
+            echo '## 書き込み方（ESP-IDF は不要）'
+            echo
+            echo '```sh'
+            echo 'pip install esptool'
+            echo 'esptool.py --chip esp32s3 -p /dev/cu.usbmodemXXXX write_flash 0x0 merged-firmware.bin'
+            echo '```'
+            echo
+            echo 'ブラウザから書き込む場合は https://espressif.github.io/esptool-js/ で'
+            echo 'merged-firmware.bin をオフセット 0x0 に指定する。'
+            echo
+            echo '## 適用した設定'
+            echo
+            echo '```'
+            cat firmware/${{ matrix.app }}/ci.defaults
+            echo '```'
+            echo
+            echo '## 注意'
+            echo
+            echo '**ピン定義 (boards/*.h) は実機未検証の暫定値**です。配線がドキュメントと'
+            echo '違う場合、このバイナリは動きません。docs/PREBUILT_BINARIES.md を読むこと。'
+          } > "$out/README.md"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: dist/${{ matrix.name }}
+          retention-days: 90
+
+  # ---------------------------------------------------------------- #
+  # タグを打ったときだけ、Release にバイナリを添付する
+  # ---------------------------------------------------------------- #
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [host-tests, firmware]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Pack each variant
+        run: |
+          set -eu
+          mkdir -p release
+          for d in dist/*/; do
+            n="$(basename "$d")"
+            (cd "$d" && zip -qr "../../release/${n}.zip" .)
+          done
+          ls -lh release
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release/*.zip
+          body: |
+            ESP-IDF を入れずに書き込めるバイナリです。
+
+            各 zip の中の `merged-firmware.bin` をオフセット `0x0` に書き込んでください。
+
+            ```sh
+            esptool.py --chip esp32s3 -p /dev/cu.usbmodemXXXX write_flash 0x0 merged-firmware.bin
+            ```
+
+            **⚠ ピン定義は実機未検証の暫定値です。** 配線が
+            `docs/GETTING_STARTED.md` §3 と違う場合は動きません。
+            詳細は `docs/PREBUILT_BINARIES.md`。

@@ -133,7 +133,7 @@
 
 | 名前 | 何か |
 |---|---|
-| **M5Stamp UWB Module** | M5Stack の UWB モジュール。中身は Qorvo QM33120W。**本プロジェクトの対象**。FPC コネクタ付きの品種（**M5Stamp UWB Module with FPC**）もある |
+| **M5Stamp UWB Module** | M5Stack の UWB モジュール（**通称 M5Stamp UWB**）。中身は Qorvo QM33120W。**本プロジェクトの対象**。FPC コネクタ付きの品種（**M5Stamp UWB Module with FPC**）もある |
 | **QM33120W** | Qorvo の UWB トランシーバ IC。**DW3720 系**。Device ID = `0xDECA0314` |
 | **DW3000 / DW3720 / DW1000** | Decawave（現 Qorvo）の UWB IC 系列。DW1000 が旧世代。**単位系の定数が世代で違うので混同注意**（`docs/UNITS.md`） |
 | **M5StampS3A** | ESP32-S3 の小型ボード。**タグのホスト**。旧 M5StampS3 と互換 |

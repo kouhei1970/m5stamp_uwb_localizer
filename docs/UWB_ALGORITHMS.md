@@ -18,9 +18,9 @@
 >
 > 原典が参照する周辺文書（なぜその手法を選んだかの経緯 = `DESIGN.md`、Python 版の使い方 = `TUTORIAL.md`、
 > 原典のドキュメント一覧 = `README.md`）は本リポジトリの `docs/` には移植していない。読みたい場合は
-> vendoring 元の [`third_party/uwb_localizer/docs/`](../third_party/uwb_localizer/docs/)
-> （[DESIGN.md](../third_party/uwb_localizer/docs/DESIGN.md) /
-> [TUTORIAL.md](../third_party/uwb_localizer/docs/TUTORIAL.md)）を直接参照すること。
+> vendoring 元の [`third_party/uwb_localizer/docs/`](https://github.com/kouhei1970/uwb_localizer/tree/HEAD/docs)
+> （[DESIGN.md](https://github.com/kouhei1970/uwb_localizer/blob/HEAD/docs/DESIGN.md) /
+> [TUTORIAL.md](https://github.com/kouhei1970/uwb_localizer/blob/HEAD/docs/TUTORIAL.md)）を直接参照すること。
 >
 > 略語の表記は本リポジトリの用語集 [`docs/GLOSSARY.md`](GLOSSARY.md) の表記ルールとも整合させてある。
 >
@@ -674,7 +674,7 @@ $$
 > **C 版での工夫**: $G^{-1}D$ は非対称なので、一般の固有値計算が要るように見える。
 > しかし $G = LL^\top$ (コレスキー分解) とすると $L^{-1} D L^{-\top}$ は**対称**で、
 > $G^{-1}D$ と同じ固有値を持つ。対称行列なら Jacobi 法で簡単に解けるので、
-> C 版はこの経路を使っている ([third_party/uwb_localizer/c/README.md](../third_party/uwb_localizer/c/README.md))。
+> C 版はこの経路を使っている ([third_party/uwb_localizer/c/README.md](https://github.com/kouhei1970/uwb_localizer/blob/HEAD/c/README.md))。
 
 ### 3.7 LLS との違い
 
@@ -1018,7 +1018,7 @@ $|t_i| > 4$ となる確率は約 $6\times10^{-5}$ なので、これを超え�
 (NLOS が過半を占める、アンカーが 1 台動かされた) のための**保険**である。
 
 > C 版には RANSAC が入っていない。組込みには重く、上のとおり通常は
-> 起動しないため ([third_party/uwb_localizer/c/README.md](../third_party/uwb_localizer/c/README.md))。
+> 起動しないため ([third_party/uwb_localizer/c/README.md](https://github.com/kouhei1970/uwb_localizer/blob/HEAD/c/README.md))。
 
 ### 5.6 温め直さない (warm start しない)
 
@@ -1692,7 +1692,7 @@ RANSAC は本当に壊れたときのためだけに置いてある。
 
 ## 12. C への移植
 
-C 版の詳細は [third_party/uwb_localizer/c/README.md](../third_party/uwb_localizer/c/README.md)。ここでは数値計算の観点だけ。
+C 版の詳細は [third_party/uwb_localizer/c/README.md](https://github.com/kouhei1970/uwb_localizer/blob/HEAD/c/README.md)。ここでは数値計算の観点だけ。
 
 必要になる線形代数は次の 3 つだけ。
 
