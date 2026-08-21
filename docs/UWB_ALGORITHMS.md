@@ -677,9 +677,14 @@ $$
 使っていたが、本リポジトリ (`components/uwb_loc/src/uwb_closed_form.c`) は
 $\alpha = \lVert p\rVert^2$ に当たる 4 番目の未知数を**先に消して** 3×3 で解く。
 
-$y = [p;\ \alpha]$、 $G = \begin{bmatrix} G_{11} & g \\ g^\top & G_{33}\end{bmatrix}$
-( $G_{11} = 4\sum w_i a_i a_i^\top$、 $g = -2\sum w_i a_i$、 $G_{33} = \sum w_i$ )、
-$h = A^\top W b = [h_1;\ h_4]$ と分けると、式 (3.1) の 2 行目から
+$y = [p;\ \alpha]$、 $h = A^\top W b = [h_1;\ h_4]$ とし、 $G$ を
+
+$$
+G = \begin{bmatrix} G_{11} & g \\ g^\top & G_{33}\end{bmatrix},
+\qquad G_{11} = 4\sum w_i a_i a_i^\top,\quad g = -2\sum w_i a_i,\quad G_{33} = \sum w_i
+$$
+
+と分けると、式 (3.1) の 2 行目から
 $\alpha = (h_4 + \lambda/2 - g^\top p)/G_{33}$。これを 1 行目に戻すと
 
 $$

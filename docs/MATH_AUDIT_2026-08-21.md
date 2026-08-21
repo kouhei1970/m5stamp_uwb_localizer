@@ -58,12 +58,12 @@
 | # | 項目 | 状態 | 実施内容 |
 |--:|---|---|---|
 | 1 | coplanar の Jacobi → 閉形式 + キャッシュ | 済 | `uwb_sym3_eigvals` / `uwb_sym3_min_eigvec`。結果を `uwb_config.plane` に持ち、`uwb_config_init` / 新設 `uwb_config_refresh` で作る。使用時に (enabled, 座標) の写しと比較して一致したときだけ使う (refresh 忘れでも正しい) |
-| 2 | Beck 4x4 → 3x3 Schur 補元 | 済 | 重心座標で $(S_c+\lambda I)q=r_0$、$\varphi=\lVert q\rVert^2-\bar b-\lambda/2W$。$\lambda_\text{lo}=-\sigma_{\min}$ は閉形式固有値、各反復は 3x3 LDLᵀ 1 回 (除算 3、sqrt 0)。固有ベクトルは作らない。余因子逆行列 (除算 1) は float で精度が出ず不採用 (下記) |
+| 2 | Beck 4x4 → 3x3 Schur 補元 | 済 | 重心座標で $(S_c+\lambda I)q=r_0$ 、 $\varphi=\lVert q\rVert^2-\bar b-\lambda/2W$ 。 $\lambda_\text{lo}=-\sigma_{\min}$ は閉形式固有値、各反復は 3x3 LDLᵀ 1 回 (除算 3、sqrt 0)。固有ベクトルは作らない。余因子逆行列 (除算 1) は float で精度が出ず不採用 (下記) |
 | 3 | EKF update → rank-1 ダウンデート | 済 | `uwb_symn_rank1_downdate(P, nx, u, 1/s)`。ゲートは $\nu^2>\gamma^2 S$ で sqrt 無し。nd / CV / CA 別の完全展開は未 (ループのまま) |
 | 4 | GDOP の sqrt 削除 + 余因子 | 済 | 零行だけ飛ばして `uwb_sym3_trace_inverse` (dim=2 は sym2) |
 | 5 | NLS / Lv0 の Hessian 6 要素累積 | 済 | `normal_eq` で 6 要素に累積し LDLᵀ (`uwb_internal.h`、除算 3) で解く。収束判定も二乗比較で sqrt 無し。特異判定は旧 LU と同じ「厳密に 0 のときだけ失敗」(退化幾何で ok=1・巨大 cov を返す旧挙動を保つ) |
 | 6 | LLS の余因子化 | 済 (LDLᵀ) | 行の sqrt(sw) 倍をやめ重み sw² で正規方程式に累積、LDLᵀ で解く。階数落ち (同一平面) は零空間方向へのリッジで最小ノルム解 (numpy lstsq と同じ。旧 1e-12 リッジは κ·1e-12 の偏りを生んでいた: 4 台配置で 5e-7 m) |
-| 7 | Beck の ata 構造化 | 済 | 重心座標で $S_c=4\sum w\,dd^\top$、$r_0=-2\sum w\,b'd$ を直接累積 ($g=0$ になるので #2 に吸収) |
+| 7 | Beck の ata 構造化 | 済 | 重心座標で $S_c=4\sum w\,dd^\top$ 、 $r_0=-2\sum w\,b'd$ を直接累積 ($g=0$ になるので #2 に吸収) |
 | 8 | resolve_mirror の $RCR^\top$ | 済 | `uwb_sym3_reflect` |
 | 9 | EKF predict の CV/CA 展開 | 一部 | `transition` の除算 (CV 4 / CA 12) を定数倍に。F P Fᵀ のループ展開は未 |
 | 10 | `uwb_evaluate` の除算 3 → 1 | 済 | `inv = 1/d` |
@@ -77,11 +77,11 @@
 1e-9 は float の eps (1.2e-7) より小さいので `lo == lam_lo` となり、
 `beck_phi` が極 ($1+\lambda\mu_{\max}=0$) を踏んで 0 を返す。次の
 `lo = lam_lo + (lo - lam_lo) * 10` も差が 0 なので一歩も動けず、60 回で
-失敗する。FMA 縮約があると `1 + lam*mu` が融合されて丸め前の値 ($\ne 0$、
+失敗する。FMA 縮約があると `1 + lam*mu` が融合されて丸め前の値 ($\ne 0$ 、
 $|den| > 10^{-12}$) になり、偶然通っていただけ。ニュートンの収束判定や
 二分法の床 (`1e-14`、float では満たせないが反復上限で止まる) は直接の原因では
 ない。新実装は刻みを $64\,\varepsilon\,\sigma_{\max}$ と eps 比例にし、極を踏んだ
-評価は「$\varphi=+\infty$ 側」として扱うので構造的に解消する
+評価は「 $\varphi=+\infty$ 側」として扱うので構造的に解消する
 (clang / gcc-16 / `-ffp-contract=off` / ASan+UBSan の float でいずれも通る)。
 
 ### 余因子解を採らなかった箇所 (float の精度)
