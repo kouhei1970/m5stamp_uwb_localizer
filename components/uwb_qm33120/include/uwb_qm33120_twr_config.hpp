@@ -8,7 +8,7 @@
  * と同じ方針で、このヘッダは ESP-IDF / Qorvo SDK ヘッダに依存しない
  * （<cstdint> と uwb_qm33120_timing.hpp のみ）。uwb_qm33120_types.hpp は
  * uwb_port.h 経由で driver/spi_master.h (ESP-IDF) を引き込むため、そのままでは
- * ホスト側テスト (tools/test_pipeline) から include できない。ここに切り出した
+ * ホスト側テスト (tests/host/pipeline) から include できない。ここに切り出した
  * 構造体・関数は固定幅整数/bool のフィールドと純粋な代入のみで ESP-IDF/Qorvo
  * SDK の型を一切使わないため、ホストでビルド・検算できる。
  *
@@ -30,7 +30,7 @@ namespace uwb {
  * 1:1 with M5Stamp_UWBRangeConfig (M5Stamp_UWB_Types.h:184-192), including
  * default values.
  *
- * --- 単位について（docs/REIMPL_PLAN.md R1） ---
+ * --- 単位について（docs/archive/REIMPL_PLAN.md R1） ---
  * 詳細は docs/UNITS.md。
  * `*Uus` フィールドの単位は UUS (UWB microsecond)。
  * 1 UUS = 512/499.2 us = 1.02564... us
@@ -63,7 +63,7 @@ struct RangeConfig {
      * ms。ホスト側ポーリングループのタイムアウト。SDK APIには渡らない
      * (detail::nowMs() ベース。requestRange/respondRange 双方で使用)。
      *
-     * 【docs/REIMPL_PLAN.md R9】旧既定値100はチップ側のRXタイムアウト
+     * 【docs/archive/REIMPL_PLAN.md R9】旧既定値100はチップ側のRXタイムアウト
      * (rxTimeoutUus=4500UUS≈4.615ms)の20倍以上あり、5アンカー構成では
      * 「応答が来ない」ケース1つで最大100msストールしうる。
      * 【R2適用後の根拠】R2により、不一致フレームを受信するたびに
@@ -74,13 +74,13 @@ struct RangeConfig {
      * として機能する。10msは、チップ側の最大RXタイムアウト(4500UUS≈4.615ms)
      * を1回分丸ごと待っても打ち切らない値でありながら、不一致フレーム1枚
      * あたりの処理時間（フレーム受信+照合、air timeにして高々百数十µs
-     * オーダー、docs/CRITICAL_REVIEW.md「フレーム air time の実測算」参照）
+     * オーダー、docs/archive/CRITICAL_REVIEW.md「フレーム air time の実測算」参照）
      * を何十回分も吸収できる余裕を残す。100msの1/10にすることで
      * 「5アンカー×hostTimeoutMs」のストール上限も同じ比率で縮む。
      */
     uint32_t hostTimeoutMs             = 10;
     /**
-     * 【docs/REIMPL_PLAN.md R4】requestRange()（SS-TWR initiator）のToF計算に
+     * 【docs/archive/REIMPL_PLAN.md R4】requestRange()（SS-TWR initiator）のToF計算に
      * dwt_readclockoffset() によるクロックオフセット補正を適用するか。
      * 既定で有効（true）。無効にすると旧挙動（無補正、rtd_resp係数=1固定）
      * に戻る。実機での比較検証用のフラグ（respondRange 側には効果はない。
@@ -96,7 +96,7 @@ struct RangeConfig {
  * 1:1 with M5Stamp_UWBDSRangeConfig (M5Stamp_UWB_Types.h:197-210), including
  * default values.
  *
- * --- 単位について（docs/REIMPL_PLAN.md R1。RangeConfig と同じ規則） ---
+ * --- 単位について（docs/archive/REIMPL_PLAN.md R1。RangeConfig と同じ規則） ---
  * 詳細は docs/UNITS.md。
  * `*Uus` フィールドの単位は UUS。1 UUS = 512/499.2 us = 1.02564... us。
  * `responseTxDelayUus` / `finalTxDelayUus` の2つだけが
@@ -130,18 +130,18 @@ struct DSRangeConfig {
      * 結果("DWD")受信を開始するまでの待ち
      * （uwb_qm33120_twr.cpp: requestDSRange:372）。
      *
-     * 【docs/REIMPL_PLAN.md R3-1】旧既定値500 UUS(≈512.8µs実us)は、
+     * 【docs/archive/REIMPL_PLAN.md R3-1】旧既定値500 UUS(≈512.8µs実us)は、
      * DWD結果フレームの送信がAnchor側で「delayed TXで時刻を予約する」
      * のではなく「Final受信直後にDWT_START_TX_IMMEDIATEで即時送信する」
      * 方式（respondDSRange()、SPIレジスタ書き込み数回のみでvTaskDelay等の
      * 意図的な遅延を挟まない）であるにもかかわらず大きすぎた。
      * Initiator側のRXが512.8µs後まで開かないため、Anchorがそれより速く
      * 返信した場合は最初のDWD送信を取りこぼす
-     * （docs/CRITICAL_REVIEW.md【重大3】、L<363µsで約36%取りこぼしの実測算）。
+     * （docs/archive/CRITICAL_REVIEW.md【重大3】、L<363µsで約36%取りこぼしの実測算）。
      * 200 UUS(≈205.1µs実us)へ下げた根拠: DWDフレーム自体の空中線上の
      * 全長（SHR 138.4µs [preamble128+SFD8=136シンボル×1017.63ns/シンボル、
      * docs/refs/DW3000_Datasheet_wayback.txt Table 18（§4.4）より本値を
-     * 独立に再検算し一致を確認] + PHR + データ、docs/CRITICAL_REVIEW.md
+     * 独立に再検算し一致を確認] + PHR + データ、docs/archive/CRITICAL_REVIEW.md
      * 「フレーム air time の実測算」より合計約179µs）をわずかに上回る
      * 205.1µsであれば、Anchor側の実処理時間（意図的な遅延なしの
      * SPIレジスタ書き込み数回、既存の1ms輪ポーリング実装でも数十〜百数十µs
@@ -155,7 +155,7 @@ struct DSRangeConfig {
     uint32_t rxTimeoutUus                   = 3000;
     /**
      * ms。ホスト側ポーリングループのタイムアウト。SDK APIには渡らない。
-     * 【docs/REIMPL_PLAN.md R9】RangeConfig::hostTimeoutMs と同じ理由・
+     * 【docs/archive/REIMPL_PLAN.md R9】RangeConfig::hostTimeoutMs と同じ理由・
      * 同じ根拠で100→10に変更（コメント参照）。DS-TWRのrxTimeoutUus=3000
      * (≈3.077ms)に対しても10msは1回分丸ごと待っても打ち切らない値。
      */
@@ -164,9 +164,9 @@ struct DSRangeConfig {
      * 単位なし（回数）。SDK APIには渡らない。Responder が計算した距離
      * ("DWD"結果フレーム)を送る回数（uwb_qm33120_twr.cpp: respondDSRange:603）。
      *
-     * 【docs/REIMPL_PLAN.md R3-1】旧既定値3は、resultRepeatGapMs=3ms /
+     * 【docs/archive/REIMPL_PLAN.md R3-1】旧既定値3は、resultRepeatGapMs=3ms /
      * rxTimeoutUus=3000UUS(=3.077ms)と一度も整合していなかった
-     * (docs/CRITICAL_REVIEW.md【重大3】)。DWD#3はTagのDWD受信ウィンドウが
+     * (docs/archive/CRITICAL_REVIEW.md【重大3】)。DWD#3はTagのDWD受信ウィンドウが
      * 閉じた後(ウィンドウ終端の2〜3.5ms後)に送信されるため物理的に受信
      * 不能な上、次のAnchorの応答窓(8.6〜11.7ms)のど真ん中に着弾して
      * 次のリンクの測距を巻き添えにする。既定を1にしてこの破壊的な

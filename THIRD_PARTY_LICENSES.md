@@ -80,8 +80,8 @@ SOFTWARE.
 ESP-IDF / C++ へ移植したものを含みます。各ファイル冒頭に移植元の関数名と行番号を記載しています。
 
 ただし**制御フローの一部は Qorvo 公式 TWR リファレンス実装に合わせて書き直しており、
-M5Stack 版とは挙動が異なります**（詳細は [`docs/CRITICAL_REVIEW.md`](docs/CRITICAL_REVIEW.md)
-と [`docs/REIMPL_PLAN.md`](docs/REIMPL_PLAN.md)）。移植元と同じ動作を期待しないでください。
+M5Stack 版とは挙動が異なります**（詳細は [`docs/archive/CRITICAL_REVIEW.md`](docs/archive/CRITICAL_REVIEW.md)
+と [`docs/archive/REIMPL_PLAN.md`](docs/archive/REIMPL_PLAN.md)）。移植元と同じ動作を期待しないでください。
 
 ## `components/uwb_ranging/` — MIT（本リポジトリ独自）
 

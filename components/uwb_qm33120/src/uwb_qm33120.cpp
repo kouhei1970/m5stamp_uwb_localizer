@@ -6,7 +6,7 @@
  * ESP-IDF port of third_party/M5Stamp-UWB/src/M5Stamp_UWB.cpp (M5Stack
  * Technology CO LTD, MIT). Function bodies are translated close to 1:1;
  * each one below carries a comment pointing at the corresponding line range
- * in the original file. See PROGRESS.md Phase 2 Step 1 for the full list of
+ * in the original file. See docs/archive/PROGRESS.md Phase 2 Step 1 for the full list of
  * intentional deviations; the main ones are:
  *
  *  - No SPIClass pointer, pinMode()/digitalWrite()/delay()/millis(): all SPI/GPIO
@@ -34,7 +34,7 @@
  * methods, a second translation unit of this same class) can also see the
  * complete type and access _impl->tx_sequence / _impl->tx_antenna_delay /
  * _impl->initialized the same way the original's member functions do. This
- * is the only change Step 2 made to this Step 1 file - see PROGRESS.md
+ * is the only change Step 2 made to this Step 1 file - see docs/archive/PROGRESS.md
  * Phase 2 Step 2.
  */
 #include "uwb_qm33120.hpp"
@@ -100,7 +100,7 @@ uint16_t sfdSymbols(SfdType sfdType)
 
 uint16_t makeSfdTimeout(const PhyConfig& phy)
 {
-    // docs/REIMPL_PLAN.md R8: 実際の式・丸めは uwb::detail::sfdTimeoutFromPhy()
+    // docs/archive/REIMPL_PLAN.md R8: 実際の式・丸めは uwb::detail::sfdTimeoutFromPhy()
     // (uwb_qm33120_units.hpp) に集約した（ESP-IDF非依存にしてホストテスト
     // 可能にするため）。phy.sfdTimeout==0 のときだけ自動計算する点、非0なら
     // そのまま使う点は変更なし。0 をそのまま dwt_config_t::sfdTO に渡すと
@@ -210,7 +210,7 @@ bool isValidChannel(Channel channel)
 /**
  * @brief チャネル別の推奨PHYプロファイル（TX スペクトラム設定）を返す。
  *
- * docs/REIMPL_PLAN.md R7: 旧実装は `phy.channel = channel` した後、switch の
+ * docs/archive/REIMPL_PLAN.md R7: 旧実装は `phy.channel = channel` した後、switch の
  * 両分岐で同じ値を代入し直すだけの恒等関数だった（pgDelay/txPower は
  * 一切触っていなかった）。そのためヘッダの「チャネル別の推奨プロファイルを
  * 適用する」というコメントは嘘で、Channel5 を選んでも
@@ -224,7 +224,7 @@ bool isValidChannel(Channel channel)
  * 191-198）が `config_options.chan == 5` で切り替えて dwt_configuretxrf() に
  * 渡している実際の値そのもの。ここではその値をチャネルで切り替えて返す。
  *
- * 【M5Stamp UWB Module の実運用】docs/SURVEY_m5stamp_uwb_module.md より本機は ch9 固定
+ * 【M5Stamp UWB Module の実運用】docs/archive/SURVEY_m5stamp_uwb_module.md より本機は ch9 固定
  * 運用（既定値もch9用）。Channel enum は将来の別ボード/実験用に残してあり、
  * Channel5 を明示選択した場合も正しい ch5 用TX設定が適用されるようにする
  * （enum を削って握り潰すより、正直に両対応させる方を選んだ。R7選択肢(b)）。

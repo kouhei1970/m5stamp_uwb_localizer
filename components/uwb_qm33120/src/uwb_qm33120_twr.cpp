@@ -40,7 +40,7 @@
  * init() 参照）とは役割が別（「遅延送信の起動時刻」と「アンテナから実際に
  * 電波が出る時刻」の差を埋めるもの）であり、二重計上ではない。
  *
- * --- docs/REIMPL_PLAN.md Phase 2R での変更 (R2/R4/R9) ---
+ * --- docs/archive/REIMPL_PLAN.md Phase 2R での変更 (R2/R4/R9) ---
  * 上記の「移植」段階のあとに、一次資料（Qorvo API rev9p3 / DW3000 UM /
  * DW3720 API Guide）に基づく修正を入れている。数式・バイト位置・
  * エンディアン等は引き続き一切変更していない。
@@ -54,7 +54,7 @@
  *    （Qorvo公式 ex_05a/ex_05b/ex_06a/ex_06b の受信ループ構造）を参照。
  *    フレーム照合の可否判定そのものは
  *    uwb::detail::frameMatchesExpectation()（新規、ESP-IDF非依存の純関数、
- *    tools/test_pipeline でホスト検算可能）に切り出した。
+ *    tests/host/pipeline でホスト検算可能）に切り出した。
  *  - 【R4】requestRange()（SS-TWR initiator）のToF計算に
  *    dwt_readclockoffset() によるクロックオフセット補正を追加した
  *    （既定で有効。RangeConfig::enableClockOffsetCorrection で無効化可）。
@@ -66,7 +66,7 @@
  *  - 【R9】dwt_setpreambledetecttimeout() は当初、公式DS-TWRサンプルが
  *    使っている値（PRE_TIMEOUT=5 PAC）にだけ倣って requestDSRange()/
  *    respondDSRange() に追加していたが、これは移植ミスだった
- *    （docs/REVIEW_2026-08-21.md §0 #1、docs/REIMPL_PLAN.md R9）。PRETOC
+ *    （docs/REVIEW_2026-08-21.md §0 #1、docs/archive/REIMPL_PLAN.md R9）。PRETOC
  *    は「RXが開放された時刻」を起点に走り出すタイマーであり（SDK
  *    components/qm33120w_sdk/deca_device_api.h:2368-2372「X ≥ 1 sets a
  *    timeout equal to (X+1)*PAC」、UM
@@ -302,7 +302,7 @@ RangeResult Qm33120::requestRange(const RangeConfig& range)
                     return result;
                 }
 
-                // 【R4】SS-TWR クロックオフセット補正 (docs/REIMPL_PLAN.md R4)。
+                // 【R4】SS-TWR クロックオフセット補正 (docs/archive/REIMPL_PLAN.md R4)。
                 // 一次資料: docs/refs/qorvo_api/DW3XXX_API_rev9p3/API/Src/examples/
                 // ex_06a_ss_twr_initiator/ss_twr_initiator.c:199-211（grep -aで直接確認済み）。
                 //   clockOffsetRatio = ((float)dwt_readclockoffset()) / (uint32_t)(1 << 26);

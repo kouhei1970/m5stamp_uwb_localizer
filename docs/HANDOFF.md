@@ -50,7 +50,7 @@
 ### ビルド・テストの現況（すべて通る）
 ```
 firmware/{probe,devtest,twr,tag,anchor,soltest}   全て警告0・エラー0
-tools/test_pipeline    188件    tools/test_survey  281件    tests/host/loc  77件
+tests/host/pipeline    188件    tests/host/survey  281件    tests/host/loc  77件
 ```
 **GitHub Actions でも同じものが回っている**（`.github/workflows/build.yml`）。
 ホストテスト3種 + strict、ファーム14通り、タグ `v*` で Release 添付。
@@ -95,7 +95,7 @@ tools/            test_pipeline / test_survey / bench_loc
 |---|---|---|
 | 対象 | **ESP32-S3 + M5Stamp UWB Module 専用**。プラットフォーム最適化してよい。ただし StampFly には非依存 | `docs/PLAN.md` |
 | **ハード方針** | **StampFly 非依存。ただしタグの配線だけは StampFly 互換を維持する**（GROVE 2系統4本で成立 ＝ IRQ/RST 不要）。想定利用者は本リポジトリを単体で試す人 | `docs/PLAN.md` §1 |
-| 役割 | **タグ = M5StampS3A ×1 / アンカー = AtomS3(R) ×5** | `PROGRESS.md` |
+| 役割 | **タグ = M5StampS3A ×1 / アンカー = AtomS3(R) ×5** | `docs/archive/PROGRESS.md` |
 | 接続 | **FPC ではなく半田パッド**（1.27mm キャステレーション） | `docs/SOLDER_PADS.md` |
 | **IRQ** | **アンカーは積極使用。タグは不使用。StampFly の別配線可能性は残す** | **`docs/IRQ_POLICY.md`** |
 | 資料 | **一次資料 = Qorvo SDK/UM/APS。M5Stack ラッパは二次資料で信頼しない** | **`docs/SOURCE_POLICY.md`** |
@@ -115,8 +115,8 @@ docs/SOURCE_POLICY.md        資料の格付けと、過去の誤りの記録
 docs/IRQ_POLICY.md           IRQ 方針（確定版）
 docs/UNITS.md                UUS/DTU/実µs の単位リファレンス（遅延値を触る前に必読）
 docs/TIMING_PRESETS.md       遅延プリセットとバージョン不一致検出（設計）
-docs/CRITICAL_REVIEW.md      M5Stack ラッパの批判的レビュー
-docs/REIMPL_PLAN.md          R1-R12。R1/R2/R3-1/R4/R7/R8/R9 は実装済み
+docs/archive/CRITICAL_REVIEW.md      M5Stack ラッパの批判的レビュー
+docs/archive/REIMPL_PLAN.md          R1-R12。R1/R2/R3-1/R4/R7/R8/R9 は実装済み
 docs/SURVEY_SPEC.md          自動測量の仕様（訂正4件入り）
 docs/STAMPFLY_INTEGRATION.md StampFly 位置制御への統合（1127行）
 docs/PERF_ANALYSIS.md        測位計算の性能分析と上流最適化の結果

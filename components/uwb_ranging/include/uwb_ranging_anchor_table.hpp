@@ -3,7 +3,7 @@
  * @brief アンカー登録テーブル（ハード非依存）。
  *
  * uwb_loc の `uwb_config.anchors` はポインタ借用であり、`uwb_config_init()`
- * はコピーを取らない（PROGRESS.md Phase 4 Step 1 で確認済みの仕様）。
+ * はコピーを取らない（docs/archive/PROGRESS.md Phase 4 Step 1 で確認済みの仕様）。
  * このクラスは AnchorEntry の配列から `uwb_anchor` の安定した記憶域
  * （このオブジェクトが生きている限り有効な配列）を作り、`uwb_config` を
  * その記憶域を指すように初期化して保持する。テーブルを差し替えるときは
@@ -11,7 +11,7 @@
  * 再初期化も自動的にやり直される）。
  *
  * ESP-IDF/FreeRTOS には依存しない（uwb_loc.h のみに依存）ので、ホスト
- * （tools/test_pipeline）でもそのままコンパイル・実行できる。
+ * （tests/host/pipeline）でもそのままコンパイル・実行できる。
  */
 #pragma once
 

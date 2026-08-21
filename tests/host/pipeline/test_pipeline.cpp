@@ -293,14 +293,14 @@ static void scenario6_origin_plane_fails()
 }
 
 /* ==================================================================== *
- * 7. docs/REIMPL_PLAN.md R1: usToUus()（実us -> UUS 変換）の検算
+ * 7. docs/archive/REIMPL_PLAN.md R1: usToUus()（実us -> UUS 変換）の検算
  * ==================================================================== */
 static void scenario7_r1_us_to_uus()
 {
     std::printf("--- 7. R1: uwb::detail::usToUus() 検算 ---\n");
     using uwb::detail::usToUus;
 
-    // docs/REIMPL_PLAN.md R1 に明記された例。
+    // docs/archive/REIMPL_PLAN.md R1 に明記された例。
     CHECK(usToUus(650) == 634, "650実us -> 634UUSのはずが %u", usToUus(650));
     CHECK(usToUus(1000) == 975, "1000実us -> 975UUSのはずが %u", usToUus(1000));
 
@@ -318,7 +318,7 @@ static void scenario7_r1_us_to_uus()
 }
 
 /* ==================================================================== *
- * 8. docs/REIMPL_PLAN.md R8: sfdTimeoutFromPhy()（SFDタイムアウト自動計算）
+ * 8. docs/archive/REIMPL_PLAN.md R8: sfdTimeoutFromPhy()（SFDタイムアウト自動計算）
  *    の検算。プリアンブル長を変えたときに正しい値へ追随することを確認する。
  * ==================================================================== */
 static void scenario8_r8_sfd_timeout_auto()
@@ -349,7 +349,7 @@ static void scenario8_r8_sfd_timeout_auto()
 }
 
 /* ==================================================================== *
- * 9. docs/REIMPL_PLAN.md R2: uwb::detail::frameMatchesExpectation()
+ * 9. docs/archive/REIMPL_PLAN.md R2: uwb::detail::frameMatchesExpectation()
  *    （受信フレームが「待っていたフレームか」の純関数判定）の検算。
  *    uwb_qm33120_twr.cpp の6箇所の受信ループが、この関数のfalseを
  *    「エラーではなく受信継続」の合図として使う（本体側はハードウェアが
@@ -1070,7 +1070,7 @@ static void scenario18_ranging_sample_t_us()
 
 int main()
 {
-    std::printf("=== tools/test_pipeline: uwb_ranging 測位パイプライン 合成データ検証 ===\n");
+    std::printf("=== tests/host/pipeline: uwb_ranging 測位パイプライン 合成データ検証 ===\n");
     std::printf("UWB_MAX_ANCHORS=%d UWB_MAX_MEAS=%d UWB_REAL_IS_FLOAT=%d\n\n", UWB_MAX_ANCHORS,
                 UWB_MAX_MEAS, UWB_REAL_IS_FLOAT);
 

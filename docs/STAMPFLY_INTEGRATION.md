@@ -7,9 +7,9 @@
 | 項目 | 状態 |
 |---|---|
 | 本リポジトリの UWB スタック | **実機未検証**。Device ID 読み出しすら未達（`PROGRESS.md:411`）。数値はすべて静的解析による見積もり |
-| アンテナ遅延校正 | **未実施**。無校正では数十cm〜1m超の定常バイアスが乗る（`docs/CRITICAL_REVIEW.md:130`） |
+| アンテナ遅延校正 | **未実施**。無校正では数十cm〜1m超の定常バイアスが乗る（`docs/archive/CRITICAL_REVIEW.md:130`） |
 | StampFly 側 | `third_party/stampfly_ecosystem/`（2026-08-19 取得）は**読み取り専用**。本検討で一切変更していない |
-| StampFly の UWB 対応 | リポジトリ全体を `uwb` で grep して**0件**（`docs/SURVEY_stampfly_ecosystem.md:32`）。完全新規 |
+| StampFly の UWB 対応 | リポジトリ全体を `uwb` で grep して**0件**（`docs/archive/SURVEY_stampfly_ecosystem.md:32`）。完全新規 |
 | 本文書の位置づけ | **実装計画ではなく設計検討**。実機が来て Phase 1（Device ID 読み出し）が通るまで、下記はすべて仮説 |
 
 ### 引用の記法
@@ -204,8 +204,8 @@ Step 5: ControlTask へ xTaskNotifyGive
 | 定数 | 値 | 出典 |
 |---|---:|---|
 | 1 UUS | **1.025641 µs** (= 512/499.2) | `components/qm33120w_sdk/deca_device_api.h:2360,2681` |
-| SHR（preamble128 + SFD8 = 136 sym × 1017.63 ns） | **138.4 µs** | `docs/CRITICAL_REVIEW.md:226-229` |
-| フレーム全長 Poll / Resp / Final / DWD | 174 / 184 / 188 / **179** µs | `docs/CRITICAL_REVIEW.md:234` |
+| SHR（preamble128 + SFD8 = 136 sym × 1017.63 ns） | **138.4 µs** | `docs/archive/CRITICAL_REVIEW.md:226-229` |
+| フレーム全長 Poll / Resp / Final / DWD | 174 / 184 / 188 / **179** µs | `docs/archive/CRITICAL_REVIEW.md:234` |
 | RMARKER→フレーム終端 Poll / Resp / Final / DWD | 35.6 / 45.6 / **49.6** / 40.6 µs | 同 `:235`（= 全長 − SHR） |
 | FreeRTOS tick | **1000 Hz** → `vTaskDelay(pdMS_TO_TICKS(1))` = (0, 1] ms | `firmware/tag/sdkconfig.defaults` の `CONFIG_FREERTOS_HZ=1000` |
 | ホスト SPI 固定オーバヘッド（推定） | **≈ 100 µs** | 16MHz SPI で約9トランザクション。**未実測** |
@@ -227,7 +227,7 @@ t=+…+Q_t           Tag のポーリングループが検出（Q_t = Tag 検出
 **検算**: 既定値 D1=3000 UUS=3076.9 µs, D2=1800 UUS=1846.2 µs で
 `138.4 + 3076.9 + 1846.2 + 49.6 = 5111.1`、Final 終端は Poll RMARKER から
 `3076.9 + 1846.2 + 49.6 = 4972.7 µs`。
-`docs/CRITICAL_REVIEW.md:95` の独立に導出された「DWF (final) 終端 +4,973 µs」と一致。
+`docs/archive/CRITICAL_REVIEW.md:95` の独立に導出された「DWF (final) 終端 +4,973 µs」と一致。
 同 `:96` の「DWD 受信ウィンドウ +5,486 〜 +8,563 µs」も
 `4973 + 500UUS(512.8) = 5486`、`5486 + 3000UUS(3077) = 8563` で一致する。
 **→ 本モデルは既存文書と整合している。**
@@ -250,7 +250,7 @@ T_cycle(5アンカー) = 5 × T_link      レート = 1000 / T_cycle(ms)  [Hz]
 
 `dwt_setdelayedtrxtime()` の DX_TIME は RMARKER 相当。プリアンブルはその **138.4 µs 前**から
 送出が始まるので、ホストはそれまでに `dwt_starttx()` を打ち終える必要がある
-（`docs/REIMPL_PLAN.md:138`「DX_TIME − (プリアンブル+SFD の air time)」）。
+（`docs/archive/REIMPL_PLAN.md:138`「DX_TIME − (プリアンブル+SFD の air time)」）。
 
 | 側 | 折返し予算 | 計算 |
 |---|---:|---|
@@ -266,7 +266,7 @@ T_cycle(5アンカー) = 5 × T_link      レート = 1000 / T_cycle(ms)  [Hz]
 | 700.5 µs（Qorvo 公式 D2） | 516.5 µs | **足りない** |
 | 450 µs | 276.0 µs | IRQ 駆動（折返し 60〜150µs）でのみ成立 |
 
-→ **`docs/REIMPL_PLAN.md:145`「R6 は R5 の前提条件」が数値で裏付けられた。**
+→ **`docs/archive/REIMPL_PLAN.md:145`「R6 は R5 の前提条件」が数値で裏付けられた。**
 Qorvo 公式値をポーリングのまま入れると、Anchor 側の折返しが間に合わず
 `dwt_starttx()` が失敗する確率が **約 40%**（予算 726.5 µs に対し検出遅延が一様 (0,1000] と
 仮定し、SPI 100 µs を引いた 626.5 µs を超える確率）になる。
@@ -275,7 +275,7 @@ Qorvo 公式値をポーリングのまま入れると、Anchor 側の折返し�
 
 `L_a` / `Q_t` の仮定:
 - **ポーリング**: 一様 (0, 1000] µs（tick=1000Hz）。typ = 500 µs / max = 1000 µs
-- **IRQ 駆動**: `docs/CRITICAL_REVIEW.md:240`「折返し 60〜150µs」より
+- **IRQ 駆動**: `docs/archive/CRITICAL_REVIEW.md:240`「折返し 60〜150µs」より
   L_a: typ 100 / max 150 µs、Q_t（受信検出のみ、SPI が軽い）: typ 50 / max 100 µs
 
 | # | 構成 | D1 [µs] | D2 [µs] | 1リンク typ/max [ms] | 5アンカー1周 typ/max [ms] | **測位レート typ/max [Hz]** |
@@ -328,7 +328,7 @@ max 版は L_a / Q_t を 1000 µs にするだけ（= 7.39 ms / 36.95 ms / 27.1 
 | 実µs → UUS 変換 `usToUus()` | `components/uwb_qm33120/include/uwb_qm33120_units.hpp:48-52` |
 
 **罠**: Qorvo 公式の `*_UUS` 定数は**実マイクロ秒**であり、本 API の UUS（1.0256 µs）ではない
-（`docs/REIMPL_PLAN.md:56-63`）。900 実µs → `usToUus(900) = 878 UUS` → 実時間 900.5 µs。
+（`docs/archive/REIMPL_PLAN.md:56-63`）。900 実µs → `usToUus(900) = 878 UUS` → 実時間 900.5 µs。
 上表はすべてこの換算を通してある。
 
 ## 2.3 測位ソルバの計算時間（無視できるか）
@@ -351,10 +351,10 @@ max 版は L_a / Q_t を 1000 µs にするだけ（= 7.39 ms / 36.95 ms / 27.1 
 - **すべて静的解析。実測はゼロ。**
 - (a) の 31 Hz は「**全リンクが成功した場合**」の値。失敗すると `hostTimeoutMs = 10 ms` まで待つ
   ので、1台失敗するごとに +3.6 ms（≒ 28 Hz に低下）。
-  `docs/CRITICAL_REVIEW.md:272` は「5アンカーで全アンカーから安定して取れる確率」を
+  `docs/archive/CRITICAL_REVIEW.md:272` は「5アンカーで全アンカーから安定して取れる確率」を
   R2 適用前で 15〜25% と見積もっている。R2/R3-1 適用後の実測値は未取得
 - SPI 固定オーバヘッド 100 µs は**推定値**。実測で 2〜3倍あれば (c2) の数字は崩れる
-- `L_a` の一様分布仮定は `docs/CRITICAL_REVIEW.md:101` と同じ仮定であり、実測ではない
+- `L_a` の一様分布仮定は `docs/archive/CRITICAL_REVIEW.md:101` と同じ仮定であり、実測ではない
 
 ---
 
@@ -459,9 +459,9 @@ ToF 30 Hz / フロー 100 Hz と全く同じ構図:
 
 | 指標 | 値 | 出典 |
 |---|---|---|
-| M5Stack 自社測定（DS-TWR） | 約 **0.14 m** | `docs/SURVEY_m5stamp_uwb_module.md:109` |
-| **無校正時の定常バイアス** | **数十cm〜1m超** | `docs/CRITICAL_REVIEW.md:130-132` |
-| アンテナ遅延校正後（APS014 実績） | 3σ ≈ 4.5 cm | `docs/REIMPL_PLAN.md:199` |
+| M5Stack 自社測定（DS-TWR） | 約 **0.14 m** | `docs/archive/SURVEY_m5stamp_uwb_module.md:109` |
+| **無校正時の定常バイアス** | **数十cm〜1m超** | `docs/archive/CRITICAL_REVIEW.md:130-132` |
+| アンテナ遅延校正後（APS014 実績） | 3σ ≈ 4.5 cm | `docs/archive/REIMPL_PLAN.md:199` |
 
 **→ UWB を「そのまま位置ループに入れれば精度が上がる」のは誤り。校正前は確実に悪化する。**
 
@@ -681,7 +681,7 @@ R を小さく設定すると、ESKF が UWB を信用して**短期精度が悪
 | 4 | `components/sf_estimator_eskf/include/eskf_core.hpp` + `.cpp` | `updateUwbPosition(const Vec3& p, float sigma)` → `vectorUpdate3()`。`updateToF`（`eskf_core.cpp:530-556`）と同型 |
 | 5 | `components/sf_core/params.cpp` | `eskf.use_uwb`(既定 0), `eskf.obs.uwb_noise`, `eskf.gate.uwb_innov` を `:790-808` の並びに追加 |
 | 6 | `tasks/imu_task.cpp` | `processAsyncSensors()`（`:248`）に `while (sf::sensor_uwb.read(fix)) g_estimator->updateUwb(fix);` |
-| 7 | `components/sf_hal_uwb_qm33120/`（新規） | 本リポジトリの `uwb_*` コンポーネントを取り込む C++ ラッパ。命名は `sf_hal_<chip>` 流儀（`docs/SURVEY_stampfly_ecosystem.md:39`） |
+| 7 | `components/sf_hal_uwb_qm33120/`（新規） | 本リポジトリの `uwb_*` コンポーネントを取り込む C++ ラッパ。命名は `sf_hal_<chip>` 流儀（`docs/archive/SURVEY_stampfly_ecosystem.md:39`） |
 | 8 | `tasks/uwb_task.cpp`（新規）+ `tasks/tasks.hpp` / `tasks.cpp` | 測距ループ。コア0（§5.4） |
 | 9 | `main/config.hpp` | `PRIORITY_UWB` / `STACK_UWB` / GPIO 定義 |
 
@@ -692,10 +692,10 @@ R を小さく設定すると、ESKF が UWB を信用して**短期精度が悪
 
 # 5. ハードウェア構成
 
-## 5.1 【重要な訂正】`docs/SURVEY_stampfly_grove.md` の「空きGPIO」は誤り
+## 5.1 【重要な訂正】`docs/archive/SURVEY_stampfly_grove.md` の「空きGPIO」は誤り
 
-`docs/SURVEY_stampfly_grove.md:25-29` は **G5 / G10 / G41 / G42 を「未使用（＝空き）」**と
-記載し、`docs/PLAN.md:253` の R3 と `docs/SURVEY_stampfly_grove.md:70` の代替案2 が
+`docs/archive/SURVEY_stampfly_grove.md:25-29` は **G5 / G10 / G41 / G42 を「未使用（＝空き）」**と
+記載し、`docs/PLAN.md:253` の R3 と `docs/archive/SURVEY_stampfly_grove.md:70` の代替案2 が
 これに依拠している。
 
 **現行ファームの実コードでは、この4本はすべてモータ PWM 出力である:**
@@ -707,7 +707,7 @@ SF/main/config.hpp:65:  GPIO_MOTOR_M3 = 10;  // RL, CCW
 SF/main/config.hpp:66:  GPIO_MOTOR_M4 = 5;   // FL, CW
 ```
 
-**→ `SURVEY_stampfly_grove.md` の「代替案2（空きGPIOを使う）」は成立しない。**
+**→ `archive/SURVEY_stampfly_grove.md` の「代替案2（空きGPIOを使う）」は成立しない。**
 旧調査はモータのピン割当を見ていなかった（旧調査の対象は `M5StampFly` / `stampfly_hal` であり、
 `firmware/vehicle` ではない）。
 
@@ -750,9 +750,9 @@ SF/main/config.hpp:66:  GPIO_MOTOR_M4 = 5;   // FL, CW
 
 M5Stamp UWB Module のホスト側必要信号:
 **最低4本（SCK/MOSI/MISO/CS）、推奨 +2（IRQ/RSTn）、省電力なら +1（WAKEUP）**
-（`docs/SURVEY_m5stamp_uwb_module.md:91-92`）。
+（`docs/archive/SURVEY_m5stamp_uwb_module.md:91-92`）。
 
-### HW-1: GROVE 2系統を4本すべて SPI に使う（`SURVEY_stampfly_grove.md:64` の代替案1）
+### HW-1: GROVE 2系統を4本すべて SPI に使う（`archive/SURVEY_stampfly_grove.md:64` の代替案1）
 
 ```
 G13 → SCK,  G15 → MOSI,  G1 → MISO,  G2 → CS    （SPI3_HOST、GPIO マトリクス経由）
@@ -762,13 +762,13 @@ IRQ / RSTn / WAKEUP  → 無し
 | 項目 | 評価 |
 |---|---|
 | StampFly への半田付け | **不要**（カスタムケーブルのみ） |
-| SPI ホスト | **SPI3_HOST が空いている**（`docs/SURVEY_stampfly_ecosystem.md:65`）→ 飛行系の SPI2 と完全分離 |
-| GPIO マトリクス | 16MHz なら問題なし（`SURVEY_stampfly_grove.md:56-58`） |
+| SPI ホスト | **SPI3_HOST が空いている**（`docs/archive/SURVEY_stampfly_ecosystem.md:65`）→ 飛行系の SPI2 と完全分離 |
+| GPIO マトリクス | 16MHz なら問題なし（`archive/SURVEY_stampfly_grove.md:56-58`） |
 | **IRQ** | **取れない → R6 不可 → §2.2 の (c) は到達不能。Tag 側は永久にポーリング** |
 | **RSTn** | 取れない → `hard_reset_on_begin`（`uwb_qm33120_types.hpp:83`）が使えない。ソフトリセット (`dwt_softreset`) だけで復旧できるか**要検証** |
 | GROVE 拡張性 | **I2C 拡張・UART 拡張の両方を潰す** |
 | 配線 | 2コネクタが基板上の別位置 → 標準ケーブル1本では不可。**カスタムケーブル必須** |
-| 電源 | GROVE は 5V（`SURVEY_stampfly_grove.md:47`）。**モジュールは 3.3V 単一**（`SURVEY_m5stamp_uwb_module.md:99`）→ **LDO が要る** |
+| 電源 | GROVE は 5V（`archive/SURVEY_stampfly_grove.md:47`）。**モジュールは 3.3V 単一**（`archive/SURVEY_m5stamp_uwb_module.md:99`）→ **LDO が要る** |
 
 ### HW-2: SPI2_HOST に相乗り + GROVE を CS / IRQ / RST に使う
 
@@ -797,7 +797,7 @@ G13 → CS,  G15 → IRQ,  G1 → RSTn,  G2 → WAKEUP（予備）
 | **地上検証（§6 の Step 1〜3）** | **HW-1** | 半田付け不要で早く始められる。31 Hz あれば §3.1 の通り位置制御には十分 |
 | **飛行統合以降** | **HW-2 を検討** | IRQ が取れると (a) 31 Hz → (c1) 90 Hz。ただし §3.1 の通り**レート面の必然性は無い**。IRQ の本当の価値は「折返し時間が縮む → SS-TWR のクロックオフセット誤差が減る」「タイミングマージンが増えて成功率が上がる」の方 |
 
-**⚠ どちらを選んでも、ポーリング経路は必ず残すこと**（`docs/REIMPL_PLAN.md:157`、`docs/PLAN.md:138`）。
+**⚠ どちらを選んでも、ポーリング経路は必ず残すこと**（`docs/archive/REIMPL_PLAN.md:157`、`docs/PLAN.md:138`）。
 
 ## 5.4 タスク配置（`sf_board` / FreeRTOS の制約）
 
@@ -838,11 +838,11 @@ G13 → CS,  G15 → IRQ,  G1 → RSTn,  G2 → WAKEUP（予備）
 
 | 項目 | 値 | 出典 |
 |---|---|---|
-| モジュール電源 | **3.3V 単一**（内部に 3.3V→1.8V PMIC `JW5712`）。**5V 不可** | `docs/SURVEY_m5stamp_uwb_module.md:99` |
+| モジュール電源 | **3.3V 単一**（内部に 3.3V→1.8V PMIC `JW5712`）。**5V 不可** | `docs/archive/SURVEY_m5stamp_uwb_module.md:99` |
 | 消費電流（タグ動作） | **58.0 mA @3.3V** | 同 `:100` |
 | 消費電流（アンカー動作 / スリープ） | 5.23 mA / 75.9 µA | 同 `:100` |
 | TX 瞬時ピーク | **未公開** | 同 `:101` |
-| GROVE の供給 | **5V**（M5Stack 一般仕様） | `docs/SURVEY_stampfly_grove.md:47` |
+| GROVE の供給 | **5V**（M5Stack 一般仕様） | `docs/archive/SURVEY_stampfly_grove.md:47` |
 | GROVE の供給電流定格 | **未公開** | 同 `:49` |
 | StampFly の 3.3V レギュレータ余裕 | **文書に一切記載なし**（`stampfly_ecosystem` 全体を検索して該当なし） | 未解決 |
 | バッテリ低電圧閾値 | 3.4 V（`safety.battery.low_v`） | `SF/components/sf_core/params.cpp:825` |
@@ -925,7 +925,7 @@ UWB 統合に進むこと**（§6 の Step 0）。
 |---|---|---|
 | 1.1 | Device ID `0xDECA0314` の読み出し | **`PROGRESS.md:411` が「最初の関門」と書いている箇所。ここが通らない限り先は無い** |
 | 1.2 | 1対1 DS-TWR で距離が出る | 既知距離で ±1m 以内 |
-| 1.3 | **アンテナ遅延校正**（R11、推奨校正距離 5.0 m） | `docs/REIMPL_PLAN.md:195-205`。**3σ ≈ 30cm → 4.5cm。これをやらないと以降は全部無意味** |
+| 1.3 | **アンテナ遅延校正**（R11、推奨校正距離 5.0 m） | `docs/archive/REIMPL_PLAN.md:195-205`。**3σ ≈ 30cm → 4.5cm。これをやらないと以降は全部無意味** |
 | 1.4 | 5アンカー round-robin で全台から取れる | 各アンカー成功率 > 90%（`RangingScheduler::stats()`） |
 | 1.5 | **1周の実測時間**（`lastCycleMs()`） | §2.2 (a) の予測 32 ms と突き合わせる。**ここで初めて §2 の数字が検証される** |
 | 1.6 | アンカー自動測量（`docs/SURVEY_SPEC.md`） | 冗長度 > 0 の警告に従う（同 `:49-66`） |
@@ -1009,9 +1009,9 @@ UWB 統合に進むこと**（§6 の Step 0）。
 | 機体の導体（バッテリ / PCB / モータ） | 特定方向のアンカーを遮蔽しうる |
 | プロペラの回転による周期的遮蔽 | **未評価**。プロペラは樹脂だが、回転面がアンテナの視野を横切る配置なら影響あり |
 | マルチパス | 屋内は必ず起きる。**Lv2 は Huber + χ² ゲートを持つ**（`uwb_loc.h:115`）ので単発の飛び値には強い |
-| **NLOS 判定材料が未取得** | `docs/REIMPL_PLAN.md:207-219` の R12。`rsl_calculate_signal_power()` / `rsl_calculate_first_path_power()` が SDK にありビルド対象にも入っているのに一度も呼ばれていない。`RSL − FP_RSL > 6dB` が Qorvo 標準の見通し外指標 |
+| **NLOS 判定材料が未取得** | `docs/archive/REIMPL_PLAN.md:207-219` の R12。`rsl_calculate_signal_power()` / `rsl_calculate_first_path_power()` が SDK にありビルド対象にも入っているのに一度も呼ばれていない。`RSL − FP_RSL > 6dB` が Qorvo 標準の見通し外指標 |
 
-**R12（診断情報の取得）は `docs/REIMPL_PLAN.md:207` が「費用対効果が最も高い追加」と
+**R12（診断情報の取得）は `docs/archive/REIMPL_PLAN.md:207` が「費用対効果が最も高い追加」と
 位置づけている。** 飛行体では機体自身が遮蔽物になるので、地上固定タグより重要度が高い。
 → **Step 2.4 / 3.5 の前に R12 を入れておく価値がある。**
 
@@ -1064,16 +1064,16 @@ UWB という「たまに大きく外れる観測」をゲート付きで追加�
 | **Device ID の読み出し（Phase 1）** | **すべての前提**（`PROGRESS.md:411`） |
 | §2 の全数値 | 静的解析のみ。SPI オーバヘッド 100 µs、`L_a` の一様分布仮定は未実測 |
 | 測位ソルバの実行時間 | ESP32-S3 上で未測定（`docs/PERF_ANALYSIS.md:122`, `:250`） |
-| アンテナ遅延の実値 | 無校正。**Δ=1ns で 30cm の定常バイアス**（`docs/CRITICAL_REVIEW.md:130`） |
+| アンテナ遅延の実値 | 無校正。**Δ=1ns で 30cm の定常バイアス**（`docs/archive/CRITICAL_REVIEW.md:130`） |
 | 5アンカー構成の成功率 | R2/R3-1 適用後の実測なし |
 | NVS の実読み書き / USB-Serial JTAG REPL | `PROGRESS.md:903-906` |
 | **M5StampS3A のパッドに物理アクセスできるか**（HW-2） | 未確認 |
-| **GROVE の供給電流定格** | 未公開（`docs/SURVEY_stampfly_grove.md:49`） |
+| **GROVE の供給電流定格** | 未公開（`docs/archive/SURVEY_stampfly_grove.md:49`） |
 | **StampFly の 3.3V レギュレータ余裕** | `stampfly_ecosystem` に**記載が一切ない** |
-| **UWB モジュールの TX 瞬時ピーク電流** | 未公開（`docs/SURVEY_m5stamp_uwb_module.md:101`） |
+| **UWB モジュールの TX 瞬時ピーク電流** | 未公開（`docs/archive/SURVEY_m5stamp_uwb_module.md:101`） |
 | **UWB アンテナの指向性パターン** | 未調査 |
 | 重量増（2〜4 g）の飛行性能への影響 | 未評価（Step 0） |
-| ch9 の PLL 温度再校正（R10） | 未実装。**ch9 では 20°C 変化で再校正が必要**（`docs/REIMPL_PLAN.md:189-193`） |
+| ch9 の PLL 温度再校正（R10） | 未実装。**ch9 では 20°C 変化で再校正が必要**（`docs/archive/REIMPL_PLAN.md:189-193`） |
 
 ## 7.6 その他の未解決事項
 
@@ -1103,9 +1103,9 @@ UWB という「たまに大きく外れる観測」をゲート付きで追加�
 | UWB (b1) R5 Anchor IRQ | 59.4 Hz | §2.2 |
 | UWB (c1) R5+R6 両側 IRQ | 90.2 Hz | §2.2 |
 | UWB レイテンシ（周中央基準） | 16〜23 ms | §3.3 |
-| UWB 精度（M5Stack 測定） | 0.14 m | `docs/SURVEY_m5stamp_uwb_module.md:109` |
-| UWB 精度（無校正） | **数十cm〜1m超のバイアス** | `docs/CRITICAL_REVIEW.md:130` |
-| モジュール消費 | 58.0 mA @3.3V（タグ） | `docs/SURVEY_m5stamp_uwb_module.md:100` |
+| UWB 精度（M5Stack 測定） | 0.14 m | `docs/archive/SURVEY_m5stamp_uwb_module.md:109` |
+| UWB 精度（無校正） | **数十cm〜1m超のバイアス** | `docs/archive/CRITICAL_REVIEW.md:130` |
+| モジュール消費 | 58.0 mA @3.3V（タグ） | `docs/archive/SURVEY_m5stamp_uwb_module.md:100` |
 | モジュール重量 | 0.5 g / 機体 37 g | `docs/SOLDER_PADS.md:25`, `SF/docs/poshold_journey.md:5` |
 | アンテナ禁止領域 | 面取り側から 3.556 mm × 全幅 | `docs/SOLDER_PADS.md:194-197` |
 | 外部に出せる GPIO | **GROVE 4本のみ**（G13/G15/G1/G2） | §5.2 |

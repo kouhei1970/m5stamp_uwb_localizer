@@ -33,7 +33,7 @@ M5Stack の**別製品**「Unit UWB」(SKU U100) は UART+AT コマンド方式
 
 ## ピンアサイン
 
-![公式ピンマップ](../assets/S017_Stamp_UWB_pinmap.jpg)
+![公式ピンマップ](../../assets/S017_Stamp_UWB_pinmap.jpg)
 
 **重要: 半田パッドと FPC ケーブルでは信号の並びが違う。**
 公式ピンマップの「側面ラベル」がパッド、「下部の番号付きの帯」が FPC ケーブルを表す。

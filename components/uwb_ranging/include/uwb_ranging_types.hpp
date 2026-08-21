@@ -4,7 +4,7 @@
  *
  * このファイルはハード非依存側（uwb_ranging_anchor_table / uwb_ranging_pipeline）
  * とハード依存側（uwb_ranging_scheduler）の両方から参照される。ESP-IDF や
- * FreeRTOS のヘッダには一切依存しないので、ホスト（tools/test_pipeline）で
+ * FreeRTOS のヘッダには一切依存しないので、ホスト（tests/host/pipeline）で
  * そのままコンパイルできる。依存するのは components/uwb_loc（uwb_loc.h）のみ。
  */
 #pragma once

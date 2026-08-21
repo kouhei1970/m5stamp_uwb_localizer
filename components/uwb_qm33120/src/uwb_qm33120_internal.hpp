@@ -40,7 +40,7 @@ namespace uwb::detail {
 
 /**
  * @brief SDK側の FCS_LEN が、frame_match.hpp が複製した detail::kFcsLen と
- * 今も一致していることのビルド時検算（docs/REIMPL_PLAN.md R2、G-2）。
+ * 今も一致していることのビルド時検算（docs/archive/REIMPL_PLAN.md R2、G-2）。
  * uwb_qm33120_frame_match.hpp はESP-IDF/Qorvo SDKに依存できないため
  * kFcsLen=2を独立に持っている。SDK側 (`deca_device_api.h:236`) が変わったら
  * ここでビルドが壊れて気づける。

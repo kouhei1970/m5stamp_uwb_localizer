@@ -1,12 +1,12 @@
 /**
  * @file uwb_qm33120_units.hpp
  * @brief 実マイクロ秒(us) <-> UUS(UWB microseconds) の変換ヘルパと、SFD
- * タイムアウト自動計算式。docs/REIMPL_PLAN.md の R1 / R8 で追加。
+ * タイムアウト自動計算式。docs/archive/REIMPL_PLAN.md の R1 / R8 で追加。
  * 詳細な単位リファレンスは docs/UNITS.md。
  *
  * このヘッダは ESP-IDF / Qorvo SDK のヘッダに一切依存しない（<cstdint> のみ）。
  * uwb_qm33120_types.hpp は uwb_port.h 経由で driver/spi_master.h (ESP-IDF)
- * を引き込むため、そのままではホスト側テスト (tools/test_pipeline) から
+ * を引き込むため、そのままではホスト側テスト (tests/host/pipeline) から
  * インクルードできない。ここに切り出した2関数は純粋な整数演算のみなので
  * ホストでビルド・検算できる — R1「この関数の正しさをホストで検算する
  * テストを足すこと」、R8「プリアンブル長を変えたときに正しい値になることを
@@ -40,7 +40,7 @@ namespace uwb::detail {
  * `POLL_RX_TO_RESP_TX_DLY_UUS`）は実際には「実マイクロ秒」で書かれており、
  * 本APIが期待する UUS ではない。RangeConfig/DSRangeConfig の `*Uus`
  * フィールドへそのまま代入すると、意図した遅延より約2.5%長くなる
- * （docs/REIMPL_PLAN.md R1）。Qorvo の値を移植するときは必ずこの関数を
+ * （docs/archive/REIMPL_PLAN.md R1）。Qorvo の値を移植するときは必ずこの関数を
  * 通すこと。
  *
  * 丸めは四捨五入（+分母の半分してから切り捨て）。
@@ -62,7 +62,7 @@ constexpr uint32_t usToUus(uint32_t us)
  * components/uwb_qm33120/src/uwb_qm33120.cpp の既存コメント
  * "Qorvo recommended formula" と同一の式)。
  *
- * 【docs/REIMPL_PLAN.md R8】既定PHY(preamble128/SFD8/PAC8)では129が正しい
+ * 【docs/archive/REIMPL_PLAN.md R8】既定PHY(preamble128/SFD8/PAC8)では129が正しい
  * 値と一致するが、`preambleLength` を変える（例: Len256）と本来257で
  * あるべきところが129のまま固定されてしまう罠があった。既定を0（自動計算）
  * にし、この式が必ず動くようにする。0をそのままSDKへ渡すとSDK既定の4161に

@@ -6,7 +6,7 @@
  *
  * uwb_qm33120_units.hpp / uwb_qm33120_frame_match.hpp と同じ方針で、
  * ESP-IDF / Qorvo SDK のヘッダに一切依存しない（<cstdint> のみ）。
- * ホスト側 tools/test_pipeline からそのまま include して検算できるように
+ * ホスト側 tests/host/pipeline からそのまま include して検算できるように
  * するため。
  *
  * 数値そのものの導出根拠（フレーム air time・折返し時間・DWD受信窓の

@@ -34,7 +34,7 @@
  * CONFIG_UWB_ANCHOR_CONSOLE で無効化可)から addr set / save で行う。
  * これにより「5台に別アドレスを焼くために5回ビルドし直す」必要が無くなる。
  *
- * 【docs/REIMPL_PLAN.md R3-1/R9】以下の各 static constexpr は、旧
+ * 【docs/archive/REIMPL_PLAN.md R3-1/R9】以下の各 static constexpr は、旧
  * third_party/M5Stamp-UWB/examples の .ino 値をそのまま踏襲していたが、
  * RANGE_HOST_TIMEOUT_MS(100→10)/RESULT_RX_AFTER_FINAL_TX_DLY_UUS(500→200)/
  * RESULT_REPEAT_COUNT(3→1) の3つは uwb::RangeConfig/DSRangeConfig 側の

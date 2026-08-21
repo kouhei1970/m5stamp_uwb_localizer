@@ -3,7 +3,7 @@
  * @brief 測距結果から測位までを担う測位パイプライン（ハード非依存）。
  *
  * ESP-IDF/FreeRTOS には依存しない（uwb_loc.h と uwb_ranging_anchor_table.hpp
- * のみに依存）。ホスト（tools/test_pipeline）でもそのままコンパイル・実行
+ * のみに依存）。ホスト（tests/host/pipeline）でもそのままコンパイル・実行
  * できるので、実機無しでの合成データ検証はこのクラスを直接叩けばよい。
  *
  * 呼び出し順の想定:

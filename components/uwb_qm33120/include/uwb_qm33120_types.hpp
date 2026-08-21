@@ -6,7 +6,7 @@
  * third_party/M5Stamp-UWB/src/M5Stamp_UWB_Types.h (M5Stack Technology CO LTD,
  * MIT). Field sets and default values are carried over 1:1 from that file
  * except where the Arduino-specific SPI/GPIO representation had to change
- * (see uwb::Config below) - see PROGRESS.md Phase 2 Step 1 for the full list
+ * (see uwb::Config below) - see docs/archive/PROGRESS.md Phase 2 Step 1 for the full list
  * of intentional deviations.
  *
  * Phase 2 Step 2 additions (TWR): uwb::RangeConfig, uwb::DSRangeConfig,
@@ -18,7 +18,7 @@
  * by the TWR methods added to Qm33120 in the same step, implemented in
  * components/uwb_qm33120/src/uwb_qm33120_twr.cpp.
  *
- * Phase 2R（docs/REIMPL_PLAN.md）での変更点: 一次資料（Qorvo API rev9p3 /
+ * Phase 2R（docs/archive/REIMPL_PLAN.md）での変更点: 一次資料（Qorvo API rev9p3 /
  * DW3720 API Guide）が手元に揃い、M5Stack既定値を検証できるようになった
  * ことで、上記の「M5Stackと1:1」の原則から意図的に外れた箇所が2つある。
  *  - R8: PhyConfig::sfdTimeout の既定値を、原本固定の129から0（自動計算）
@@ -199,7 +199,7 @@ enum class PdoaMode : uint8_t {
  * for that channel. If any other field is changed, the whole user-provided
  * configuration is used (see resolvePHYConfig() in uwb_qm33120.cpp).
  *
- * 【docs/REIMPL_PLAN.md R7】上記「built-in recommended profile」の実体
+ * 【docs/archive/REIMPL_PLAN.md R7】上記「built-in recommended profile」の実体
  * (recommendedPHYProfile()、uwb_qm33120.cpp) は、pgDelay/txPower を
  * チャネルごとのQorvo推奨TXスペクトラム値に設定する。値の出典は
  * docs/refs/qorvo_api/DW3XXX_API_rev9p3/API/Src/config_options.c:23-33
@@ -228,7 +228,7 @@ struct PhyConfig {
      * それを dwt_configure()（dwt_config_t::sfdTO）に渡す箇所は
      * uwb_qm33120.cpp の makeSfdTimeout() を参照。
      *
-     * 【docs/REIMPL_PLAN.md R8】旧既定値は固定の129だった。これは既定の
+     * 【docs/archive/REIMPL_PLAN.md R8】旧既定値は固定の129だった。これは既定の
      * preamble128/SFD8/PAC8の組み合わせでのみ正しい値（128+1+8-8=129）
      * であり、非0のため自動計算式（このフィールドが0のときしか走らない）
      * を常に無効化していた。preambleLengthだけ変える（例: Len256）と、
@@ -310,7 +310,7 @@ struct RangeResult {
     uint32_t elapsedMs = 0;
     Error error         = Error::Ok;
     /**
-     * 【docs/REIMPL_PLAN.md R4】requestRange() が dwt_readclockoffset() から
+     * 【docs/archive/REIMPL_PLAN.md R4】requestRange() が dwt_readclockoffset() から
      * 求めたクロックオフセット比を ppm 単位で入れる（実機デバッグ用の可視化。
      * distanceM/distanceMm の算出には既に織り込み済みで、この値自体は
      * 加算・減算しない）。RangeConfig::enableClockOffsetCorrection が false

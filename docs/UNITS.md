@@ -88,7 +88,7 @@ static constexpr uint64_t kUusToDwtTime = 65536ULL;
 
 > **命名が誤っているのは Qorvo 側であり、M5Stack 由来の `Uus` という命名は正しい。**
 > 当初は「`Uus` → `Us` にリネームすべき」と判断したが誤りだった
-> （経緯は `docs/REIMPL_PLAN.md` R1、`docs/HANDOFF.md` の誤り 10）。
+> （経緯は `docs/archive/REIMPL_PLAN.md` R1、`docs/HANDOFF.md` の誤り 10）。
 
 ### 変換ヘルパを必ず通すこと
 
@@ -99,7 +99,7 @@ constexpr uint32_t usToUus(uint32_t us);   // 実µs -> UUS。四捨五入
 ```
 
 ESP-IDF / Qorvo SDK のヘッダに依存しないので、ホスト側テスト
-（`tools/test_pipeline`）からそのまま include して検算できる。
+（`tests/host/pipeline`）からそのまま include して検算できる。
 
 ---
 
@@ -153,5 +153,5 @@ UUS -> DTU  :  x * 65536
 ## 関連文書
 - `docs/GLOSSARY.md` — 略語の一覧（UUS 以外の用語はこちら）
 - `docs/TIMING_PRESETS.md` — 遅延プリセットの実際の値と、その導出
-- `docs/REIMPL_PLAN.md` R1 — この単位問題を発見・訂正した経緯
+- `docs/archive/REIMPL_PLAN.md` R1 — この単位問題を発見・訂正した経緯
 - `docs/SOURCE_POLICY.md` — 「一次資料 = Qorvo SDK/UM/APS」の格付け

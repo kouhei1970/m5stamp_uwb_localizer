@@ -277,13 +277,13 @@ GPIO に余裕があるので **SPI4線 + IRQ + RSTn をフル配線**して開�
 ## 5. リスクと未確認事項
 
 > **⚠ 番号の衝突に注意。** 本節の R1〜R10 は**この表の中だけの通し番号**であり、
-> `docs/REIMPL_PLAN.md` の R1〜R12（TWR 層の再実装項目）とは**別物**です。
-> 例えば本節の R6 は「更新レート」、`REIMPL_PLAN.md` の R6 は「IRQ 駆動化」を指します。
+> `docs/archive/REIMPL_PLAN.md` の R1〜R12（TWR 層の再実装項目）とは**別物**です。
+> 例えば本節の R6 は「更新レート」、`archive/REIMPL_PLAN.md` の R6 は「IRQ 駆動化」を指します。
 > 改番すると既存の相互参照が壊れるので、そのままにしてあります。
 
 | # | リスク | 影響 | 対処 |
 |---|---|---|---|
-| ~~R1~~ | ~~Qorvo SDK のライセンス~~ | — | **解決済(2026-08-19)**: 改変込みのソース再配布は許可。条件=著作権/SPDX表示の保持＋**Qorvo製IC限定**。vendoring 可。詳細は SURVEY_m5stamp_uwb_port.md |
+| ~~R1~~ | ~~Qorvo SDK のライセンス~~ | — | **解決済(2026-08-19)**: 改変込みのソース再配布は許可。条件=著作権/SPDX表示の保持＋**Qorvo製IC限定**。vendoring 可。詳細は archive/SURVEY_m5stamp_uwb_port.md |
 | R2 | Arduino→ESP-IDF 移植の手間（SPI/GPIO/時刻APIの差） | Phase 1-2 が伸びる | `uwb_port` で Arduino API 相当を薄く再現し差分を最小化 |
 | ~~R3~~ | ~~StampFly に G5/G10/G41/G42 のパッドが無い~~ | — | **解決済(2026-08-21): 案B は成立しない。** 4本ともモータPWM。**案A（GROVE 2系統・IRQ無し）で確定** |
 | R4 | GROVE 5V の供給能力不足 | Phase 6 で電源設計やり直し | 電流実測。最悪は機体のバッテリから直接取る |

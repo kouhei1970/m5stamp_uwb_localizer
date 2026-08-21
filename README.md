@@ -20,7 +20,7 @@
 
 ## 📖 どこから読むか
 
-ドキュメントは 27 本あります。**全部読む必要はありません。**
+ドキュメントは現役 21 本（+ 経緯を記録した archive 8 本）あります。**全部読む必要はありません。**
 下から自分に合う入口を選んでください。索引は **[`docs/README.md`](docs/README.md)**。
 
 | あなたは | 入口 | その次 |
@@ -28,7 +28,7 @@
 | 🔰 **UWB を知らない。原理から勉強したい** | **[`docs/UWB_PRIMER.md`](docs/UWB_PRIMER.md)**<br>なぜ電波で cm が測れるのか | [`UWB_ALGORITHMS.md`](docs/UWB_ALGORITHMS.md)（測位の数理） |
 | 🔧 **買った。動かしたい** | **[`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md)**<br>BOM から測位までの完全手順 | [`EXPERIMENT_PLAN.md`](docs/EXPERIMENT_PLAN.md)（進める順序） |
 | ⚡ **とにかく書き込んで試したい** | **[`docs/PREBUILT_BINARIES.md`](docs/PREBUILT_BINARIES.md)**<br>ESP-IDF を入れずに書き込む | [`BRINGUP.md`](docs/BRINGUP.md)（最初の関門） |
-| 🛠 **中身を読みたい・改造したい** | **[`docs/PLAN.md`](docs/PLAN.md)**<br>全体設計と方針 | [`REIMPL_PLAN.md`](docs/REIMPL_PLAN.md)（なぜこの実装か） |
+| 🛠 **中身を読みたい・改造したい** | **[`docs/PLAN.md`](docs/PLAN.md)**<br>全体設計と方針 | [`REIMPL_PLAN.md`](docs/archive/REIMPL_PLAN.md)（なぜこの実装か。経緯） |
 | 📋 **引き継ぐ・続きをやる** | **[`docs/HANDOFF.md`](docs/HANDOFF.md)**<br>現在地と次の一手 | [`SOURCE_POLICY.md`](docs/SOURCE_POLICY.md)（過去の誤りの記録） |
 
 **略語が分からないときは [`docs/GLOSSARY.md`](docs/GLOSSARY.md)、
@@ -97,7 +97,7 @@ git clone https://github.com/kouhei1970/m5stamp_uwb_localizer.git
 cd m5stamp_uwb_localizer
 
 # 4) 測位計算が正しく動くことを PC 上で確認（ESP-IDF 不要）
-cd tools/test_pipeline && make test
+cd tests/host/pipeline && make test
 #    → "=== 188 件中 0 件失敗 ===" が出れば OK
 cd ../..
 
@@ -197,7 +197,6 @@ m5stamp_uwb_localizer/
 ├── README.md                このファイル
 ├── LICENSE                  リポジトリ既定のライセンス（MIT）
 ├── THIRD_PARTY_LICENSES.md  ライセンス構成の詳細
-├── PROGRESS.md              開発進捗ログ（何がどこまで検証済みか）
 │
 ├── docs/
 │   ├── README.md            ★ ドキュメント索引（ここから探す）
@@ -217,12 +216,15 @@ m5stamp_uwb_localizer/
 │   ├── SOURCE_POLICY.md     資料の格付けと、過去の誤りの記録
 │   ├── HANDOFF.md           次セッションへの申し送り
 │   ├── PLAN.md              全体設計・フェーズ計画
-│   ├── REIMPL_PLAN.md       TWR 層の課題一覧（R1〜R12）
-│   ├── CRITICAL_REVIEW.md   移植元コードの問題点の詳細分析
 │   ├── REVIEW_2026-08-21.md 実機投入前の最終レビュー（2026-08-21）
 │   ├── PERF_ANALYSIS.md     測位ソルバの性能分析
 │   ├── PLATFORM_TUNING.md   ESP32-S3 固有の最適化調査
-│   └── SURVEY_*.md          事前調査資料
+│   ├── MATH_AUDIT_2026-08-21.md  行列計算の残存箇所の監査とスカラー化の設計根拠
+│   └── archive/             経緯文書（設計当時の調査・検討。現役の仕様ではない）
+│       ├── PROGRESS.md          開発進捗ログ（何がどこまで検証済みか）
+│       ├── REIMPL_PLAN.md       TWR 層の課題一覧（R1〜R12）
+│       ├── CRITICAL_REVIEW.md   移植元コードの問題点の詳細分析
+│       └── SURVEY_*.md          事前調査資料
 │
 ├── assets/                  製品写真・公式ピンマップ・SNS カード
 │
@@ -249,12 +251,14 @@ m5stamp_uwb_localizer/
 │   └── soltest/             ソルバの実機ベンチ（UWB ハード不要）
 │
 ├── tests/
+│   ├── Makefile             host/*/Makefile を自動検出して一括実行（`make test strict float`）
 │   └── host/
-│       └── loc/             測位ソルバのホスト検証（旧 tools/test_uwb_loc、`make test`）
+│       ├── loc/              測位ソルバのホスト検証（`make test`、77件）
+│       ├── pipeline/          測位パイプラインのホスト検証（実機不要、`make test`、188件）
+│       └── survey/            自動測量の計算のホスト検証（`make test`、281件）
 │
 ├── tools/
-│   ├── test_pipeline/       ★ 測位パイプラインのホスト検証（実機不要、`make test`）
-│   ├── test_survey/         自動測量の計算のホスト検証
+│   ├── README.md            ベンチとスクリプトの置き場（テストは tests/ 側）
 │   └── bench_loc/           測位ソルバのマイクロベンチマーク（`make bench`）
 │
 └── third_party/             上流リポジトリの参照クローン（gitignore 済み・ビルド対象外）
@@ -273,7 +277,7 @@ firmware/tag ──┬─ uwb_ranging ─┬─ uwb_loc          （ハード非
 
 ハードウェア依存は **`components/uwb_port/` 1 枚に閉じています**。
 `uwb_ranging` の測位側と `uwb_loc` は ESP-IDF に一切依存せず、
-`tools/test_pipeline` でそのまま PC 上でビルド・検証できます。
+`tests/host/pipeline` でそのまま PC 上でビルド・検証できます。
 
 ---
 
@@ -292,7 +296,7 @@ firmware/tag ──┬─ uwb_ranging ─┬─ uwb_loc          （ハード非
 > **M5Stack の別製品「Unit UWB」(SKU U100) とは別物です。**
 > あちらは UART + AT コマンド方式（DW1000 ベース）で、本リポジトリのコードは使えません。
 
-詳細は [`docs/SURVEY_m5stamp_uwb_module.md`](docs/SURVEY_m5stamp_uwb_module.md)。
+詳細は [`docs/archive/SURVEY_m5stamp_uwb_module.md`](docs/archive/SURVEY_m5stamp_uwb_module.md)。
 
 ---
 
@@ -345,7 +349,7 @@ firmware/tag ──┬─ uwb_ranging ─┬─ uwb_loc          （ハード非
 |---|---|
 | **ドキュメント索引** | **[`docs/README.md`](docs/README.md)** |
 | 現在地・次の一手 | [`docs/HANDOFF.md`](docs/HANDOFF.md) |
-| 進捗ログ | [`PROGRESS.md`](PROGRESS.md) |
+| 進捗ログ | [`docs/archive/PROGRESS.md`](docs/archive/PROGRESS.md) |
 | 全体設計・フェーズ計画 | [`docs/PLAN.md`](docs/PLAN.md) |
-| 既知の課題 | [`docs/REIMPL_PLAN.md`](docs/REIMPL_PLAN.md) / [`docs/CRITICAL_REVIEW.md`](docs/CRITICAL_REVIEW.md) |
+| 既知の課題（経緯） | [`docs/archive/REIMPL_PLAN.md`](docs/archive/REIMPL_PLAN.md) / [`docs/archive/CRITICAL_REVIEW.md`](docs/archive/CRITICAL_REVIEW.md) |
 | 最終レビュー（実機投入前） | [docs/REVIEW_2026-08-21.md](docs/REVIEW_2026-08-21.md) |

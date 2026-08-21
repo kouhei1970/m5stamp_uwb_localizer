@@ -15,7 +15,7 @@
 |---|---|
 | **買ってから測位が出るまでの通し手順**（配線・5 台への書き込み・座標入力・測位・校正） | **[`GETTING_STARTED.md`](GETTING_STARTED.md)** |
 | **半田パッドの寸法・向きの確定・半田付け手順・アンテナ禁止領域** | [`SOLDER_PADS.md`](SOLDER_PADS.md) |
-| モジュールのハードウェア仕様 | [`SURVEY_m5stamp_uwb_module.md`](SURVEY_m5stamp_uwb_module.md) |
+| モジュールのハードウェア仕様 | [`archive/SURVEY_m5stamp_uwb_module.md`](archive/SURVEY_m5stamp_uwb_module.md) |
 | **Phase 1 の受入確認そのもの** | **本書** |
 
 ---
@@ -176,7 +176,7 @@ I (xxx) uwb_probe: L1 (periodic): raw DEV_ID = 0xDECA0314
   （データシート値: スリープ 75.9µA / アンカー 5.23mA / タグ 58.0mA @3.3V）
 - **半田パッドの向き**（pin 1 の位置、基板シルクにピン番号の印刷があるか）
   → [`SOLDER_PADS.md`](SOLDER_PADS.md) §5 の未確認リストを埋める
-- 結果を [`../PROGRESS.md`](../PROGRESS.md) へ
+- 結果を [`archive/PROGRESS.md`](archive/PROGRESS.md) へ
 
 ---
 

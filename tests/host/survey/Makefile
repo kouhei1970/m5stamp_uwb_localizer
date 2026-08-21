@@ -1,9 +1,9 @@
 # components/uwb_survey（アンカー自動測量の計算本体）を、実機なしで
 # ホスト上で直接ビルド・実行して検証するための Makefile。
 #
-# tools/test_pipeline/Makefile と同じ考え方（third_party は読み取り専用、
+# tests/host/pipeline/Makefile と同じ考え方（third_party は読み取り専用、
 # ビルドするのは本番と同じ components/ 配下のソース）。uwb_survey は
-# 全部 C99 なので、こちらは cc だけで済む。
+# 全部 C99 なので、こちらは cc だけで済む（旧 tools/test_survey の後継）。
 #
 # uwb_loc からは uwb_real の typedef（ヘッダ）しか使っていないので、
 # uwb_loc の .c は 1 本もリンクしない。
@@ -19,7 +19,7 @@ CFLAGS ?= -O2 -g
 WARN    = -Wall -Wextra -pedantic -Wshadow -Wconversion -Wno-sign-conversion
 LDLIBS  = -lm
 
-ROOT        = ../..
+ROOT        = ../../..
 UWB_LOC_DIR = $(ROOT)/components/uwb_loc
 SURVEY_DIR  = $(ROOT)/components/uwb_survey
 

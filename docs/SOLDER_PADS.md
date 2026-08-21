@@ -286,7 +286,7 @@ S017-F はこれが **2.8 mm**（背面の FPC コネクタ分 +1.2mm）。
 
 ● = 必須 / ○ = どれか1本 GND があればよい / △ = 省電力運用時のみ
 
-出典（信号名）: `Stamp_UWB.kicad_sym`（上記 URL）、および `docs/SURVEY_m5stamp_uwb_module.md`
+出典（信号名）: `Stamp_UWB.kicad_sym`（上記 URL）、および `docs/archive/SURVEY_m5stamp_uwb_module.md`
 （公式回路図 PINMAP より）。両者は完全に一致している。
 
 **配置上の利点**:
@@ -353,7 +353,7 @@ pin 2 / 7 / 8 / 9 / 10 / 11 / 12 の 7 本 + pin 6 (RSTn) の計 8 本で十分�
 
 ### 3.4 電源についての注意
 
-- モジュールは **3.3V 単一供給**。5V を入れると壊れる（`SURVEY_m5stamp_uwb_module.md`）。
+- モジュールは **3.3V 単一供給**。5V を入れると壊れる（`archive/SURVEY_m5stamp_uwb_module.md`）。
 - 消費電流はデータシート値で **スリープ 75.9µA / アンカー 5.23mA / タグ 58.0mA @3.3V**。
   TX 瞬時ピークは未公開なので、**ホストの 3V3 レギュレータに 100mA 程度の余裕**を見ておく。
 - USB 給電中は問題になりにくいが、**バッテリ運用に移す前に 3V3 レールの電圧降下を実測**すること。
@@ -510,6 +510,6 @@ S017-F にも同じパッドがあること。
 - **`docs/GETTING_STARTED.md` … 本書の内容を作業手順として展開したもの
   （§3 配線）。買ってから測位が出るまでの通し手順はこちら**
 - `docs/BRINGUP.md` … Phase 1（SPI 疎通）の受入確認手順。FPC / 半田パッドの選択も
-- `docs/SURVEY_m5stamp_uwb_module.md` … モジュール全体の仕様調査（FPC ピンアサインの出典）
+- `docs/archive/SURVEY_m5stamp_uwb_module.md` … モジュール全体の仕様調査（FPC ピンアサインの出典）
 - `boards/stamps3.h` / `boards/atoms3.h` … ホスト側ピン割当（暫定）
 - `docs/refs/m5_hardware/` … 本調査で取得した M5_Hardware の原本（gitignore 済み）

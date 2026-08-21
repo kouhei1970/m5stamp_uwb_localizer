@@ -24,7 +24,7 @@
  * uwb_qm33120.cpp (right before `Qm33120::Qm33120()`) was moved here
  * unchanged, and uwb_qm33120.cpp now `#include`s this header instead. Field
  * set/defaults/comments are otherwise identical to that original inline
- * definition. See PROGRESS.md Phase 2 Step 2 for the rationale.
+ * definition. See docs/archive/PROGRESS.md Phase 2 Step 2 for the rationale.
  */
 #pragma once
 

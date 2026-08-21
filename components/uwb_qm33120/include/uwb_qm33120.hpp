@@ -6,7 +6,7 @@
  * Ported from third_party/M5Stamp-UWB/src/M5Stamp_UWB.h (M5Stack Technology
  * CO LTD, MIT). Class shape (PImpl, method list) is kept 1:1 with the
  * original where possible; see uwb_qm33120.cpp for the per-method mapping
- * and PROGRESS.md Phase 2 Step 1 for the list of intentional deviations
+ * and docs/archive/PROGRESS.md Phase 2 Step 1 for the list of intentional deviations
  * (Arduino SPI/GPIO calls replaced by components/uwb_port, static SPI
  * trampoline methods removed because uwb_port already owns that dispatch).
  *

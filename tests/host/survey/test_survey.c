@@ -7,7 +7,7 @@
  * xorshift32 に固定シードを与えるので、**どの環境でも同じ数値が出る**
  * （libc の rand() は実装依存なので使わない）。
  *
- * tests/host/loc/test_uwb.c および tools/test_pipeline
+ * tests/host/loc/test_uwb.c および tests/host/pipeline
  * と同じ CHECK() マクロの流儀（PASS/FAIL をその場で数え、失敗時だけ内容を
  * 表示する）を踏襲する。
  */
@@ -923,7 +923,7 @@ static void scenario10_dense(void)
 
 int main(void)
 {
-    printf("=== tools/test_survey: uwb_survey アンカー自動測量 合成データ検証 ===\n");
+    printf("=== tests/host/survey: uwb_survey アンカー自動測量 合成データ検証 ===\n");
     printf("UWB_SURVEY_MAX_NODES=%d UWB_SURVEY_MAX_LINKS=%d UWB_SURVEY_MAX_UNKNOWNS=%d "
            "UWB_REAL_IS_FLOAT=%d\n\n",
            UWB_SURVEY_MAX_NODES, UWB_SURVEY_MAX_LINKS, UWB_SURVEY_MAX_UNKNOWNS,

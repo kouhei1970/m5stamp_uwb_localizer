@@ -11,7 +11,7 @@ CONFIG_ESP_MAIN_TASK_STACK_SIZE=12288
 # firmware/twr, firmware/anchor と同じ理由。requestRange()/requestDSRange() が
 # 内部で dwt_setdelayedtrxtime() による遅延送信を使うため、ESP-IDF既定の
 # 100Hzのままだと vTaskDelay(pdMS_TO_TICKS(1)) が10ms刻みになり送信ウィンドウを
-# 取り逃す恐れがある（PROGRESS.md Phase 2 Step 1 参照）。
+# 取り逃す恐れがある（docs/archive/PROGRESS.md Phase 2 Step 1 参照）。
 CONFIG_FREERTOS_HZ=1000
 
 # --- ESP32-S3 専用最適化（本リポジトリは ESP32-S3 + M5Stack UWB 専用）---

@@ -3,7 +3,7 @@
 # ハード非依存部分（uwb_ranging_anchor_table.cpp / uwb_ranging_pipeline.cpp、
 # uwb_loc.h にしか依存しない）と、ハード依存部分（uwb_ranging_scheduler.cpp、
 # uwb_qm33120 経由でTWRを叩く）に分かれている。ハード非依存部分は
-# tools/test_pipeline がホストで直接コンパイルする対象でもある
+# tests/host/pipeline がホストで直接コンパイルする対象でもある
 # （そちらは本 CMakeLists を使わず、Makefile が同じ2ファイルを直接指定する）。
 
 idf_component_register(

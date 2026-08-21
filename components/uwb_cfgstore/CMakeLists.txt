@@ -4,7 +4,7 @@
 #
 #   src/uwb_cfgstore_blob.cpp  ... バイト列の組み立てと検査。ESP-IDF に
 #       一切依存しない（uwb_ranging_types.hpp と <cmath>/<cstring> のみ）。
-#       tools/test_pipeline がホストで**同じソースを直接コンパイルして**
+#       tests/host/pipeline がホストで**同じソースを直接コンパイルして**
 #       往復・境界値・破損データの検算を行う（実機が無いので、検証できる
 #       のはこの層まで、という切り分け）。
 #   src/uwb_cfgstore.cpp       ... NVS 入出力。nvs_flash に依存する。

@@ -138,7 +138,7 @@ menu "UWB Tag Configuration"
         bool "アンカー平面が原点を通ると検出された場合、dim=2(高さ固定)へ自動フォールバックする"
         default y
         help
-            docs/ANCHOR_PLACEMENT.md / PROGRESS.md Phase 4 に記録されている
+            docs/ANCHOR_PLACEMENT.md / docs/archive/PROGRESS.md Phase 4 に記録されている
             既知の現象: 登録済みアンカーが全て同一平面上にあり、かつその
             平面がワールド原点をほぼ通っている場合（床にアンカーを並べる
             構成で z~=0 になりがち）、Lv2 は毎周期 ok=0 を返す。

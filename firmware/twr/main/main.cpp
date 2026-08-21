@@ -25,13 +25,13 @@
  * DS-TWR の ANCHOR は自分で距離を計算する（respondDSRange()の戻り値）ので、
  * こちらでも同じ統計を出す。
  *
- * 【docs/REIMPL_PLAN.md R3-1/R9】上記の「examplesの値をそのまま使用」の
+ * 【docs/archive/REIMPL_PLAN.md R3-1/R9】上記の「examplesの値をそのまま使用」の
  * 例外として、RANGE_HOST_TIMEOUT_MS(100→10)/RESULT_RX_AFTER_FINAL_TX_DLY_UUS
  * (500→200)/RESULT_REPEAT_COUNT(3→1) の3つは
  * uwb::RangeConfig/DSRangeConfig 側の新しい既定値
  * （components/uwb_qm33120/include/uwb_qm33120_types.hpp）に揃えて更新した
  * （examplesの値は検証されていない二次資料であり、この3つは特に
- * docs/CRITICAL_REVIEW.md【重大3】で問題が指摘されていたため）。
+ * docs/archive/CRITICAL_REVIEW.md【重大3】で問題が指摘されていたため）。
  */
 #include <cmath>
 #include <cstdio>

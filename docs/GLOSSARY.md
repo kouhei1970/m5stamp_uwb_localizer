@@ -151,7 +151,7 @@
 | **APS** | Qorvo の **A**pplication **N**ote（例: **APS014** = アンテナ遅延校正の手順書） |
 | **UM** | **U**ser **M**anual（DW3000 ファミリのユーザマニュアル） |
 | **一次資料** | Qorvo の SDK / UM / APS。**信頼してよい**。M5Stack のラッパは二次資料として扱う（`docs/SOURCE_POLICY.md`） |
-| **R1〜R12 / S1〜S7** | 本プロジェクトの作業項目番号。R = 再実装項目（`docs/REIMPL_PLAN.md`）、S = 自動測量関連（`docs/SURVEY_SPEC.md`） |
+| **R1〜R12 / S1〜S7** | 本プロジェクトの作業項目番号。R = 再実装項目（`docs/archive/REIMPL_PLAN.md`）、S = 自動測量関連（`docs/SURVEY_SPEC.md`） |
 
 ---
 

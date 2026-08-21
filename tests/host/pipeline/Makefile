@@ -5,7 +5,7 @@
 # tests/host/loc/Makefile と同じ考え方（third_party には依存せず、
 # ビルドするのは本番と同じ components/ 配下のソース）。ただし今回は
 # C（uwb_loc）と C++（uwb_ranging）の混在なので、.c は cc、.cpp は c++ で
-# それぞれコンパイルしてから link する。
+# それぞれコンパイルしてから link する（旧 tools/test_pipeline の後継）。
 #
 # ハード依存部分（components/uwb_ranging/src/uwb_ranging_scheduler.cpp、
 # components/uwb_qm33120 経由でTWRを叩く方）は意図的にビルド対象に**含めない**。
@@ -15,7 +15,7 @@
 # 例外: components/uwb_qm33120/include/uwb_qm33120_units.hpp
 # (uwb::detail::usToUus() / sfdTimeoutFromPhy()) はESP-IDF非依存のヘッダ
 # のみ（<cstdint>のみ）なので、include pathに足してこのバイナリからも
-# 直接検算する（docs/REIMPL_PLAN.md R1/R8）。
+# 直接検算する（docs/archive/REIMPL_PLAN.md R1/R8）。
 #
 #   make            既定値 (UWB_MAX_ANCHORS=8 / UWB_MAX_MEAS=8) でビルド
 #   make test       同上でビルドしてテスト実行（uwb_ranging 6シナリオ +
@@ -32,7 +32,7 @@ WARN_C    = -Wall -Wextra -pedantic -Wshadow -Wconversion -Wno-sign-conversion
 WARN_CXX  = -Wall -Wextra -Wshadow
 LDLIBS    = -lm
 
-ROOT         = ../..
+ROOT         = ../../..
 UWB_LOC_DIR  = $(ROOT)/components/uwb_loc
 RANGING_DIR  = $(ROOT)/components/uwb_ranging
 QM33120_DIR  = $(ROOT)/components/uwb_qm33120
@@ -93,8 +93,8 @@ test: $(TEST_BIN)
 	./$(TEST_BIN)
 
 # 警告をすべてエラーにして通すか見る。uwb_loc 側は third_party 由来の
-# 既知の未使用変数 (uwb_nls.c:342, PROGRESS.md 記載の上流バグ) があるため
-# -Werror は uwb_ranging 側 (自前実装分) にだけ掛ける。
+# 既知の未使用変数 (uwb_nls.c:342, docs/archive/PROGRESS.md 記載の上流バグ)
+# があるため -Werror は uwb_ranging 側 (自前実装分) にだけ掛ける。
 strict:
 	$(MAKE) clean
 	$(MAKE) WARN_CXX="-Wall -Wextra -Wshadow -Werror" test

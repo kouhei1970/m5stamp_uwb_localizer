@@ -2,7 +2,7 @@
  * @file uwb_cfgstore_blob.cpp
  * @brief uwb_cfgstore_blob.hpp の実装。**ハード非依存**（ESP-IDF に依存しない）。
  *
- * ホスト（tools/test_pipeline）でも同じソースをそのままコンパイルして
+ * ホスト（tests/host/pipeline）でも同じソースをそのままコンパイルして
  * 往復・境界値・破損データの検算に使う。実機が無い段階で検証できるのは
  * この層まで、という切り分け。
  */

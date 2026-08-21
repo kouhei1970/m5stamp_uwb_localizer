@@ -36,7 +36,7 @@ DS-TWR（Double-Sided TWR、両側二方向測距）は**両側に遅延送信�
 
 - SHR（preamble 128 + SFD 8 = 136 シンボル × 1017.63 ns）= **138.4 µs**
 - 短いフレーム全長（SHR + PHR + データ + FCS）≈ **179 µs**
-  （出典: `docs/CRITICAL_REVIEW.md`「フレーム air time の実測算」。
+  （出典: `docs/archive/CRITICAL_REVIEW.md`「フレーム air time の実測算」。
   SHR は `docs/refs/DW3000_Datasheet_wayback.txt` Table 18 から独立に再検算済み）
 - したがって **RMARKER（Ranging Marker、＝タイムスタンプの基準）はフレーム先頭から 138.4 µs、
   フレーム末尾の 41 µs 手前**にある。
@@ -114,7 +114,7 @@ DWD はアンカーが Final を受信した直後に `DWT_START_TX_IMMEDIATE` �
 
 ## 2. プリセット表（確定値）
 
-単位はすべて **UUS**。`hostTimeoutMs` は全プリセットで 10（`docs/REIMPL_PLAN.md` R9）。
+単位はすべて **UUS**。`hostTimeoutMs` は全プリセットで 10（`docs/archive/REIMPL_PLAN.md` R9）。
 
 ### 2.1 `RangeConfig`（SS-TWR）
 
@@ -160,7 +160,7 @@ DWD はアンカーが Final を受信した直後に `DWT_START_TX_IMMEDIATE` �
 開放された時刻」を起点に走るタイマーで、上の表の「開く時刻」から「プリアンブル
 到達」までの時間より短いと必ず RXPTO で失敗する。本プリセット（DS-TWR）では
 PRETOC は無効（0）にしてある（`uwb_qm33120_twr.cpp:531, 841`。
-`docs/REVIEW_2026-08-21.md` §0 #1、`docs/REIMPL_PLAN.md` R9）。有効にする場合は、
+`docs/REVIEW_2026-08-21.md` §0 #1、`docs/archive/REIMPL_PLAN.md` R9）。有効にする場合は、
 公式サンプルの値をそのまま持ち込むのではなく、上表の「開く時刻」から
 「プリアンブル到達」までの時間を PAC 単位に換算して設定する必要がある。
 
@@ -257,14 +257,14 @@ endchoice
 | 追加/変更 | 場所 |
 |---|---|
 | `TimingProfile` enum、`kTimingPresetVersion`、プリセット表、`applyTimingProfile()` | **新規** `components/uwb_qm33120/include/uwb_qm33120_timing.hpp` |
-| プリセットの数値が §2 の表と一致することのテスト、§1.2 の締切式の検算 | `tools/test_pipeline` |
+| プリセットの数値が §2 の表と一致することのテスト、§1.2 の締切式の検算 | `tests/host/pipeline` |
 | Poll/Response のペイロード生成・照合 | `components/uwb_qm33120/src/uwb_qm33120_twr.cpp` |
 | 長さ 3/5・11/13 の受理 | `components/uwb_qm33120/src/uwb_qm33120_internal.hpp` の `payloadMatches()` 周辺 |
 | Kconfig と起動ログ | `firmware/{twr,tag,anchor}/main/` |
 
 `uwb_qm33120_timing.hpp` は `uwb_qm33120_units.hpp` / `uwb_qm33120_frame_match.hpp` と同じ方針で
 **ESP-IDF / Qorvo SDK ヘッダに依存させない**（`<cstdint>` のみ）。
-ホスト側 `tools/test_pipeline` からそのまま include して検算できるようにするため。
+ホスト側 `tests/host/pipeline` からそのまま include して検算できるようにするため。
 
 ---
 
@@ -281,7 +281,7 @@ endchoice
 | 不一致を1回だけ警告するための状態 | `Qm33120::Impl::warned_peers[8]` / `warned_count` | `components/uwb_qm33120/src/uwb_qm33120_impl.hpp` |
 | Kconfig（3アプリ共通） | `choice UWB_TIMING_PROFILE`（`UWB_TIMING_PROFILE_POLLING_BOTH` / `_ANCHOR_IRQ` / `_BOTH_IRQ`） | `firmware/{anchor,tag,twr}/main/Kconfig.projbuild` |
 | 起動時ログ・§4(b)の起動時チェック | `timingProfileName()`/`timingProfileNeedsAnchorIrq()`/`timingProfileNeedsTagIrq()` を使った `ESP_LOGI`/`ESP_LOGW` | `firmware/{anchor,tag,twr}/main/main.cpp` の `app_main()` |
-| プリセット表・締切式・往復のホスト検算 | シナリオ13〜17（188件中の一部。旧132件から+56） | `tools/test_pipeline/test_pipeline.cpp` |
+| プリセット表・締切式・往復のホスト検算 | シナリオ13〜17（188件中の一部。旧132件から+56） | `tests/host/pipeline/test_pipeline.cpp` |
 
 **既知の制約（実機未検証）**: 本ドキュメントの数値導出と同じく、実機での検証はまだ済んでいない。
 `PollingBoth` は現在の既定値と数値上完全に一致するため実装前後で挙動は変わらないが、
@@ -290,6 +290,6 @@ endchoice
 **ホスト検算の限界**: `RangeConfig`/`DSRangeConfig`（`uwb_qm33120_types.hpp`）と
 `payloadMatchesEither()`/`readTimingTag()`（`uwb_qm33120_internal.hpp`）は、既存の `payloadMatches()`
 と同じ理由で ESP-IDF ヘッダ（`uwb_port.h` 経由の `driver/spi_master.h`、`esp_timer.h`、`deca_device_api.h`）
-に依存しており、ホストから直接 include できない。`tools/test_pipeline` のシナリオ14/16/17は、
+に依存しており、ホストから直接 include できない。`tests/host/pipeline` のシナリオ14/16/17は、
 実体のロジックを模した局所ミラー実装（値・アルゴリズムを1行ずつ突き合わせてコメントで出典を明記）で検算している。
 シナリオ13/15（`uwb_qm33120_timing.hpp` 自体の検算）はこの制約を受けず、実体の関数を直接呼んでいる。

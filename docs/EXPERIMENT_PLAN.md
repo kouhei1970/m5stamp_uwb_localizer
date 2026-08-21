@@ -338,7 +338,7 @@ W ... respondDSRange: Poll<-TAG: peer=0x0001 とタイミングプリセット�
 - **実験 7**: 起動ログの `irq=` 行、`cycle_ms` の変化（この段では変わらないはず）
 - **実験 8**: `cycle_ms`、不一致警告の有無、`ok` 率の変化
 
-記録先は `PROGRESS.md`。
+記録先は `docs/archive/PROGRESS.md`。
 [`GETTING_STARTED.md` の末尾](GETTING_STARTED.md)にも「実機で確認できたら記録してほしいこと」があります。
 
 ---

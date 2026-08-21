@@ -3,14 +3,14 @@
  * @brief 受信フレームが「待っていたフレームか、それとも他人（別リンク）
  * 宛てのフレームで捨ててよいか」を判定する純関数、およびその判定材料となる
  * バイト列レベルの解析ヘルパ（フレーム長計算・ペイロード照合・タイミング
- * タグ読み出し）。docs/REIMPL_PLAN.md R2。
+ * タグ読み出し）。docs/archive/REIMPL_PLAN.md R2。
  *
  * uwb_qm33120_units.hpp / uwb_qm33120_timing.hpp と同じ方針で、ESP-IDF/Qorvo
  * SDK ヘッダに一切依存しない（<cstdint> と <cstring>（memcmp() 用。標準
- * ヘッダなのでホストでもESP-IDFでも使える）のみ）。tools/test_pipeline
+ * ヘッダなのでホストでもESP-IDFでも使える）のみ）。tests/host/pipeline
  * （ホスト側ビルド）からそのまま include して検算できる。
  *
- * --- 背景 (docs/CRITICAL_REVIEW.md【重大1】 / docs/REIMPL_PLAN.md R2) ---
+ * --- 背景 (docs/archive/CRITICAL_REVIEW.md【重大1】 / docs/archive/REIMPL_PLAN.md R2) ---
  * 5台 round-robin 構成では、待っているフレームと異なるアドレス/シーケンス
  * 番号のフレームを受信することがある。これは「エラー」ではなく「他人
  * （別リンク）宛てのフレームを1枚拾っただけ」であり、測距シーケンス全体を
@@ -35,7 +35,7 @@
  * payloadMatchesEither() / readTimingTag() は、元は uwb_qm33120_internal.hpp
  * （esp_timer.h / deca_device_api.h に依存するためホストからincludeできな
  * かった）にあったものをそのままここへ移した（ロジック自体は変更していない。
- * docs/REIMPL_PLAN.md「無理に構造を壊さない」の方針）。
+ * docs/archive/REIMPL_PLAN.md「無理に構造を壊さない」の方針）。
  * uwb_qm33120_internal.hpp は本ヘッダを #include するだけの薄い転送になって
  * いる。
  *
@@ -139,7 +139,7 @@ inline bool payloadMatches(const uint8_t* frame, uint16_t frameLen, const char* 
  * （payload長 lenTagged）のどちらでも受理する。関数コード（prefixLength分の
  * 先頭バイト）はどちらの長さでも同じ位置・同じ内容を要求する。
  *
- * 【payloadMatches()は書き換えない】ホスト側検算（tools/test_pipeline）や
+ * 【payloadMatches()は書き換えない】ホスト側検算（tests/host/pipeline）や
  * 既存呼び出し箇所が依存する既存の純関数のため、そのまま2回呼ぶだけに留める。
  */
 inline bool payloadMatchesEither(const uint8_t* frame, uint16_t frameLen, const char* payload, size_t prefixLength,

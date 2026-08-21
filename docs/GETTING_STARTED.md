@@ -133,7 +133,7 @@ cd m5stamp_uwb_localizer
 **ESP-IDF は不要**です（C/C++ コンパイラだけで動きます）。
 
 ```sh
-cd tools/test_pipeline
+cd tests/host/pipeline
 make test
 ```
 
@@ -269,7 +269,7 @@ M5StampS3A は GPIO（General Purpose Input/Output、汎用入出力）に余裕
 **合計 10 本**（信号 8 本 + GND 2 本）。
 
 > **`5V` ピンには絶対に繋がないこと。** モジュールは 3.3V 単一供給で、
-> 5V を入れると壊れます（`docs/SURVEY_m5stamp_uwb_module.md`）。
+> 5V を入れると壊れます（`docs/archive/SURVEY_m5stamp_uwb_module.md`）。
 
 ### 3.3 アンカー用の配線（M5 AtomS3 × 5台）
 
@@ -1064,7 +1064,7 @@ UWB の測距は電波の飛行時間を測ります。アンテナやチップ�
 DW3720 の OTP アドレス `0x0B` は "Antenna Delay – RFLoop" とされており、
 **工場校正値が書かれている可能性があります**。実機が手に入ったら
 `dwt_otpread(0x0B, &v, 1)` で読んでみる価値があります（**未確認**、
-`docs/REIMPL_PLAN.md` R11）。
+`docs/archive/REIMPL_PLAN.md` R11）。
 
 ---
 
@@ -1149,8 +1149,8 @@ DW3720 の OTP アドレス `0x0B` は "Antenna Delay – RFLoop" とされて�
 | 温度・電圧補償の API 未使用 | `dwt_xtal_temperature_compensation()` 等が未呼び出し |
 | **`firmware/twr` のアンカーアドレスはソース固定** | `0x0002` 固定です（Kconfig で変えられるのは `firmware/anchor` のほう）。1 対 1 テストでは `0x0002` を焼いた個体を使ってください |
 
-詳細は [`docs/REIMPL_PLAN.md`](REIMPL_PLAN.md)（R1〜R12）と
-[`docs/CRITICAL_REVIEW.md`](CRITICAL_REVIEW.md) にあります。
+詳細は [`docs/archive/REIMPL_PLAN.md`](archive/REIMPL_PLAN.md)（R1〜R12）と
+[`docs/archive/CRITICAL_REVIEW.md`](archive/CRITICAL_REVIEW.md) にあります。
 
 ### 11.4 測位そのものの制約
 
@@ -1184,11 +1184,11 @@ DW3720 の OTP アドレス `0x0B` は "Antenna Delay – RFLoop" とされて�
 | [`SOLDER_PADS.md`](SOLDER_PADS.md) | 半田パッドの寸法・配線・アンテナ禁止領域。**配線前に必読** |
 | [`ANCHOR_PLACEMENT.md`](ANCHOR_PLACEMENT.md) | アンカー配置ルールの実測根拠 |
 | [`BRINGUP.md`](BRINGUP.md) | Phase 1（SPI 疎通）の受入確認手順。本書 [4](#probe) の元資料 |
-| [`SURVEY_m5stamp_uwb_module.md`](SURVEY_m5stamp_uwb_module.md) | モジュールのハードウェア仕様調査 |
-| [`REIMPL_PLAN.md`](REIMPL_PLAN.md) | TWR 層の課題一覧（R1〜R12） |
-| [`CRITICAL_REVIEW.md`](CRITICAL_REVIEW.md) | 移植元コードの問題点の詳細分析 |
+| [`archive/SURVEY_m5stamp_uwb_module.md`](archive/SURVEY_m5stamp_uwb_module.md) | モジュールのハードウェア仕様調査 |
+| [`archive/REIMPL_PLAN.md`](archive/REIMPL_PLAN.md) | TWR 層の課題一覧（R1〜R12） |
+| [`archive/CRITICAL_REVIEW.md`](archive/CRITICAL_REVIEW.md) | 移植元コードの問題点の詳細分析 |
 | [`PLAN.md`](PLAN.md) | 全体設計・フェーズ計画 |
-| [`../PROGRESS.md`](../PROGRESS.md) | 開発進捗ログ（何がどこまで検証済みか） |
+| [`archive/PROGRESS.md`](archive/PROGRESS.md) | 開発進捗ログ（何がどこまで検証済みか） |
 
 ---
 

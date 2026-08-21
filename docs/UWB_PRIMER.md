@@ -119,7 +119,7 @@ A と B の時計が同期していないからです。しかも要求水準が
 
 本リポジトリの既定 `responseTxDelayUus = 3000`（= 3,077 µs）だと
 
-> **1 ppm ずれるごとに 0.46 m**（`docs/CRITICAL_REVIEW.md`）
+> **1 ppm ずれるごとに 0.46 m**（`docs/archive/CRITICAL_REVIEW.md`）
 
 水晶が 20 ppm ずれていれば **9 m** です。SS-TWR が単体で使いものにならない理由がこれ。
 
@@ -127,7 +127,7 @@ A と B の時計が同期していないからです。しかも要求水準が
 
 1. **クロックオフセット補正**: DW3720 は受信時にキャリア周波数のずれを測れるので、
    `dwt_readclockoffset()` の値で `T_reply` を補正する
-   （`RangeConfig::enableClockOffsetCorrection`、既定 true。`docs/REIMPL_PLAN.md` R4）
+   （`RangeConfig::enableClockOffsetCorrection`、既定 true。`docs/archive/REIMPL_PLAN.md` R4）
 2. **`T_reply` を短くする**: 折り返しが速いほど誤差が減る。
    IRQ を使ってアンカーの折り返しを 3,077 µs → 900 µs に縮めると誤差も約 1/3.4 になる
    （`docs/TIMING_PRESETS.md`）

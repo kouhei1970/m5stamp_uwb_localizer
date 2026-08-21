@@ -1,6 +1,7 @@
 # ドキュメント索引
 
-27 本・約 9,000 行あります。**全部読む必要はありません。**
+現役 21 本・約 8,200 行あります（他に、設計当時の調査・経緯を記録した
+[archive](archive/) が 8 本）。**全部読む必要はありません。**
 下の「あなたはどれですか」から入ってください。
 
 ---
@@ -45,7 +46,7 @@ GETTING_STARTED.md  →  EXPERIMENT_PLAN.md  →  BRINGUP.md
 ### 🛠 C. 中身を読みたい・改造したい
 
 ```
-PLAN.md  →  各仕様書  →  REIMPL_PLAN.md / CRITICAL_REVIEW.md
+PLAN.md  →  各仕様書  →  archive/REIMPL_PLAN.md / archive/CRITICAL_REVIEW.md
  全体設計    決まりごと      なぜこうなっているかの経緯
 ```
 
@@ -58,9 +59,10 @@ PLAN.md  →  各仕様書  →  REIMPL_PLAN.md / CRITICAL_REVIEW.md
 | [STAMPFLY_INTEGRATION.md](STAMPFLY_INTEGRATION.md) | StampFly の位置制御へ載せる設計検討（**1,100 行**） |
 | [PLATFORM_TUNING.md](PLATFORM_TUNING.md) | ESP32-S3 固有の最適化調査 |
 | [PERF_ANALYSIS.md](PERF_ANALYSIS.md) | 測位ソルバの性能分析 |
-| [REIMPL_PLAN.md](REIMPL_PLAN.md) | 移植元の課題一覧 R1〜R12 と、それぞれの決着 |
-| [CRITICAL_REVIEW.md](CRITICAL_REVIEW.md) | 移植元コードの批判的レビュー（**訂正ボックス入り**） |
+| [MATH_AUDIT_2026-08-21.md](MATH_AUDIT_2026-08-21.md) | 行列計算の残存箇所の監査とスカラー化の設計根拠。`components/uwb_math/` の仕様の元 |
 | [REVIEW_2026-08-21.md](REVIEW_2026-08-21.md) | 実機投入前の最終レビュー（2026-08-21）。Critical 1・High 6 を含む全指摘と根拠、対応状況、着手順 |
+| [archive/REIMPL_PLAN.md](archive/REIMPL_PLAN.md) | 【経緯】移植元の課題一覧 R1〜R12 と、それぞれの決着 |
+| [archive/CRITICAL_REVIEW.md](archive/CRITICAL_REVIEW.md) | 【経緯】移植元コードの批判的レビュー（**訂正ボックス入り**） |
 
 ### 📋 D. 引き継ぐ / 続きをやる
 
@@ -87,7 +89,7 @@ PLAN.md  →  各仕様書  →  REIMPL_PLAN.md / CRITICAL_REVIEW.md
 | アンカー座標を測るのが面倒 | [SURVEY_SPEC.md](SURVEY_SPEC.md) |
 | 半田付けの前に確認したい | [SOLDER_PADS.md](SOLDER_PADS.md) |
 | StampFly に載せたい | [STAMPFLY_INTEGRATION.md](STAMPFLY_INTEGRATION.md)、[PLAN.md §1](PLAN.md) |
-| なぜこの実装なのか知りたい | [REIMPL_PLAN.md](REIMPL_PLAN.md)、[CRITICAL_REVIEW.md](CRITICAL_REVIEW.md) |
+| なぜこの実装なのか知りたい（経緯） | [archive/REIMPL_PLAN.md](archive/REIMPL_PLAN.md)、[archive/CRITICAL_REVIEW.md](archive/CRITICAL_REVIEW.md) |
 | 何が検証済みで何が未検証か | [HANDOFF.md](HANDOFF.md) §1、[GETTING_STARTED.md §11](GETTING_STARTED.md#limitations) |
 
 ---
@@ -105,10 +107,10 @@ PLAN.md  →  各仕様書  →  REIMPL_PLAN.md / CRITICAL_REVIEW.md
 ### 実践
 | 文書 | 行 | 内容 |
 |---|---:|---|
-| [GETTING_STARTED.md](GETTING_STARTED.md) | 1193 | BOM から測位までの完全手順（11 章） |
+| [GETTING_STARTED.md](GETTING_STARTED.md) | 1209 | BOM から測位までの完全手順（11 章） |
 | [EXPERIMENT_PLAN.md](EXPERIMENT_PLAN.md) | 352 | 実機到着後の実験計画とフラグ有効化の順序 |
-| [PREBUILT_BINARIES.md](PREBUILT_BINARIES.md) | 154 | ビルド済みバイナリの入手と書き込み |
-| [BRINGUP.md](BRINGUP.md) | 179 | Phase 1（SPI 疎通）の受入確認 |
+| [PREBUILT_BINARIES.md](PREBUILT_BINARIES.md) | 155 | ビルド済みバイナリの入手と書き込み |
+| [BRINGUP.md](BRINGUP.md) | 189 | Phase 1（SPI 疎通）の受入確認 |
 | [SOLDER_PADS.md](SOLDER_PADS.md) | 515 | 半田パッドの仕様・配線・向きの確定 |
 | [ANCHOR_PLACEMENT.md](ANCHOR_PLACEMENT.md) | 59 | アンカー配置ルール（実測にもとづく） |
 
@@ -117,33 +119,43 @@ PLAN.md  →  各仕様書  →  REIMPL_PLAN.md / CRITICAL_REVIEW.md
 |---|---:|---|
 | [PLAN.md](PLAN.md) | 311 | 全体設計・フェーズ計画・**リポジトリの方針** |
 | [IRQ_POLICY.md](IRQ_POLICY.md) | 171 | IRQ の使用方針（確定版） |
-| [TIMING_PRESETS.md](TIMING_PRESETS.md) | 285 | 遅延プリセットの導出と版不一致検出 |
+| [TIMING_PRESETS.md](TIMING_PRESETS.md) | 295 | 遅延プリセットの導出と版不一致検出 |
 | [SURVEY_SPEC.md](SURVEY_SPEC.md) | 307 | アンカー座標の自動測量の仕様 |
 | [STAMPFLY_INTEGRATION.md](STAMPFLY_INTEGRATION.md) | 1127 | StampFly 位置制御への統合検討 |
 | [PLATFORM_TUNING.md](PLATFORM_TUNING.md) | 126 | ESP32-S3 の浮動小数点・コンパイル設定 |
+| [MATH_AUDIT_2026-08-21.md](MATH_AUDIT_2026-08-21.md) | 49 | 行列計算の残存箇所の監査とスカラー化の設計根拠。`components/uwb_math/` の仕様の元 |
 
 ### 経緯・分析
 | 文書 | 行 | 内容 |
 |---|---:|---|
-| [REIMPL_PLAN.md](REIMPL_PLAN.md) | 302 | 移植元の課題 R1〜R12 とその決着 |
-| [CRITICAL_REVIEW.md](CRITICAL_REVIEW.md) | 295 | 移植元コードの批判的レビュー |
-| [REVIEW_2026-08-21.md](REVIEW_2026-08-21.md) | 264 | 実機投入前の最終レビュー。Critical/High の指摘と対応状況、着手順 |
-| [PERF_ANALYSIS.md](PERF_ANALYSIS.md) | 320 | 測位ソルバの性能分析と上流最適化の結果 |
+| [REVIEW_2026-08-21.md](REVIEW_2026-08-21.md) | 274 | 実機投入前の最終レビュー。Critical/High の指摘と対応状況、着手順 |
+| [PERF_ANALYSIS.md](PERF_ANALYSIS.md) | 321 | 測位ソルバの性能分析と上流最適化の結果 |
 | [SOURCE_POLICY.md](SOURCE_POLICY.md) | 126 | **資料の格付けと、犯した誤りの記録** |
-
-### 事前調査（Phase 0）
-| 文書 | 行 | 内容 |
-|---|---:|---|
-| [SURVEY_m5stamp_uwb_module.md](SURVEY_m5stamp_uwb_module.md) | 143 | モジュールのハードウェア仕様 |
-| [SURVEY_m5stamp_uwb_port.md](SURVEY_m5stamp_uwb_port.md) | 190 | Arduino → ESP-IDF 移植の対応表 |
-| [SURVEY_stampfly_grove.md](SURVEY_stampfly_grove.md) | 100 | StampFly の GROVE 端子と GPIO 空き状況 |
-| [SURVEY_stampfly_ecosystem.md](SURVEY_stampfly_ecosystem.md) | 123 | StampFly 側のソフト構成 |
-| [SURVEY_uwb_localizer.md](SURVEY_uwb_localizer.md) | 83 | 上流測位ライブラリの調査 |
 
 ### 引き継ぎ
 | 文書 | 行 | 内容 |
 |---|---:|---|
-| [HANDOFF.md](HANDOFF.md) | 234 | 次セッションへの申し送り |
+| [HANDOFF.md](HANDOFF.md) | 241 | 次セッションへの申し送り |
+
+---
+
+## アーカイブ（経緯）
+
+上記はすべて**現役の文書**です。それとは別に、[`archive/`](archive/) に
+**設計当時の調査・検討の記録**（経緯文書）を 8 本まとめてあります。
+プロジェクトの背景や「なぜ今の実装になったか」を追いたいときに読んでください。
+**現役文書と矛盾する場合は、常に現役文書が正しい。** 索引は [`archive/README.md`](archive/README.md)。
+
+| 文書 | 内容 |
+|---|---|
+| [archive/REIMPL_PLAN.md](archive/REIMPL_PLAN.md) | 移植元の課題一覧 R1〜R12 とその決着 |
+| [archive/CRITICAL_REVIEW.md](archive/CRITICAL_REVIEW.md) | 移植元コードの批判的レビュー |
+| [archive/SURVEY_m5stamp_uwb_module.md](archive/SURVEY_m5stamp_uwb_module.md) | モジュールのハードウェア仕様の事前調査 |
+| [archive/SURVEY_m5stamp_uwb_port.md](archive/SURVEY_m5stamp_uwb_port.md) | Arduino → ESP-IDF 移植の対応表 |
+| [archive/SURVEY_stampfly_grove.md](archive/SURVEY_stampfly_grove.md) | StampFly の GROVE 端子と GPIO 空き状況の事前調査 |
+| [archive/SURVEY_stampfly_ecosystem.md](archive/SURVEY_stampfly_ecosystem.md) | StampFly 側のソフト構成の事前調査 |
+| [archive/SURVEY_uwb_localizer.md](archive/SURVEY_uwb_localizer.md) | 上流測位ライブラリの調査 |
+| [archive/PROGRESS.md](archive/PROGRESS.md) | 開発進捗ログ（著者の作業記録） |
 
 ---
 
@@ -162,4 +174,4 @@ PLAN.md  →  各仕様書  →  REIMPL_PLAN.md / CRITICAL_REVIEW.md
 5. **`.gitignore` されているディレクトリ（`third_party/` / `docs/refs/`）へ
    Markdown リンクを張らない。** clone した人には切れる
 6. **訂正は消さずに残す。** 何を間違えたかが次の人の役に立つ
-   （[CRITICAL_REVIEW.md](CRITICAL_REVIEW.md) の訂正ボックスが例）
+   （[archive/CRITICAL_REVIEW.md](archive/CRITICAL_REVIEW.md) の訂正ボックスが例）

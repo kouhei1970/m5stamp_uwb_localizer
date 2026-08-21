@@ -4,7 +4,7 @@
  *
  * uwb_ranging_anchor_table.hpp / uwb_ranging_pipeline.hpp と異なり、本ファイルは
  * uwb::Qm33120（components/uwb_qm33120、ESP-IDF依存）を直接使う。ホストビルド
- * （tools/test_pipeline）はこのファイルをコンパイル対象に含めない。
+ * （tests/host/pipeline）はこのファイルをコンパイル対象に含めない。
  */
 #pragma once
 
@@ -15,7 +15,7 @@
 namespace uwb {
 
 /** 測距方式。DS-TWRの方が精度が良いがAnchor側で距離計算するため往復が増える
- *  （PROGRESS.md Phase 2 の申し送り参照）。SS-TWRはTag側で完結し軽い。 */
+ *  （docs/archive/PROGRESS.md Phase 2 の申し送り参照）。SS-TWRはTag側で完結し軽い。 */
 enum class RangingMethod {
     SS, //!< requestRange() / respondRange()
     DS, //!< requestDSRange() / respondDSRange()
