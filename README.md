@@ -7,7 +7,18 @@
 StampFly（マルチコプター機体）には依存しない汎用のスタックで、StampFly への統合は
 本リポジトリの成果物を使う下流の作業と位置づけています。
 
+> ただし**タグ側のハードウェア構成だけは、StampFly にそのまま載せられるよう互換性を意図的に維持**しています
+> （GROVE 2系統4本だけで動く ＝ IRQ / RST 無しのポーリングで成立する）。
+> **このリポジトリを単体で使う人が StampFly を用意する必要は一切ありません。**
+> 方針の詳細は [`docs/PLAN.md` §1](docs/PLAN.md) を参照。
+
 ---
+
+> **本文で使う主な略語**: **UWB**（Ultra-Wideband、超広帯域無線）／**FPC**（Flexible Printed
+> Circuit、フレキシブル基板）／**IRQ**（Interrupt ReQuest、割り込み要求）／**TWR**（Two-Way
+> Ranging、双方向測距）／**UUS**（UWB microsecond、1 UUS = 1.02564 µs。実マイクロ秒ではない）
+>
+> **UWB まわりの略語が分からないときは [`docs/GLOSSARY.md`](docs/GLOSSARY.md)（用語集）を引いてください。**
 
 ## ⚠️ 現状（先に読んでください）
 
@@ -245,8 +256,10 @@ firmware/tag ──┬─ uwb_ranging ─┬─ uwb_loc          （ハード非
 
 ## 開発計画・進捗
 
+- **用語集（略語の意味）**: [`docs/GLOSSARY.md`](docs/GLOSSARY.md)
 - **手順書**: [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md)
 - 設計方針・フェーズ計画: [`docs/PLAN.md`](docs/PLAN.md)
+- 単位（UUS / DTU）のリファレンス: [`docs/UNITS.md`](docs/UNITS.md)
 - 事前調査資料: [`docs/`](docs/) 配下の `SURVEY_*.md`
 - 進捗ログ: [`PROGRESS.md`](PROGRESS.md)
 - 既知の課題: [`docs/REIMPL_PLAN.md`](docs/REIMPL_PLAN.md) / [`docs/CRITICAL_REVIEW.md`](docs/CRITICAL_REVIEW.md)

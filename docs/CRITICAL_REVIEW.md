@@ -28,6 +28,8 @@ IRQ 不使用
           → 整合の取れていない受信ウィンドウ
 ```
 
+（**この「450」は誤り。§`responseTxDelayUus = 3000` の妥当性 の訂正ボックス参照**）
+
 **重要な所見: 「写した部品」は正確だった。壊れているのは「どう繋いだか」。**
 DS-TWR の式も、`DX_TIME` のビット操作も、タイムスタンプの読み出し順序も、
 Decawave のリファレンスを正確に写している。単純な計算式の誤りは**1件も無い**。
@@ -138,6 +140,7 @@ Tag のチップはそれを受信 → ペイロード不一致 → **欠陥【�
 
 `responseTxDelayUus = 3000` (=3,077µs) で **0.46 m/ppm**。
 **450 UUS に落とすだけで 0.069 m/ppm（6.7分の1）になる。**
+（**この「450」は誤り。§`responseTxDelayUus = 3000` の妥当性 の訂正ボックス参照**）
 
 *緩和材料*: `dwt_initialise()` が OTP から crystal trim を読んで適用する
 （`deca_device_api.h:1836` Note 2、`dw3720_device.c:1015-1021` で `XTRIM_ADDRESS` → `XTAL_ID` 確認）。
@@ -235,9 +238,27 @@ SDK はエラーを返さないので**発見が極めて困難な罠**。
 | RMARKER→終端 | 36 / 45 / 50 / 41 µs |
 
 ### `responseTxDelayUus = 3000` の妥当性
+
+> **【2026-08-21 訂正】以下の「450 UUS」は出典が確認できなかった。**
+> `docs/refs/qorvo_api/DW3XXX_API_rev9p3/API/Src/examples/` を `grep -a` で再確認したところ
+> （`.c` は非UTF-8 なので `grep -a` 必須。`docs/HANDOFF.md` 運用ルール3）、Qorvo 公式サンプルの
+> SS-TWR responder（`ex_06b_ss_twr_responder/ss_twr_responder.c:77`）は
+> `POLL_RX_TO_RESP_TX_DLY_UUS 650`、DS-TWR responder
+> （`ex_05b_ds_twr_resp/ds_twr_responder.c:85`）は `POLL_RX_TO_RESP_TX_DLY_UUS 900`
+> （同 :87 の `RESP_TX_TO_FINAL_RX_DLY_UUS` は `500`）であり、450 ではない。
+> `450` という数値自体は STS 版のサンプル（`ss_twr_responder_sts.c:75`）に
+> `(450 + CPU_PROCESSING_TIME)` として存在するが、非 STS 版（本節が参照している構成）には無い。
+>
+> **さらにこれらは名前に反して実マイクロ秒であって UUS ではない**（`docs/UNITS.md` §3）。
+> UUS に直すと `usToUus(650) = 634`、`usToUus(900) = 878`。
+>
+> したがって**本節の結論（3000 UUS は過剰）は変わらないが、比較対象の数値は 450 ではなく
+> 634〜878 UUS 相当である**。実際に採用したプリセット値は `docs/TIMING_PRESETS.md` §2 を参照。
+
 必要最小値 = フレーム尾部 36µs + ホスト折返し + SHR 138.4µs + マージン
 - **IRQ駆動 + 16MHz SPI なら**: 折返し 60〜150µs → **≈ 300〜400 UUS**
   （Decawave 公式 `ss_twr_responder` の **450 UUS** とほぼ一致）
+  （**この「450」は誤り。上の訂正ボックス参照**）
 - **現行の 1ms ポーリングでも**: 最悪 1.15ms → **≈ 1,320 UUS**
 
 **3,000 UUS は IRQ 実装に必要な値の 6.7倍、現行のポーリング実装に対してすら 2.3倍の過剰。**

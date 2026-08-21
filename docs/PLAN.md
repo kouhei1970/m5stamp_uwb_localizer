@@ -2,6 +2,12 @@
 
 ## 0. Phase 0 調査の結論
 
+> **本文で使う主な略語**: **UWB**（Ultra-Wideband、超広帯域無線）／**TWR**（Two-Way Ranging、双方向測距）／
+> **SS-TWR**（Single-Sided TWR、片側二方向測距）／**DS-TWR**（Double-Sided TWR、両側二方向測距）／
+> **I2C**（Inter-Integrated Circuit）／**SPI**（Serial Peripheral Interface）／
+> **GPIO**（General Purpose Input/Output、汎用入出力）／**IRQ**（Interrupt ReQuest、割り込み要求）。
+> 全一覧は `docs/GLOSSARY.md`。
+
 ### 実現可能性の判定
 | 論点 | 結論 |
 |---|---|
@@ -16,7 +22,7 @@
    → M5Stamp UWB Module 用のレンジング層は**まるごと新規**。ただしゼロからではなく
      **M5Stack 公式 Arduino ライブラリ (m5stack/M5Stamp-UWB, MIT + Qorvo SDK) を
      ESP-IDF へ移植**するのが現実解。
-2. **M5Stamp UWB Module のコネクタは GROVE ではなく 0.5mm 12P FPC。電源は 3.3V 単一。**
+2. **M5Stamp UWB Module のコネクタは GROVE ではなく 0.5mm 12P FPC（Flexible Printed Circuit、フレキシブル基板）。電源は 3.3V 単一。**
    GROVE(5V) から直接は挿さらない。**FPC→配線の変換と 5V→3.3V 降圧が必須。**
 3. StampFly の GROVE は**2系統ある**（赤=I2C G13/G15、黒=UART G1/G2）。
    どちらも内蔵バスと非共有・ファームウェア未使用。
@@ -25,8 +31,32 @@
 
 ## 1. 成果物の定義
 
-**本リポジトリは StampFly から独立した「UWB 測位一式」として完結させる。**
+**本リポジトリは StampFly から独立した「UWB（Ultra-Wideband、超広帯域無線）測位一式」として完結させる。**
 StampFly への統合はその成果物を利用する下流作業。
+
+### 方針: StampFly 非依存。ただし**タグのハードだけは StampFly 互換**に保つ（2026-08-21 ユーザ指示）
+
+この2つは矛盾しない。**独立**なのはソフトウェアと想定利用者、**互換**にするのはタグの配線である。
+
+| | 方針 |
+|---|---|
+| **想定利用者** | **このリポジトリを手元の ESP32-S3 + M5Stamp UWB Module で実際に試す人**。ドキュメントも実装もこの人に向けて書く。**StampFly を持っていることは前提にしない** |
+| **タグのハード** | **StampFly 互換を維持する**（意図的な制約）。本スタックの成果をそのまま StampFly の位置制御へ移植したいため（`docs/STAMPFLY_INTEGRATION.md` 案B-2） |
+| **アンカーのハード** | **この制約は無い**。据置きなので AtomS3(R) の IRQ を積極利用してよい（`docs/IRQ_POLICY.md`） |
+
+「タグのハードを StampFly 互換に保つ」の具体的な中身:
+
+1. **タグは GROVE 2系統4本 (G13/G15/G1/G2) だけで動くこと。** StampFly で外部に出せる
+   信号線はこれだけなので、これを超える配線を前提にした実装をタグ側に入れない
+   （`boards/stampfly.h`、`docs/STAMPFLY_INTEGRATION.md` §5.2）。
+2. **したがって IRQ（Interrupt ReQuest、割り込み要求）/ RST を必要としないポーリング経路を、常に第一級の実装として保つ**
+   （`docs/IRQ_POLICY.md`）。タグ単体構成の M5StampS3A では IRQ (G7) が取れるが、
+   **それを前提にした実装にはしない**。IRQ はあくまで「使えるなら使う」加点要素。
+3. **SPI（Serial Peripheral Interface）ホストは飛行系(SPI2_HOST)と分離できること**（`boards/stampfly.h` は SPI3_HOST）。
+
+**この制約があるからタグは 31 Hz 止まりで、アンカーだけ IRQ 化しても 59 Hz が上限になる**
+（`docs/TIMING_PRESETS.md`）。それでも StampFly の位置制御の実効帯域は約 0.064 Hz なので
+実用上の問題は無い、というのが `docs/STAMPFLY_INTEGRATION.md` §3.1 の結論である。
 
 ### 提供するもの
 | # | 成果物 | 内容 |
@@ -53,13 +83,13 @@ StampFly への統合はその成果物を利用する下流作業。
 - 上限は `uwb_loc` の `UWB_MAX_ANCHORS`（既定16）。RAM 節約のため8へ下げる余地あり
 - **1周で全アンカーから応答が返るとは限らない。有効な測距が4件以上あれば解く**という
   作りにする（欠測・タイムアウトを常態として扱う）。有効数が足りない周期は解を出さず
-  「測位不能」を返し、EKF(Lv3)側で予測のみ進める
+  「測位不能」を返し、EKF（Extended Kalman Filter、拡張カルマンフィルタ）(Lv3)側で予測のみ進める
 - 台数が多いほど:
   - 冗長性が上がり、**外れ値を棄却しても解が残る**（Lv2 の Huber/χ²ゲートが効かせられる。
     4台ちょうどだと1台弾いた時点で解けなくなるため、実質ゲートを効かせられない）
-  - GDOP が改善し、アンカー配置の自由度も上がる
+  - GDOP（Geometric Dilution of Precision、幾何学的精度低下率）が改善し、アンカー配置の自由度も上がる
   - **1周の所要時間が伸びる**（→ 更新レートとのトレードオフ。R6）
-- **更新レートの制約が最大の設計課題になる**: DS-TWR は1リンクあたり
+- **更新レートの制約が最大の設計課題になる**: DS-TWR（Double-Sided TWR、両側二方向測距）は1リンクあたり
   Poll→Resp→Final→(結果返送) の往復が必要で、それを5アンカー分**逐次**回す。
   原本サンプルの `RANGE_INTERVAL_MS = 200` をそのまま使うと1周1秒＝1Hz にしかならない。
   飛行制御に使うには全く足りないので、**1リンクあたりの所要時間の実測**と
@@ -182,7 +212,7 @@ GPIO に余裕があるので **SPI4線 + IRQ + RSTn をフル配線**して開�
 → **補強材料(調査5)**: M5Stack 公式ライブラリは `attachInterrupt` を一切使わない
   **完全ポーリング方式**（`dwt_readsysstatuslo()` ループ監視）。
   つまり **IRQ 線が無くても元の実装がそのまま動く**。案 A の最大の懸念が消えた。
-→ いずれも **5V→3.3V LDO（60mA 以上）を載せた小さな変換基板が必要**。
+→ いずれも **5V→3.3V LDO（Low Dropout regulator、低損失レギュレータ）（60mA 以上）を載せた小さな変換基板が必要**。
    FPC 12P → 配線の変換も同基板でやるのが素直。
 
 ### 電力
@@ -200,13 +230,13 @@ GPIO に余裕があるので **SPI4線 + IRQ + RSTn をフル配線**して開�
 - 併せて AtomS3 でも同じことを確認（ピン定義の差し替えだけで通ること）
 
 ### Phase 2: 単一リンクの測距
-- M5Stamp-UWB の PHY 設定・フレーム送受信・タイムスタンプ取得を移植
-- `uwb_twr`: SS-TWR → DS-TWR の状態機械
+- M5Stamp-UWB の PHY（physical layer、物理層）設定・フレーム送受信・タイムスタンプ取得を移植
+- `uwb_twr`: SS-TWR（Single-Sided TWR、片側二方向測距）→ DS-TWR の状態機械
 - **受入条件: 2台（タグ1 + アンカー1）で距離値が安定して出る**
 - **必要ハード: M5Stamp UWB Module ×2 + ホストボード ×2**
 
 ### Phase 3: アンテナ遅延キャリブレーション
-- 既知距離での遅延推定、値の NVS 保存
+- 既知距離での遅延推定、値の NVS（Non-Volatile Storage、ESP-IDF の不揮発設定ストレージ）保存
 - **受入条件: 既知距離 1m/3m/5m で誤差が仕様値（±0.14m）内に収まる**
 - ホスト側キャリブレーションツール（tools/）
 
@@ -239,7 +269,7 @@ GPIO に余裕があるので **SPI4線 + IRQ + RSTn をフル配線**して開�
 - 変換基板（FPC + LDO）の設計・製作
 - `sf_hal_uwb_qm33120` として C++ ラッパを作り stampfly_ecosystem へ
 - `tasks/uwb_task.cpp`、`sf_core/include/topics.hpp` に `Topic<UwbPosData, Queue, N>` 追加
-- `sf_estimator` / ESKF への供給
+- `sf_estimator` / ESKF（Error-State Kalman Filter、誤差状態カルマンフィルタ）への供給
 - **受入条件: 機体に載せて飛行中に位置が出る。GROVE 5V の電流も実測確認**
 
 ---

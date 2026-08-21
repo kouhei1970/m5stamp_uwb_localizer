@@ -1,5 +1,7 @@
 # ESP-IDF build artifacts
 build/
+# clangd のキャッシュ (firmware/*/.cache/)
+.cache/
 sdkconfig
 sdkconfig.old
 managed_components/
