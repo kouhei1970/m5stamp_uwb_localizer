@@ -89,6 +89,25 @@ struct Config {
     bool hard_reset_on_begin      = true; //!< toggle RESET before probing the UWB device (M5Stamp_UWBConfig.hard_reset_on_begin).
 
     /**
+     * @brief If true (default), Qm33120::init() calls dwt_softreset(1) followed by a
+     * bounded dwt_checkidlerc() wait immediately before dwt_initialise(), regardless of
+     * pin_rst / hard_reset_on_begin (see uwb_qm33120.cpp Qm33120::init(),
+     * docs/REVIEW_2026-08-21.md §1 M-2). Has no equivalent in the original
+     * M5Stamp_UWBConfig.
+     *
+     * Background (external field report, GOROman, XIAO ESP32-C6 + the official Arduino
+     * library, 6-wire wiring with RSTn not connected): on a cold boot dwt_configure()
+     * succeeds, but after an MCU-only reset (e.g. re-flashing) the UWB chip retains its
+     * previous internal state (e.g. still receiving) and the next dwt_configure() fails
+     * with CONFIG_FAILED, even though DEV_ID still reads back correctly (SPI itself is
+     * fine). Only a power cycle recovered it. Adding dwt_softreset(0); delay(2); right
+     * before dwt_initialise() fixed it. Set this to false only to skip the extra ~3ms
+     * softreset + IDLE_RC wait on every begin() once the target hardware is known not to
+     * need it.
+     */
+    bool soft_reset_on_begin = true;
+
+    /**
      * @brief If true, begin() does NOT call uwb_port_init() (or uwb_port_deinit()
      * in end()/on failure): it assumes another owner already initialized
      * uwb_port (e.g. a shared SPI bus set up once by platform bootstrap code).

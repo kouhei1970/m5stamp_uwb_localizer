@@ -510,6 +510,78 @@ bool Qm33120::init(const PhyConfig& phy)
 
     const PhyConfig resolvedPHY = resolvePHYConfig(phy);
 
+    // --- ソフトリセット + IDLE_RC 待ち (docs/REVIEW_2026-08-21.md §1 M-2) ---
+    // 背景（実機報告、GOROman氏、XIAO ESP32-C6 + 公式Arduinoライブラリ、RST未配線の
+    // 6本配線）: 冷間起動ではdwt_configure()が成功するが、MCUだけリセット（スケッチ
+    // 書き込み後の再起動）するとUWBチップが前回の状態（受信中など）を引きずり、
+    // 後続のdwt_configure()がCONFIG_FAILEDになる。DEV_IDは読める（=SPI通信自体は
+    // 生きている）ので、原因はチップ側の内部状態であって配線ではない。電源断でしか
+    // 復旧しない。dwt_initialise()の直前にdwt_softreset(0); delay(2);を入れると
+    // 解決した。レビューdocs/REVIEW_2026-08-21.md §1 M-2も同じ欠落を指摘している
+    // 「pin_rst==UNUSEDのときdwt_probe()成功直後にdwt_softreset(1)（slowレートで）
+    // → while(!dwt_checkidlerc())（タイムアウト付き）。pin_rst有りでもdwt_checkidlerc()
+    // 待ちは1行足す価値あり」。公式サンプル
+    // (docs/refs/qorvo_api/DW3XXX_API_rev9p3/API/Src/examples/ex_06a_ss_twr_initiator/
+    // ss_twr_initiator.c) も reset_DWIC() -> Sleep(2) -> while(!dwt_checkidlerc());
+    // -> dwt_initialise() の順で、ハードリセットの有無に関わらずIDLE_RC待ちを
+    // 行っている。これに倣い、pin_rst/hard_reset_on_beginの設定に関わらず常に行う
+    // （ハードリセットがあっても害はない）。Config::soft_reset_on_beginで無効化できる
+    // （既定true）。
+    if (_impl->config.soft_reset_on_begin) {
+        // dwt_softreset()の呼び出し規約: 「SPI rate must be <= 7MHz before a call to
+        // this function」（deca_device_api.h:2689、内部でFOSC/4クロックを使うため）。
+        // この時点でSPIはbegin()冒頭のuwb_port_spi_use_fast_rate(false)（cpp:418）
+        // 以降ずっとslowレート（Config::spi_slow_hz、既定2MHz）のままで、fastへの
+        // 切替はこのずっと後、直後のdwt_configure()が成功してから（下記）なので、
+        // ここではまだfastに切り替わっていない＝規約を満たしている。
+        // 引数1=セマフォもリセットする（DW3720/QM33xxxのみ有効。deca_device_api.h:2691）。
+        dwt_softreset(1);
+
+        // dwt_softreset()後にdwt_probe()の登録（ドライバ構造体選択）が無効に
+        // ならないか: deca_compat.c dwt_softreset()はdw3720_device.c
+        // ull_softreset()へ委譲し、そちらはAON設定クリア・SOFT_RST_ID/CLK_CTRL_ID
+        // へのSPIレジスタ書き込みだけを行い、ホスト側のdwchip_s構造体
+        // （dw->dwt_driver / dw->SPI / dw->wakeup_device_with_io。これらはprobe()の
+        // dwt_probe()呼び出しがdeca_compat.c dwt_probe()内で設定する）には一切
+        // 触れない。したがってbegin()がinit()より前に呼んだprobe()の登録は
+        // softresetで無効化されない。チップ側のPHY設定はどのみちこの直後の
+        // dwt_initialise()→dwt_configure()→dwt_configuretxrf()→アンテナ遅延→
+        // dwt_setinterrupt等で全部やり直すので、softresetでチップ側の状態が
+        // クリアされること自体は問題にならない。
+        //
+        // 待ち時間: SDKのull_softreset()内部でもdeca_sleep(2)を呼んでいる
+        // （dw3720_device.c、softreset後の「DW3720 needs 1.5ms to initialise」
+        // コメント付近）が、deca_sleep()（uwb_port.c）はvTaskDelay(pdMS_TO_TICKS(ms))を
+        // そのまま呼ぶだけで、tick境界をまたぐと実待ち時間が最短(ms-1)tickになる
+        // 既知の問題がある（docs/REVIEW_2026-08-21.md §1 M-1）。ここでの待ちは
+        // SDK内部のdeca_sleep(2)に追加してhost側でさらに保証を積み増すためのもので、
+        // M-1の修正案と同様に+1して「pdMS_TO_TICKS(2)+1」にすることでtick境界の
+        // 落とし穴を避ける。
+        vTaskDelay(pdMS_TO_TICKS(2) + 1);
+
+        // dwt_checkidlerc()が1を返すまで待つ（公式サンプルのwhile(!dwt_checkidlerc());
+        // に倣うが、無限ループにはしない）。1ms刻みで最大100ms待ち、それでも
+        // IDLE_RCに入らなければ初期化失敗として扱う。
+        bool idle_rc_ready = false;
+        for (int i = 0; i < 100; ++i) {
+            if (dwt_checkidlerc() != 0) {
+                idle_rc_ready = true;
+                break;
+            }
+            vTaskDelay(pdMS_TO_TICKS(1));
+        }
+        if (!idle_rc_ready) {
+            // 既存のError列挙の中でIDLE_RCタイムアウトに最も近いのはInitFailed
+            // （直後に呼ぶdwt_initialise()自体の失敗と同じ意味合い＝「チップが
+            // 初期化を受け付けられる状態に到達しなかった」）なので新規追加はせず
+            // これを使う。
+            ESP_LOGE(TAG, "init: device did not reach IDLE_RC after softreset (timed out after 100ms)");
+            _impl->initialized = false;
+            setError(Error::InitFailed);
+            return false;
+        }
+    }
+
     if (dwt_initialise(DWT_DW_INIT) != DWT_SUCCESS) {
         _impl->initialized = false;
         setError(Error::InitFailed);

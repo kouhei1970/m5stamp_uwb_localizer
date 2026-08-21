@@ -338,24 +338,29 @@ uint32_t uwb_port_spi_active_hz(void)
 
 void uwb_port_hard_reset(uint32_t reset_low_ms, uint32_t startup_ms)
 {
-    if (s_cfg.pin_rst == UWB_PORT_PIN_UNUSED) {
+    /* 【M-4】uwb_port_init() 前は s_cfg がゼロ初期化のままで pin_rst==0
+     * (有効な GPIO0 = strapping / ボタン) に化けるため、UNUSED 判定だけでは
+     * 防げない。uwb_port_irq_enable() と同じく s_initialized も見る。 */
+    if (!s_initialized || (s_cfg.pin_rst == UWB_PORT_PIN_UNUSED)) {
         vTaskDelay(pdMS_TO_TICKS(startup_ms));
         return;
     }
 
-    /* RSTn is meant to be released and pulled high externally, not actively
-     * driven high by the host: drive low for the pulse, then tri-state
-     * (input) again afterwards. */
-    gpio_set_direction(s_cfg.pin_rst, GPIO_MODE_OUTPUT);
+    /* 【M-5】RSTn はチップ内部の POR が H に駆動し、外部からは Low に引く
+     * だけでよい（QM33120W DS「Must not be pulled high by the external
+     * source」）。uwb_port_init() で open-drain 出力 + level 1 (= Hi-Z) に
+     * 固定してあるので、ここでは level を 0 → 1 と書くだけ。push-pull で
+     * 一瞬 H を駆動する旧来の順序（OUTPUT にしてから 0 を書く）を避ける。
+     * 公式 STM 実装 (port.c) も GPIO_MODE_OUTPUT_OD。 */
     gpio_set_level(s_cfg.pin_rst, 0);
     vTaskDelay(pdMS_TO_TICKS(reset_low_ms));
-    gpio_set_direction(s_cfg.pin_rst, GPIO_MODE_INPUT);
+    gpio_set_level(s_cfg.pin_rst, 1); /* open-drain: release = Hi-Z */
     vTaskDelay(pdMS_TO_TICKS(startup_ms));
 }
 
 void uwb_port_set_wakeup(bool level)
 {
-    if (s_cfg.pin_wakeup == UWB_PORT_PIN_UNUSED) {
+    if (!s_initialized || (s_cfg.pin_wakeup == UWB_PORT_PIN_UNUSED)) { /* 【M-4】 */
         return;
     }
     gpio_set_level(s_cfg.pin_wakeup, level ? 1 : 0);
@@ -371,6 +376,9 @@ int uwb_port_read_gp7(void)
 
 void uwb_port_wakeup_device_with_io(void)
 {
+    if (!s_initialized) { /* 【M-4】未初期化なら GPIO0 を叩かない */
+        return;
+    }
     if (s_cfg.pin_wakeup != UWB_PORT_PIN_UNUSED) {
         gpio_set_level(s_cfg.pin_wakeup, 1);
         vTaskDelay(pdMS_TO_TICKS(UWB_PORT_WAKEUP_PULSE_MS));
@@ -561,11 +569,17 @@ esp_err_t uwb_port_init(const uwb_port_config_t *cfg)
      * gpio_reset_pin()でGPIOマトリクスの残留ルーティングを確実に切ってから、
      * 素のGPIO出力として初期化する（詳細は uwb_spi_xfer() 直前のコメント参照）。 */
     gpio_reset_pin(s_cfg.pin_cs);
+    gpio_set_level(s_cfg.pin_cs, 1); /* idle high。OE を立てる前に level を書く (【M-5】CS の Low グリッチ回避) */
     gpio_set_direction(s_cfg.pin_cs, GPIO_MODE_OUTPUT);
-    gpio_set_level(s_cfg.pin_cs, 1); /* idle high */
 
     if (s_cfg.pin_rst != UWB_PORT_PIN_UNUSED) {
-        gpio_set_direction(s_cfg.pin_rst, GPIO_MODE_INPUT); /* tri-state, no active drive */
+        /* 【M-5】open-drain 出力 + level 1 = Hi-Z。内部プルアップ/ダウンも切る
+         * （RSTn は POR が H に駆動。外部から H に引いてはいけない）。リセット
+         * パルスは uwb_port_hard_reset() が level 0 → 1 で出す。 */
+        gpio_reset_pin(s_cfg.pin_rst);
+        gpio_set_pull_mode(s_cfg.pin_rst, GPIO_FLOATING);
+        gpio_set_level(s_cfg.pin_rst, 1);
+        gpio_set_direction(s_cfg.pin_rst, GPIO_MODE_OUTPUT_OD);
     }
     if (s_cfg.pin_wakeup != UWB_PORT_PIN_UNUSED) {
         gpio_set_direction(s_cfg.pin_wakeup, GPIO_MODE_OUTPUT);
