@@ -183,6 +183,8 @@
 ---
 
 ## 関連文書
+- `docs/UWB_PRIMER.md` — UWB 入門（原理。用語の背景が分かる）
+- `docs/UWB_ALGORITHMS.md` — 測位アルゴリズムの導出
 - `docs/UNITS.md` — UUS / DTU / 実 µs の単位リファレンス
 - `docs/TIMING_PRESETS.md` — 遅延プリセットとその導出
 - `docs/SOURCE_POLICY.md` — 資料の格付けと、過去の誤りの記録

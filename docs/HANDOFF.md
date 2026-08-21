@@ -31,7 +31,7 @@
 
 | リポジトリ | 場所 | 状態 |
 |---|---|---|
-| **m5stack_uwb**（本体） | `/Users/kouhei/tmp/github/m5stack_uwb` | **GitHub 公開済み** `kouhei1970/m5stack_uwb` (public)。全コミット push 済み |
+| **m5stamp_uwb_localizer**（本体） | `/Users/kouhei/tmp/github/m5stack_uwb` | **GitHub 公開済み** `kouhei1970/m5stamp_uwb_localizer` (public)。全コミット push 済み |
 | **uwb_localizer**（上流） | `/Users/kouhei/tmp/github/uwb_localizer` | ブランチ `perf/exploit-structure` を push 済み。**未マージ**。PR 未作成 |
 | stampfly_ecosystem | `third_party/stampfly_ecosystem` | 2026-08-19 の読み取り専用クローン。**書き込み禁止** |
 | M5Stamp-UWB / uwb_localizer 参照用 | `third_party/` | 読み取り専用 |
@@ -84,6 +84,9 @@ README.md                    購入者の入口
 docs/GETTING_STARTED.md      BOM から測位まで11章
 docs/HANDOFF.md              ← このファイル
 docs/GLOSSARY.md             用語集（略語の正式名称と意味）。分からない略語はここ
+docs/UWB_PRIMER.md           UWB 入門。なぜ電波で cm が測れるのか（最初に読む）
+docs/UWB_ALGORITHMS.md       測位アルゴリズムの導出（上流からの移植・改訂版）
+docs/EXPERIMENT_PLAN.md      実機到着後の実験計画とフラグ有効化の順序
 docs/SOURCE_POLICY.md        資料の格付けと、過去の誤りの記録
 docs/IRQ_POLICY.md           IRQ 方針（確定版）
 docs/UNITS.md                UUS/DTU/実µs の単位リファレンス（遅延値を触る前に必読）
