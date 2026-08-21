@@ -93,6 +93,14 @@
   ハーネス上で 10kΩ プルアップ（pin 6 ↔ pin 2）を入れて切り分けてください。
 - 配線が長い／ジャンパ線だと 16MHz で信号品質が問題になり得ます。
   疑わしければ `boards/*.h` の `spi_fast_hz` を 8MHz や 4MHz に落として切り分けます。
+  **ただし `firmware/probe` は `dwt_probe()`/`dwt_readdevid()` までしか行わず
+  `Qm33120::begin()` を呼ばないため、`spi_fast_hz` へは一度も切り替わらず
+  常に `spi_slow_hz`（既定 2MHz）のままです。** `spi_fast_hz` を変えても
+  `firmware/probe` の挙動は変わりません。16MHz での実挙動を切り分けたい
+  場合は `firmware/twr`（または `firmware/tag`/`firmware/anchor`）を使い、
+  `begin()` 成功時のログ `spi: slow=... Hz fast=... Hz active=... Hz`
+  （`components/uwb_qm33120/src/uwb_qm33120.cpp` `Qm33120::begin()`）で
+  `active` が `spi_fast_hz` と一致しているか確認してください。
 - **アンテナ側（pin 1 / pin 12 のある端。角が 2mm 面取りされている側）の端から
   3.5mm には金属・グランド・配線を置かないこと。**
   公式フットプリントに表裏とも銅箔禁止領域として定義されています
@@ -146,7 +154,7 @@ I (xxx) uwb_probe: L1 (periodic): raw DEV_ID = 0xDECA0314
 |---|---|
 | `0x00000000` が返る | MISO が繋がっていない / CS が効いていない / 電源が来ていない |
 | `0xFFFFFFFF` が返る | MISO がプルアップだけで浮いている / モジュール未給電 |
-| 値が毎回バラつく | 配線長・SPI クロック（`spi_fast_hz` を落とす）・GND の共通化 |
+| 値が毎回バラつく | 配線長・GND の共通化。`spi_fast_hz` は `firmware/probe` には効かない（上の「注意」参照）ので、SPI クロックを疑うなら `spi_slow_hz` を落とすか `firmware/twr` で `active` ログを見る |
 | L1 は OK だが L2 が失敗 | `dwt_probe()` 周り。SDK 側のリトライ・WAKEUP シーケンス。RSTn のプルアップを追加してみる |
 | 全く反応しない | 3.3V の実測、FPC コネクタの挿し込み／半田付けの浮き、ピン番号の照合 |
 | 隣の信号が連動して動く | （半田パッド時）ブリッジ。ピッチ 1.27mm なので 9-10-11-12 を重点確認 |
@@ -161,7 +169,9 @@ I (xxx) uwb_probe: L1 (periodic): raw DEV_ID = 0xDECA0314
 ## 確認できたら記録すること
 
 - 実際に使ったピン番号（`boards/*.h` を実配線に合わせて更新する）
-- 動作した `spi_fast_hz`（16MHz が通ったか）と、そのときの配線長
+- 実際に使った配線長。`spi_fast_hz`（16MHz）が通ったかは
+  `firmware/probe` では確認できない（上の「注意」参照）。`firmware/twr` の
+  `begin()` ログの `active` 値で記録すること
 - モジュールの消費電流
   （データシート値: スリープ 75.9µA / アンカー 5.23mA / タグ 58.0mA @3.3V）
 - **半田パッドの向き**（pin 1 の位置、基板シルクにピン番号の印刷があるか）

@@ -403,8 +403,19 @@ bool Qm33120::begin(const Config& config, const PhyConfig& phy)
     }
 
     // cpp:461: setSpiRate(spi_slow_hz) 相当。uwb_port_init() は直後を
-    // slowレート(s_spi_active = s_spi_slow)にして返すので、ここでの
-    // 明示的な呼び出しは不要（components/uwb_port/src/uwb_port.c 参照）。
+    // slowレート(s_spi_active = s_spi_slow)にして返すので厳密には不要だが、
+    // begin()を再度呼ぶ場合（port_already_initialized==trueで前回end()後の
+    // 再begin()、あるいはbegin()失敗後の再試行）の安全のため明示しておく。
+    // 【SPI高速化】fastレート(spi_fast_hz)への切替は、原理上はdwt_probe()の
+    // 前ではなくdwt_configure()成功後（init()内、cpp:502）まで待つ必要が
+    // ある（UM Table 4「Overview of main operational states」、
+    // docs/refs/DW3000_Family_User_Manual_wayback.txt:817-820「INIT_RC …
+    // Lowest power state with SPI access, but limited to 7 MHz」。
+    // dwt_probe()/dwt_initialise()はRCクロック状態(INIT_RC/IDLE_RC)で動作
+    // するため、ここで先にfastへ切り替えるのは危険側。dwt_configure()成功で
+    // IDLE_PLLに入ったことが確定してからinit()内でfastへ切り替える
+    // （下記、docs/REVIEW_2026-08-21.md §0 #2 / H-2 参照）。
+    uwb_port_spi_use_fast_rate(false);
 
     // cpp:463-467: hardReset()を条件付きで実行後、wakeupDeviceWithIoImpl()を
     // 無条件で1回呼ぶ。
@@ -429,6 +440,13 @@ bool Qm33120::begin(const Config& config, const PhyConfig& phy)
     if (!init(phy)) {
         return cleanupBeginFailure();
     }
+    // begin()成功時にSPIの実効レートを起動ログへ出す。init()内の
+    // dwt_configure()成功直後にuwb_port_spi_use_fast_rate(true)を呼んでいる
+    // ので、正常系ではactiveがspi_fast_hzと一致するはず（docs/REVIEW_2026-08-21.md
+    // §0 #2）。一致しない場合（uwb_port_spi_active_hz()==0はport_already_initialized==true
+    // で他所有者のuwb_portが未初期化のとき等）に気付けるよう、3値とも出す。
+    ESP_LOGI(TAG, "begin: spi: slow=%u Hz fast=%u Hz active=%u Hz", (unsigned)_impl->config.spi_slow_hz,
+             (unsigned)_impl->config.spi_fast_hz, (unsigned)uwb_port_spi_active_hz());
     return true;
 }
 
@@ -504,6 +522,16 @@ bool Qm33120::init(const PhyConfig& phy)
         setError(Error::ConfigFailed);
         return false;
     }
+
+    // 【SPI高速化】dwt_configure()成功=IDLE_PLLに入ったことが確定した直後に
+    // fastレート(spi_fast_hz)へ切り替える（begin()冒頭のuwb_port_spi_use_fast_rate(false)
+    // コメント、docs/REVIEW_2026-08-21.md §0 #2 / H-2 参照）。この呼び出し
+    // 以前は uwb_spi_setfastrate()（struct dwt_spi_s コールバック）を呼ぶ経路が
+    // 存在せず、SDK側もdwt_initialise()からは到達しない非標準I/F
+    // （dw3720_device.c init()/_init_no_chan()）でしか使っていなかったため、
+    // 常時spi_slow_hz(既定2MHz)のままだった。失敗時（この直前のreturn false）
+    // はslowのままにしておく。
+    uwb_port_spi_use_fast_rate(true);
 
     dwt_txconfig_t txConfig = toDwtTxConfig(resolvedPHY);
     dwt_configuretxrf(&txConfig);

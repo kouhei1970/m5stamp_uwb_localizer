@@ -174,10 +174,15 @@ static uwb::Config makeConfigFromBoard()
  *
  * **測位ループのタスクからしか使わない**（コンソールのタスクは触らない）ので
  * static にしてよい。スタックではなく .bss に置くのは、app_main のタスク
- * スタック（CONFIG_ESP_MAIN_TASK_STACK_SIZE、既定 3584 バイト）に 2KB の
- * 配列を 2 つ積むと、AnchorTable / PositioningPipeline（内部に uwb_ekf を
- * 持つ）と合わせて余裕が無くなるため。コンソール追加とは独立した安全側の
- * 変更で、出力される JSON の内容は従来と同一。
+ * スタック（CONFIG_ESP_MAIN_TASK_STACK_SIZE。ESP-IDF 既定は 3584 バイトだが、
+ * `firmware/tag/sdkconfig.defaults` で 12288 バイトに引き上げ済み。理由は
+ * 同ファイルのコメント参照 - EKF の `uwb_ekf_update()` → `uwb_ekf_predict()`
+ * 連鎖が 9x9 double 行列を複数スタックに置き、配列だけで約 3.5KB、
+ * Lv0/Lv2 経路も約 2KB 使うため、既定 3584 バイトでは溢れて panic リブート
+ * する。docs/REVIEW_2026-08-21.md §0 #3 参照）に 2KB の配列を 2 つ積むと、
+ * AnchorTable / PositioningPipeline（内部に uwb_ekf を持つ）と合わせて
+ * 余裕が心もとなくなるため、引き続き .bss に逃がしている。コンソール追加とは
+ * 独立した安全側の変更で、出力される JSON の内容は従来と同一。
  */
 static char g_jsonBuf[JSON_BUF_SIZE];
 
@@ -650,6 +655,23 @@ extern "C" void app_main(void)
         printMeasLine(t, table, samples, n);
         printFixLine(t, scheduler.lastCycleMs(), table, samples, n, lv0, lv2, haveLv3, lv3, timing, bootUs);
 
+        // 【スタック監視】最初の測位周期の終了時に1回、app_mainのタスク
+        // スタックのハイウォーターマーク（未使用の最小残量）を出す。
+        // CONFIG_ESP_MAIN_TASK_STACK_SIZE（sdkconfig.defaultsで12288に
+        // 設定済み。ここが3584バイトの既定のままだとEKF/Lv0/Lv2ソルバの
+        // 呼び出し連鎖でスタック溢れpanicリブートする。docs/REVIEW_2026-08-21.md
+        // §0 #3、main.cpp冒頭のg_jsonBufコメント参照）を実測で検証するため。
+        // JSON行の形式は変えない（文書化された出力を壊さない）ので、
+        // "type":"..."行としては出さず通常のESP_LOGIで出す。
+        // 単位: ESP-IDF の uxTaskGetStackHighWaterMark() は vanilla FreeRTOS と
+        // 違いワードではなく**バイト**で返す（~/esp/esp-idf/components/freertos/
+        // FreeRTOS-Kernel/include/freertos/task.h:1496,1509「in bytes (as
+        // opposed to words」）ので sizeof(StackType_t) を掛けてはいけない。
+        if (epochCount == 1) {
+            ESP_LOGI(TAG, "main task stack high-water mark: %u bytes free",
+                     (unsigned)uxTaskGetStackHighWaterMark(NULL));
+        }
+
         // タスクE: 約 CONFIG_UWB_TAG_STATS_INTERVAL_MS ごとに "type":"stats"
         // 行を出す。0 なら出さない（Kconfigのhelp参照）。
         if (CONFIG_UWB_TAG_STATS_INTERVAL_MS > 0) {
@@ -657,6 +679,10 @@ extern "C" void app_main(void)
             if ((nowUs - lastStatsUs) >= static_cast<int64_t>(CONFIG_UWB_TAG_STATS_INTERVAL_MS) * 1000) {
                 printStatsLine(t, table, scheduler, scheduler.lastCycleMs());
                 lastStatsUs = nowUs;
+                // 【スタック監視】stats行と同じタイミングでハイウォーター
+                // マークも出す（起動直後の1回は上のepochCount==1で既出）。
+                ESP_LOGI(TAG, "main task stack high-water mark: %u bytes free",
+                         (unsigned)uxTaskGetStackHighWaterMark(NULL));
             }
         }
 

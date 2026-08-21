@@ -1,6 +1,6 @@
 # ドキュメント索引
 
-26 本・約 9,000 行あります。**全部読む必要はありません。**
+27 本・約 9,000 行あります。**全部読む必要はありません。**
 下の「あなたはどれですか」から入ってください。
 
 ---
@@ -60,12 +60,14 @@ PLAN.md  →  各仕様書  →  REIMPL_PLAN.md / CRITICAL_REVIEW.md
 | [PERF_ANALYSIS.md](PERF_ANALYSIS.md) | 測位ソルバの性能分析 |
 | [REIMPL_PLAN.md](REIMPL_PLAN.md) | 移植元の課題一覧 R1〜R12 と、それぞれの決着 |
 | [CRITICAL_REVIEW.md](CRITICAL_REVIEW.md) | 移植元コードの批判的レビュー（**訂正ボックス入り**） |
+| [REVIEW_2026-08-21.md](REVIEW_2026-08-21.md) | 実機投入前の最終レビュー（2026-08-21）。Critical 1・High 6 を含む全指摘と根拠、対応状況、着手順 |
 
 ### 📋 D. 引き継ぐ / 続きをやる
 
 | 文書 | 何が分かるか |
 |---|---|
 | **[HANDOFF.md](HANDOFF.md)** | **最初に読む。** 現在地・確定事項・落とし穴・次の一手 |
+| [REVIEW_2026-08-21.md](REVIEW_2026-08-21.md) | 実機投入前の最終レビュー（2026-08-21）。Critical 1・High 6 を含む全指摘と根拠、対応状況、着手順 |
 | **[SOURCE_POLICY.md](SOURCE_POLICY.md)** | **資料の格付けと、これまでに犯した誤りの記録。** 同じ失敗を繰り返さないために |
 | [EXPERIMENT_PLAN.md](EXPERIMENT_PLAN.md) | 実機が来てからやること |
 
@@ -103,7 +105,7 @@ PLAN.md  →  各仕様書  →  REIMPL_PLAN.md / CRITICAL_REVIEW.md
 ### 実践
 | 文書 | 行 | 内容 |
 |---|---:|---|
-| [GETTING_STARTED.md](GETTING_STARTED.md) | 1191 | BOM から測位までの完全手順（11 章） |
+| [GETTING_STARTED.md](GETTING_STARTED.md) | 1193 | BOM から測位までの完全手順（11 章） |
 | [EXPERIMENT_PLAN.md](EXPERIMENT_PLAN.md) | 352 | 実機到着後の実験計画とフラグ有効化の順序 |
 | [PREBUILT_BINARIES.md](PREBUILT_BINARIES.md) | 154 | ビルド済みバイナリの入手と書き込み |
 | [BRINGUP.md](BRINGUP.md) | 179 | Phase 1（SPI 疎通）の受入確認 |
@@ -113,8 +115,8 @@ PLAN.md  →  各仕様書  →  REIMPL_PLAN.md / CRITICAL_REVIEW.md
 ### 設計・仕様
 | 文書 | 行 | 内容 |
 |---|---:|---|
-| [PLAN.md](PLAN.md) | 306 | 全体設計・フェーズ計画・**リポジトリの方針** |
-| [IRQ_POLICY.md](IRQ_POLICY.md) | 169 | IRQ の使用方針（確定版） |
+| [PLAN.md](PLAN.md) | 311 | 全体設計・フェーズ計画・**リポジトリの方針** |
+| [IRQ_POLICY.md](IRQ_POLICY.md) | 171 | IRQ の使用方針（確定版） |
 | [TIMING_PRESETS.md](TIMING_PRESETS.md) | 285 | 遅延プリセットの導出と版不一致検出 |
 | [SURVEY_SPEC.md](SURVEY_SPEC.md) | 307 | アンカー座標の自動測量の仕様 |
 | [STAMPFLY_INTEGRATION.md](STAMPFLY_INTEGRATION.md) | 1127 | StampFly 位置制御への統合検討 |
@@ -125,6 +127,7 @@ PLAN.md  →  各仕様書  →  REIMPL_PLAN.md / CRITICAL_REVIEW.md
 |---|---:|---|
 | [REIMPL_PLAN.md](REIMPL_PLAN.md) | 302 | 移植元の課題 R1〜R12 とその決着 |
 | [CRITICAL_REVIEW.md](CRITICAL_REVIEW.md) | 295 | 移植元コードの批判的レビュー |
+| [REVIEW_2026-08-21.md](REVIEW_2026-08-21.md) | 264 | 実機投入前の最終レビュー。Critical/High の指摘と対応状況、着手順 |
 | [PERF_ANALYSIS.md](PERF_ANALYSIS.md) | 320 | 測位ソルバの性能分析と上流最適化の結果 |
 | [SOURCE_POLICY.md](SOURCE_POLICY.md) | 126 | **資料の格付けと、犯した誤りの記録** |
 
@@ -140,7 +143,7 @@ PLAN.md  →  各仕様書  →  REIMPL_PLAN.md / CRITICAL_REVIEW.md
 ### 引き継ぎ
 | 文書 | 行 | 内容 |
 |---|---:|---|
-| [HANDOFF.md](HANDOFF.md) | 221 | 次セッションへの申し送り |
+| [HANDOFF.md](HANDOFF.md) | 234 | 次セッションへの申し送り |
 
 ---
 

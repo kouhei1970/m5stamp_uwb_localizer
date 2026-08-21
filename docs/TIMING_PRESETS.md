@@ -154,6 +154,16 @@ DWD はアンカーが Final を受信した直後に `DWT_START_TX_IMMEDIATE` �
 `BothIrq` で `finalRxAfterResponseTxDelayUus` を 500 UUS(513 µs) のまま使うと
 プリアンブル到達 521 µs に対して余裕が 8 µs しか無い。**だから 200 UUS に下げる。**
 
+**注意（PRETOC）**: 上の表はフレーム待ちタイムアウト（`rxTimeoutUus` /
+`dwt_setrxtimeout()`）だけを検算したものであり、プリアンブル検出タイムアウト
+（PRETOC、`dwt_setpreambledetecttimeout()`）は含んでいない。PRETOC は「RX が
+開放された時刻」を起点に走るタイマーで、上の表の「開く時刻」から「プリアンブル
+到達」までの時間より短いと必ず RXPTO で失敗する。本プリセット（DS-TWR）では
+PRETOC は無効（0）にしてある（`uwb_qm33120_twr.cpp:531, 841`。
+`docs/REVIEW_2026-08-21.md` §0 #1、`docs/REIMPL_PLAN.md` R9）。有効にする場合は、
+公式サンプルの値をそのまま持ち込むのではなく、上表の「開く時刻」から
+「プリアンブル到達」までの時間を PAC 単位に換算して設定する必要がある。
+
 1周（5アンカー、DS-TWR）の概算: poll 0.18 + R 0.9 + resp 0.18 + F 1.4 + final 0.18
 + 折返し 0.3 + DWD 0.18 ≈ **3.3 ms/台 → 5台で 16.6 ms ≈ 60 Hz**。
 `docs/IRQ_POLICY.md` の「アンカーのみ IRQ = 16.8 ms / 59.4 Hz」と一致する。

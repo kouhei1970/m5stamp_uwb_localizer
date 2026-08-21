@@ -80,7 +80,7 @@ struct Config {
     int pin_wakeup               = UWB_PORT_PIN_UNUSED; //!< optional WAKEUP pin.
     int pin_gp7                  = UWB_PORT_PIN_UNUSED; //!< optional DW_GP7 input pin.
     uint32_t spi_slow_hz         = 2000000;             //!< SPI speed used before/during probe (M5Stamp_UWBConfig.spi_slow_hz).
-    uint32_t spi_fast_hz         = 16000000;            //!< SPI speed switched to after dwt_probe()/dwt_initialise() (M5Stamp_UWBConfig.spi_fast_hz).
+    uint32_t spi_fast_hz         = 16000000;            //!< SPI speed switched to after dwt_configure() succeeds, not merely after dwt_probe()/dwt_initialise() (uwb_qm33120.cpp Qm33120::init(); see docs/REVIEW_2026-08-21.md §0 #2). (M5Stamp_UWBConfig.spi_fast_hz).
     bool init_spi_bus            = true;                //!< false => caller already ran spi_bus_initialize() on spi_host (uwb_port_config_t.init_spi_bus).
 
     /* --- Qm33120 固有（原本 M5Stamp_UWBConfig の残りのフィールドをそのまま踏襲） --- */

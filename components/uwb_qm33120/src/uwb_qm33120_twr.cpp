@@ -63,11 +63,27 @@
  *    （DW3000 UM §12.3、docs/refs/DW3000_Family_User_Manual_wayback.txt
  *    13998行「the typical clock induced error is in the low picosecond
  *    range even with 20 ppm crystals」）。詳細は requestRange() 内のコメント。
- *  - 【R9】dwt_setpreambledetecttimeout() を、公式DS-TWRサンプルが実際に
- *    使っている箇所・値（PRE_TIMEOUT=5）にだけ倣って requestDSRange()/
- *    respondDSRange() に追加した。SS-TWR（requestRange/respondRange）は
- *    公式 ex_06a/ex_06b が一度も使っていないため、既定の0（無効）のまま
- *    据え置いた（詳細は各関数のコメント）。
+ *  - 【R9】dwt_setpreambledetecttimeout() は当初、公式DS-TWRサンプルが
+ *    使っている値（PRE_TIMEOUT=5 PAC）にだけ倣って requestDSRange()/
+ *    respondDSRange() に追加していたが、これは移植ミスだった
+ *    （docs/REVIEW_2026-08-21.md §0 #1、docs/REIMPL_PLAN.md R9）。PRETOC
+ *    は「RXが開放された時刻」を起点に走り出すタイマーであり（SDK
+ *    components/qm33120w_sdk/deca_device_api.h:2368-2372「X ≥ 1 sets a
+ *    timeout equal to (X+1)*PAC」、UM
+ *    docs/refs/DW3000_Family_User_Manual_wayback.txt:8152-8158「The
+ *    preamble detection timeout starts running as soon as the receiver
+ *    is enabled to hunt for preamble」）、公式 ex_05a/ex_05b が5 PACで
+ *    動くのはRX開放直後（数µs後）に相手のプリアンブルが来るよう遅延を
+ *    調律しているため。本実装はRXを相手プリアンブル到達の0.3〜1.4ms前に
+ *    開ける設計（PollingBoth: タグはPoll送信後1500 UUSでRX開始、アンカー
+ *    のResponseは3000 UUS後、等）なので、6 PAC ≈ 49µs（PAC8時）のPRETOC
+ *    は必ずRXPTO（プリアンブル検出タイムアウト）を起こしDS-TWRが常に
+ *    失敗する。よって requestDSRange()/respondDSRange() とも0（無効）に
+ *    戻した。SS-TWR（requestRange/respondRange）はもともと0のまま
+ *    （公式ex_06a/ex_06bが一度も使っていないため）。PRETOCを使う場合は
+ *    「公式に倣って5」ではなく、RX開放時刻から相手のプリアンブル先頭が
+ *    届くまでの時間をPAC単位で計算して設定すること（詳細は各関数の
+ *    コメント）。
  *
  * --- IRQ（起床信号）対応 (docs/IRQ_POLICY.md、タスクC) ---
  * 4関数（requestRange/respondRange/requestDSRange/respondDSRange）すべての
@@ -521,14 +537,18 @@ DSRangeResult Qm33120::requestDSRange(const DSRangeConfig& range)
                                     pollPayload, sizeof(pollPayload));
 
     detail::stopRadioAndClearIoStatus();
-    // 【R9】プリアンブル検出タイムアウト(PAC単位)。一次資料:
-    // ex_05a_ds_twr_init/ds_twr_initiator.c:92,155 (PRE_TIMEOUT=5、
-    // dwt_setpreambledetecttimeout(PRE_TIMEOUT)をメインループの外で1回だけ
-    // 設定し、以後のResponse受信すべてに適用。grep -aで確認済み)。
-    // ここはDS-TWR initiatorのResponse待ちに対応するので同じ値を使う。
-    // SS-TWR側(requestRange/respondRange)は公式ex_06a/ex_06bが一度も
-    // 使っていないため0(無効)のまま据え置いている（本ファイル冒頭コメント）。
-    dwt_setpreambledetecttimeout(5);
+    // 【R9】プリアンブル検出タイムアウト(PAC単位)。0=無効。
+    // PRETOCはRXが開放された時刻を起点に走り出すタイマーであり（SDK
+    // deca_device_api.h:2368-2372「X ≥ 1 sets a timeout equal to
+    // (X+1)*PAC」、UM DW3000_Family_User_Manual_wayback.txt:8152-8158
+    // 「starts running as soon as the receiver is enabled to hunt for
+    // preamble」）、本実装はRXをAnchorのResponse送信予定より0.3〜1.4ms
+    // 早く開ける設計（PollingBoth: Poll送信後1500 UUSでRX開始）なので、
+    // 公式ex_05a_ds_twr_init/ds_twr_initiator.c:92,155のPRE_TIMEOUT=5
+    // （6 PAC≈49µs@PAC8）をそのまま設定すると必ずRXPTOで失敗する
+    // （本ファイル冒頭R9コメント参照）。PRETOCを使うならRX開放〜相手
+    // プリアンブル先頭到達までの時間をPAC単位で計算して設定すること。
+    dwt_setpreambledetecttimeout(0);
     dwt_setrxaftertxdelay(range.responseRxAfterTxDelayUus);
     dwt_setrxtimeout(range.rxTimeoutUus);
 
@@ -833,12 +853,14 @@ DSResponderResult Qm33120::respondDSRange(const DSRangeConfig& range)
     dwt_setdelayedtrxtime(respTxTime);
     dwt_setrxaftertxdelay(range.finalRxAfterResponseTxDelayUus);
     dwt_setrxtimeout(range.rxTimeoutUus);
-    // 【R9】一次資料: ex_05b_ds_twr_resp/ds_twr_responder.c:90,200-203
-    // (PRE_TIMEOUT=5をFinal待ち受け直前、dwt_setrxaftertxdelay/
-    // dwt_setrxtimeoutと同じ並びで設定。grep -aで確認済み)。
-    // Poll待ち（本関数冒頭、相手がいつ来るか分からない開放待ち）は
-    // ex_05bと同じく0のまま（本ファイル冒頭の該当行参照）。
-    dwt_setpreambledetecttimeout(5);
+    // 【R9】Final待ち受け直前のプリアンブル検出タイムアウト。0=無効。
+    // PRETOCはRXが開放された時刻を起点に走るタイマーであり（本ファイル
+    // 冒頭R9コメント参照）、本実装はRXをTagのFinal送信予定より早く開ける
+    // 設計（PollingBoth: Response送信後3000 UUSでRX開始）なので、公式
+    // ex_05b_ds_twr_resp/ds_twr_responder.c:90,200-203のPRE_TIMEOUT=5を
+    // そのまま設定すると必ずRXPTOで失敗する。Poll待ち（本関数冒頭、
+    // 相手がいつ来るか分からない開放待ち）も同じ理由で0のまま据え置く。
+    dwt_setpreambledetecttimeout(0);
     if (dwt_writetxdata(sizeof(respFrame), respFrame, 0) != DWT_SUCCESS) {
         detail::stopRadioAndClearIoStatus();
         result.error = Error::TxDataFailed;

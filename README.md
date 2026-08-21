@@ -20,7 +20,7 @@
 
 ## 📖 どこから読むか
 
-ドキュメントは 26 本あります。**全部読む必要はありません。**
+ドキュメントは 27 本あります。**全部読む必要はありません。**
 下から自分に合う入口を選んでください。索引は **[`docs/README.md`](docs/README.md)**。
 
 | あなたは | 入口 | その次 |
@@ -219,6 +219,7 @@ m5stamp_uwb_localizer/
 │   ├── PLAN.md              全体設計・フェーズ計画
 │   ├── REIMPL_PLAN.md       TWR 層の課題一覧（R1〜R12）
 │   ├── CRITICAL_REVIEW.md   移植元コードの問題点の詳細分析
+│   ├── REVIEW_2026-08-21.md 実機投入前の最終レビュー（2026-08-21）
 │   ├── PERF_ANALYSIS.md     測位ソルバの性能分析
 │   ├── PLATFORM_TUNING.md   ESP32-S3 固有の最適化調査
 │   └── SURVEY_*.md          事前調査資料
@@ -343,3 +344,4 @@ firmware/tag ──┬─ uwb_ranging ─┬─ uwb_loc          （ハード非
 | 進捗ログ | [`PROGRESS.md`](PROGRESS.md) |
 | 全体設計・フェーズ計画 | [`docs/PLAN.md`](docs/PLAN.md) |
 | 既知の課題 | [`docs/REIMPL_PLAN.md`](docs/REIMPL_PLAN.md) / [`docs/CRITICAL_REVIEW.md`](docs/CRITICAL_REVIEW.md) |
+| 最終レビュー（実機投入前） | [docs/REVIEW_2026-08-21.md](docs/REVIEW_2026-08-21.md) |

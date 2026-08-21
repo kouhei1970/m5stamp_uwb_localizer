@@ -49,8 +49,6 @@ static spi_device_handle_t s_spi_active = NULL;
 static uint8_t *s_tx_scratch = NULL;
 static uint8_t *s_rx_scratch = NULL;
 
-static portMUX_TYPE g_deca_mutex = portMUX_INITIALIZER_UNLOCKED;
-
 /* --- IRQ ("wakeup signal") state (docs/IRQ_POLICY.md) --- */
 static SemaphoreHandle_t s_irq_sem    = NULL;
 static bool s_irq_active              = false; /* uwb_port_irq_enable() に成功しているか */
@@ -70,16 +68,66 @@ void deca_usleep(unsigned long time_us)
     esp_rom_delay_us((uint32_t)time_us);
 }
 
+/* ------------------------------------------------------------------------
+ * decamutexon() / decamutexoff(): UWB IC の IRQ 線の禁止/復元
+ *
+ * (a) 契約: Qorvo SDK は「decamutexon/off は UWB IC の IRQ 線だけを禁止/
+ *     復元するためのもの」と規定している（
+ *     components/qm33120w_sdk/deca_device_api.h:3220-3223「at a minimum
+ *     those interrupts coming from the Decawave device should be
+ *     disabled/re-enabled by this activity」、:3231-3253
+ *     decaIrqStatus_t 定義・decamutexon()/decamutexoff() 宣言）。公式
+ *     nRF52840-DK 実装（docs/refs/qorvo_api/DW3XXX_API_rev9p3/API/
+ *     Build_Platforms/nRF52840-DK/Source/platform/deca_mutex.c:49-82）も
+ *     nrf_drv_gpiote_in_event_disable/enable(current_irq_pin) だけを行い、
+ *     全割り込み禁止の critical section は使っていない。
+ *
+ * (b) 旧実装（portENTER_CRITICAL(&g_deca_mutex)）が不正だった理由: SDK は
+ *     この区間内で SPI 転送（ブロッキング API）と ESP_LOGE を呼ぶ
+ *     （dw3720_device.c:5443-5473 ull_setinterrupt、レジスタ
+ *     read-modify-write を6回以上、:5832-5837 ull_forcetrxoff →
+ *     dwt_writefastCMD。後者は stopRadioAndClearRxStatus() 経由で
+ *     受信タイムアウトのたびに通る通常経路）。critical section 内で
+ *     spi_device_acquire_bus(..., portMAX_DELAY)（uwb_spi_xfer() 参照）が
+ *     ブロックすると、バス共有時（StampFly: BMI270/PMW3901 と
+ *     SPI2_HOST を共有）に割り込み禁止のままコンテキストスイッチ不能に
+ *     なりハングする。エラー経路の ESP_LOGE（stdout ロックを取る）も
+ *     同様に不正。
+ *
+ * (c) 本ポートの ISR（uwb_irq_isr_handler、本ファイル下方の IRQ 節）は
+ *     xSemaphoreGiveFromISR() だけを行い SPI やログを一切呼ばないため
+ *     （同節冒頭の「IRQ ("wakeup signal") support」コメント
+ *     参照）、そもそも decamutexon/off で ISR 実行を止める必要は無い。
+ *     以下の「UWB IC の IRQ 線だけを禁止」実装は SDK の契約を満たすための
+ *     保守的措置であり、実害の有無に関わらず入れておく。
+ *
+ * s_irq_active が false（IRQ 未使用、または pin_irq 未配線で
+ * gpio_isr_handler_add() 自体が呼ばれていない）ときは gpio_intr_disable/
+ * enable() を呼ばず 0 を返す。decamutexoff() の gpio_intr_enable() は
+ * uwb_port_irq_enable() が gpio_isr_handler_add() で有効化したのと同じ
+ * コアで有効化される: ESP-IDF v5.5.2 の gpio_intr_enable() は
+ * gpio_context.isr_core_id
+ * (~/esp/esp-idf/components/esp_driver_gpio/src/gpio.c:174-182) を使って
+ * enable するコアを決め、この isr_core_id は gpio_install_isr_service() が
+ * 最初に呼ばれたコアで確定する（同 gpio.c:624-625）。
+ * uwb_port_irq_enable() 内の gpio_isr_handler_add()（本ファイル:407 相当）
+ * も esp_intr_get_cpu() で同じコアに対し enable するため（同
+ * gpio.c:555-566）、decamutexoff() の gpio_intr_enable() と整合する。
+ * ------------------------------------------------------------------------ */
 decaIrqStatus_t decamutexon(void)
 {
-    portENTER_CRITICAL(&g_deca_mutex);
+    if (s_irq_active) {
+        gpio_intr_disable(s_cfg.pin_irq);
+        return 1;
+    }
     return 0;
 }
 
 void decamutexoff(decaIrqStatus_t s)
 {
-    (void)s;
-    portEXIT_CRITICAL(&g_deca_mutex);
+    if (s) {
+        gpio_intr_enable(s_cfg.pin_irq);
+    }
 }
 
 /* ------------------------------------------------------------------------
@@ -232,18 +280,22 @@ static int32_t uwb_spi_writetospiwithcrc(uint16_t headerLength, const uint8_t *h
     return uwb_spi_write_impl(headerLength, headerBuffer, bodyLength, bodyBuffer, &crc8);
 }
 
+/* uwb_port_spi_use_fast_rate() (uwb_port.h) が実体で、こちらは struct
+ * dwt_spi_s::setslowrate/setfastrate コールバックからそれを呼ぶだけの
+ * 薄いラッパ。SDK 内でこのコールバックが実際に呼ばれる経路は
+ * dw3720_device.c の非標準 I/F init()/_init_no_chan() のみで、
+ * dwt_initialise()（deca_compat.c）からは到達しない
+ * （docs/REVIEW_2026-08-21.md §0 #2）。標準の dwt_probe()+dwt_initialise()
+ * 経路（uwb_qm33120.cpp の Qm33120::begin()）を使う場合は
+ * uwb_port_spi_use_fast_rate() を明示的に呼ぶ必要がある。 */
 static void uwb_spi_setslowrate(void)
 {
-    if (s_spi_slow != NULL) {
-        s_spi_active = s_spi_slow;
-    }
+    uwb_port_spi_use_fast_rate(false);
 }
 
 static void uwb_spi_setfastrate(void)
 {
-    if (s_spi_fast != NULL) {
-        s_spi_active = s_spi_fast;
-    }
+    uwb_port_spi_use_fast_rate(true);
 }
 
 static struct dwt_spi_s s_dwt_spi = {
@@ -257,6 +309,27 @@ static struct dwt_spi_s s_dwt_spi = {
 struct dwt_spi_s *uwb_port_spi(void)
 {
     return &s_dwt_spi;
+}
+
+void uwb_port_spi_use_fast_rate(bool fast)
+{
+    if (fast) {
+        if (s_spi_fast != NULL) {
+            s_spi_active = s_spi_fast;
+        }
+    } else {
+        if (s_spi_slow != NULL) {
+            s_spi_active = s_spi_slow;
+        }
+    }
+}
+
+uint32_t uwb_port_spi_active_hz(void)
+{
+    if (!s_initialized || (s_spi_active == NULL)) {
+        return 0;
+    }
+    return (s_spi_active == s_spi_fast) ? s_cfg.spi_fast_hz : s_cfg.spi_slow_hz;
 }
 
 /* ------------------------------------------------------------------------

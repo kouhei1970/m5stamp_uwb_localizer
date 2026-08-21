@@ -36,7 +36,7 @@
 |---|---|---|
 | [§1.1](#11-距離-twr) 観測モデル（距離・TWR） | 残差とヤコビアン | `components/uwb_loc/src/uwb_model.c`（`uwb_evaluate()`）。測距そのものは `components/uwb_qm33120/src/uwb_qm33120_twr.cpp` の `requestRange()`（SS-TWR）/ `requestDSRange()`（DS-TWR） |
 | [§1.2](#12-距離差-tdoa) 距離差（TDoA） | 背景知識。**本リポジトリでは未使用** | — |
-| [§1.3](#13-方位角仰角-aoa--pdoa) 方位角・仰角（AoA/PDoA） | 背景知識。**本リポジトリでは未使用** | — |
+| [§1.3](#13-方位角・仰角-aoa--pdoa) 方位角・仰角（AoA/PDoA） | 背景知識。**本リポジトリでは未使用** | — |
 | [§2](#2-lv0--線形最小二乗-lls) Lv0 LLS | 線形最小二乗 | `components/uwb_loc/src/uwb_closed_form.c`（`uwb_lls_trilateration()`） |
 | [§3](#3-beck-の厳密解-gtrs--lv2-の初期解) Beck 厳密解（GTRS） | Lv2 の初期解 | `components/uwb_loc/src/uwb_closed_form.c`（`uwb_beck_gtrs()`） |
 | [§4](#4-lv1--重み付き非線形最小二乗-wnls) Lv1 WNLS | 重み付き非線形最小二乗 | `components/uwb_loc/src/uwb_nls.c`（`uwb_solve_lv1()`。**ただし本リポジトリの `SolverLevel` enum には非公開**。詳細は §4 冒頭の注記） |

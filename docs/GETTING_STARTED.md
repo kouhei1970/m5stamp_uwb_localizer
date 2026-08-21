@@ -332,6 +332,13 @@ AtomS3 は空き GPIO が実質 6 本しかないので、WAKEUP と GP7 は未�
   `spi_fast_hz` を **8000000 → 4000000** と落として切り分けます
   （`spi_slow_hz`（初期化時 2MHz）は変えない）。
 
+- **注意**: 次の[§4 `firmware/probe`](#probe) は `dwt_probe()`/`dwt_readdevid()`
+  までしか行わず `Qm33120::begin()` を呼ばないため、`spi_fast_hz` へは
+  一度も切り替わらず常に `spi_slow_hz`（2MHz）のままです。`spi_fast_hz` を
+  変えても `firmware/probe` の挙動は変わりません。16MHz での実挙動の
+  切り分けは [§5 `firmware/twr`](#twr)（または `firmware/tag`/`firmware/anchor`）
+  で行い、`begin()` 成功時のログ `spi: slow=... Hz fast=... Hz active=... Hz`
+  の `active` が `spi_fast_hz` と一致しているか確認してください。
 <a id="extra-parts"></a>
 
 ### 3.7 推奨: 外付け部品
@@ -421,7 +428,7 @@ I (xxx) uwb_probe: L1 (periodic): raw DEV_ID = 0xDECA0314
 |---|---|---|
 | `0x00000000` が返る | MISO (pin 7) 未接続 / CS (pin 10) が効いていない / 電源が来ていない | 3V3 パッドの電圧を実測。pin 7・10 の導通確認 |
 | `0xFFFFFFFF` が返る | MISO が浮いている / モジュール未給電 | 同上。**予備はんだが切り欠きに乗らず被覆越しに触っているだけ**のケースが多い |
-| 値が毎回バラつく | 配線長・SPI クロック・GND の戻り経路 | GND を pin 8 と pin 12 の 2 本にする → それでも駄目なら `spi_fast_hz` を 8MHz / 4MHz に落とす |
+| 値が毎回バラつく | 配線長・GND の戻り経路 | GND を pin 8 と pin 12 の 2 本にする。**`spi_fast_hz` は `firmware/probe` には効かない**（上の 3.6「配線長と信号品質」末尾の注意参照。`begin()` を呼ばないため常に `spi_slow_hz`=2MHz で動く）ので、SPI クロックを疑うなら `spi_slow_hz` を落とすか `firmware/twr` の `active` ログで切り分ける |
 | **触ると値が変わる** | パッド根元の剥がれ | 固定剤で補強してやり直す |
 | **隣の信号が連動する** | 半田ブリッジ | 拡大鏡で **9-10-11-12** を重点確認 |
 | L1 は OK だが L2 が FAIL | `dwt_probe()` 周り。WAKEUP シーケンス | RSTn のプルアップを追加してみる（[3.7](#extra-parts)） |
@@ -431,7 +438,9 @@ I (xxx) uwb_probe: L1 (periodic): raw DEV_ID = 0xDECA0314
 ### 4.4 通ったら記録する
 
 - 実際に使ったピン番号（`boards/*.h` を実配線に合わせて更新する）
-- 動作した `spi_fast_hz`（16MHz が通ったか）と、そのときの配線長
+- 実際に使った配線長。`spi_fast_hz`（16MHz）が通ったかは `firmware/probe`
+  では確認できない（4.3 の注意参照）。[§5 `firmware/twr`](#twr) の
+  `begin()` ログの `active` 値で記録すること
 - 3.3V 供給時の消費電流
   （データシート値: スリープ 75.9µA / アンカー 5.23mA / **タグ 58.0mA** @3.3V）
 
@@ -1092,6 +1101,10 @@ DW3720 の OTP アドレス `0x0B` は "Antenna Delay – RFLoop" とされて�
 4. **`lv0` と Lv2（トップレベル）を比べる。** 大きく食い違うなら座標系か配線の問題。
 5. **`spi_fast_hz` を 4MHz に落として再現するか見る。** 変わるなら配線品質の問題。
 
+   （この段階では `firmware/twr`/`tag`/`anchor` は `begin()` を通るので
+   `spi_fast_hz` が実際に効く。`begin()` ログの `active` 値で今何Hzで
+   動いているか確認できる。`firmware/probe` に戻って切り分ける場合は
+   4.3 の注意のとおり `spi_fast_hz` は効かないので注意。）
 ---
 
 <a id="limitations"></a>
@@ -1120,7 +1133,7 @@ DW3720 の OTP アドレス `0x0B` は "Antenna Delay – RFLoop" とされて�
 | **DW_RSTn のモジュール内プルアップの有無** | **未確認**（回路図が入手できていない）。現在の実装はプルアップがある前提 |
 | VCC_3V3 直近のバイパスコンデンサ | 未確認 |
 | `boards/*.h` のホスト側ピン番号 | **暫定値。** 現物のシルクと照合すること |
-| 16MHz SPI が実際に通るか | 未確認 |
+| 16MHz SPI が実際に通るか | **未確認**（実機未検証の意味で。`dwt_configure()` 成功後に `spi_fast_hz` へ切り替える実装自体は入っており、`begin()` 成功時のログ `active=...` で確認できる。`firmware/probe` は `begin()` を呼ばないのでこの検証には使えない） |
 
 ### 11.3 ソフトウェア側の既知の制約
 
@@ -1183,7 +1196,9 @@ DW3720 の OTP アドレス `0x0B` は "Antenna Delay – RFLoop" とされて�
 このプロジェクトは実機データを持っていません。以下が取れたら大きな前進です。
 
 - [ ] **半田パッドの向き**（pin 1 の位置、シルク印刷の有無）→ `docs/SOLDER_PADS.md` §5
-- [ ] 動作した `spi_fast_hz` と配線長
+- [ ] 動作した `spi_fast_hz` と配線長（`firmware/probe` は `begin()` を呼ばず
+      検証できないので、`firmware/twr`/`tag`/`anchor` の `begin()` ログの
+      `active` 値で確認すること）
 - [ ] **1 リンクの所要時間**（SS / DS それぞれ）
 - [ ] **`cycle_ms`**（アンカー 5 台での 1 周時間）
 - [ ] アンカーごとの測距成功率

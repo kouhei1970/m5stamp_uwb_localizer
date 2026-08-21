@@ -94,6 +94,35 @@ int uwb_port_read_gp7(void);
 struct dwt_spi_s *uwb_port_spi(void);
 
 /**
+ * @brief Explicitly switch the active SPI device between slow (spi_slow_hz)
+ * and fast (spi_fast_hz) rate.
+ *
+ * struct dwt_spi_s::setslowrate/setfastrate (see uwb_port_spi()) are only
+ * reachable from the small number of Qorvo SDK entry points that actually
+ * call them (dw3720_device.c init()/_init_no_chan() — the non-standard
+ * I/F, not dwt_initialise()/deca_compat.c). dwt_initialise() never switches
+ * rate on its own, so callers that go through the standard dwt_probe() +
+ * dwt_initialise() + dwt_configure() sequence (this port's Qm33120::begin())
+ * must call this function explicitly once it is safe to raise the clock
+ * (see uwb_qm33120_types.hpp Config::spi_fast_hz doc comment for the exact
+ * point in begin()).
+ *
+ * @param fast true: switch to spi_fast_hz (s_spi_fast). false: switch to
+ *             spi_slow_hz (s_spi_slow).
+ */
+void uwb_port_spi_use_fast_rate(bool fast);
+
+/**
+ * @brief Return the clock rate (Hz) of the currently active SPI device
+ * (s_spi_active), i.e. whichever of spi_slow_hz/spi_fast_hz is in effect
+ * after the most recent uwb_port_spi_use_fast_rate() call (or the
+ * slow-by-default state set by uwb_port_init()).
+ *
+ * @return Hz, or 0 if uwb_port_init() has not been called (not initialized).
+ */
+uint32_t uwb_port_spi_active_hz(void);
+
+/**
  * @brief Bare wakeup PULSE callback, matching the
  * `void (*wakeup_device_with_io)(void)` signature in struct dwt_probe_s /
  * struct dwchip_s. This is distinct from uwb_port_set_wakeup(bool): that

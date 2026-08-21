@@ -223,8 +223,23 @@ DS-TWR では**両側に遅延送信の締切がある**:
 ### 【R9】タイムアウトと保護の整備
 - `hostTimeoutMs = 100` はチップ側(3.08〜4.6ms)の**20〜30倍**。
   5アンカー × 100ms = **500ms のストール**。→ **10ms 程度**に
-- **`dwt_setpreambledetecttimeout(5)`（5 PAC）を設定** — 公式 DS-TWR 例の既定。
-  応答が来ないときの RX 電力浪費を防ぐ
+- ~~**`dwt_setpreambledetecttimeout(5)`（5 PAC）を設定** — 公式 DS-TWR 例の既定。
+  応答が来ないときの RX 電力浪費を防ぐ~~ →
+  **これは移植ミスだった（`docs/REVIEW_2026-08-21.md` §0 #1 / Critical で確認）。**
+  PRETOC は「RX が開放された時刻」を起点に走るタイマーであり（SDK
+  `deca_device_api.h:2368-2372`「X ≥ 1 sets a timeout equal to (X+1)*PAC」、
+  UM `docs/refs/DW3000_Family_User_Manual_wayback.txt:8152-8158`「The
+  preamble detection timeout starts running as soon as the receiver is
+  enabled to hunt for preamble」）、本実装は RX を相手プリアンブル到達の
+  0.3〜1.4ms 前に開ける設計（`PollingBoth`: タグは Poll 送信後 1500 UUS
+  で RX 開始、アンカーの Response は 3000 UUS 後）なので、5 PAC
+  （6 PAC ≈ 49µs @PAC8）の PRETOC は必ず RXPTO を起こし DS-TWR が
+  常に失敗する。公式 `ex_05a/ex_05b` が 5 PAC で動くのは RX 開放直後
+  （数µs後）にプリアンブルが来るよう遅延を調律しているためで、本実装の
+  遅延設計にはそのまま移植できない。`uwb_qm33120_twr.cpp:531, 841` は
+  `dwt_setpreambledetecttimeout(0)`（無効）に修正済み。PRETOC を有効化
+  したい場合は「公式に倣って5」ではなく、RX 開放時刻から相手プリアンブル
+  先頭到達までの時間を PAC 単位で計算して設定すること。
 - **HPDWARN (SYS_STATUS bit 27) を監視**し、立ったら `CMD_TXRXOFF` で中断（UM §8.2）。
   `EVC_HPW` カウンタ（要 `EVC_EN`）で遅延超過の頻度を定量化
 - **`dwt_starttx()` の戻り値で失敗したら交換を放棄して RX 待ちに戻る**（公式 NOTE 10/13）。

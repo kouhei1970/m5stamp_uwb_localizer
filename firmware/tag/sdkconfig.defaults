@@ -1,5 +1,12 @@
 CONFIG_IDF_TARGET="esp32s3"
 
+# --- メインタスクのスタック（重要）---
+# 測位ループは app_main のタスク上で回る（main.cpp）。uwb_loc の EKF は
+# uwb_ekf_update() -> uwb_ekf_predict() の連鎖で 9x9 double 行列を複数
+# スタックに置き（配列だけで約 3.5KB）、Lv0/Lv2 経路も約 2KB 使う。
+# ESP-IDF 既定の 3584 バイトでは溢れて panic リブートする。
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=12288
+
 # --- FreeRTOS tick = 1000Hz（重要）---
 # firmware/twr, firmware/anchor と同じ理由。requestRange()/requestDSRange() が
 # 内部で dwt_setdelayedtrxtime() による遅延送信を使うため、ESP-IDF既定の
