@@ -296,6 +296,16 @@ static int mds_init(survey_ctx *c, const uwb_real d[NMAX][NMAX], int *degenerate
  * ===================================================================== */
 
 /* 残差 f_k = |p_i - p_j| + 2*delta - r_k を作り、二乗和を返す。 */
+/* 【C の型規則】C には T(*)[N] から const T(*)[N] への暗黙変換が無い
+ * （C++ には有る）。非 const の配列を const 引数へ渡すと、GCC の
+ * -Wpedantic が "invalid use of pointers to arrays with different
+ * qualifiers in ISO C before C2X" を出す。本リポジトリの `make strict` は
+ * -Werror なのでビルドが落ちる（clang は許容するので macOS では気づけない。
+ * GitHub Actions の GCC ビルドで発覚した）。
+ * C2x で解消される規則だが、それまでは明示キャストで通す。 */
+#define UWB_SURVEY_CP3(p)  ((const uwb_real (*)[3])(p))
+#define UWB_SURVEY_CPN(d)  ((const uwb_real (*)[NMAX])(d))
+
 static uwb_real cost_at(const survey_ctx *c, const uwb_real p[NMAX][3],
                         uwb_real delay, uwb_real *f)
 {
@@ -400,7 +410,7 @@ static int lm_run(survey_ctx *c, uwb_real *f, int *iters, uwb_real *cost_out)
     int      it, a, i, t;
 
     *iters = 0;
-    cost   = cost_at(c, c->p, c->delay, f);
+    cost   = cost_at(c, UWB_SURVEY_CP3(c->p), c->delay, f);
     if (cost != cost) return 0;
 
     for (it = 0; it < UWB_SURVEY_MAX_ITER; ++it) {
@@ -410,7 +420,7 @@ static int lm_run(survey_ctx *c, uwb_real *f, int *iters, uwb_real *cost_out)
         while (lambda <= UWB_SURVEY_LM_MAX) {
             uwb_real ntry, dtry, s2 = (uwb_real)0;
 
-            build_normal(c, c->p, f, lambda, A, g, nx);
+            build_normal(c, UWB_SURVEY_CP3(c->p), f, lambda, A, g, nx);
             if (!uwb_survey_chol_solve(A, g, dx, nx)) { lambda *= (uwb_real)10; continue; }
             for (a = 0; a < nx; ++a) dx[a] = -dx[a];   /* A dx = -g */
 
@@ -420,7 +430,7 @@ static int lm_run(survey_ctx *c, uwb_real *f, int *iters, uwb_real *cost_out)
 
             /* 試行の残差は ftry に入れる。f は「現在の座標での残差」で
              * なければならない（次の build_normal が使う）。 */
-            ntry = cost_at(c, ptry, dtry, ftry);
+            ntry = cost_at(c, UWB_SURVEY_CP3(ptry), dtry, ftry);
             if (ntry == ntry && ntry < cost) {
                 for (a = 0; a < nx; ++a) s2 += dx[a] * dx[a];
                 step = ssqrt(s2);
@@ -445,7 +455,7 @@ static int lm_run(survey_ctx *c, uwb_real *f, int *iters, uwb_real *cost_out)
     }
 
     /* f を最終座標のものに戻しておく（外れ値判定と残差 RMS が使う） */
-    cost = cost_at(c, c->p, c->delay, f);
+    cost = cost_at(c, UWB_SURVEY_CP3(c->p), c->delay, f);
     if (cost != cost) return 0;
     for (i = 0; i < c->n; ++i)
         for (t = 0; t < 3; ++t)
@@ -832,7 +842,7 @@ int uwb_survey_solve(const uwb_survey_input *in, uwb_survey_result *out)
     if (!complete_distances(&c, d)) return 0;
 
     /* [2] 古典的 MDS */
-    if (!mds_init(&c, d, &degen)) return 0;
+    if (!mds_init(&c, UWB_SURVEY_CPN(d), &degen)) return 0;
     if (degen) {
         /* 縮退した配置は 3 次元の形が距離から決まらない。診断のため MDS の
          * 生座標だけ返して失敗にする（仕様書 §5「配置を変えるよう促す」）。 */
@@ -867,8 +877,8 @@ int uwb_survey_solve(const uwb_survey_input *in, uwb_survey_result *out)
         mirror[i][1] =  c.p[i][1];
         mirror[i][2] = -c.p[i][2];
     }
-    fit_up(c.p,    in->height, in->have_height, c.n, ua, &ca, &hrms_a);
-    fit_up(mirror, in->height, in->have_height, c.n, ub, &cb, &hrms_b);
+    fit_up(UWB_SURVEY_CP3(c.p),    in->height, in->have_height, c.n, ua, &ca, &hrms_a);
+    fit_up(UWB_SURVEY_CP3(mirror), in->height, in->have_height, c.n, ub, &cb, &hrms_b);
 
     /* 「有意差」のしきい値。理論上この2つは必ず一致するので、差はすべて
      * 丸め誤差である。したがって絶対項は **計算機イプシロン基準**にする

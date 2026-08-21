@@ -172,6 +172,12 @@ Web 取得は `WebFetch` / `curl` に限定し、サブエージェントにも�
 - **`uwb_localizer` の `perf/exploit-structure` をマージするか**
   → マージされたら `components/uwb_loc/` を再 vendoring（測位計算が3〜5倍速い）
   → `uwb_survey` の自前 Jacobi も上流の `uwb_sym_eig()` に寄せられる
+- **上流 `uwb_loc` が GCC の `-Werror=unused-but-set-variable` で落ちる**
+  （`components/uwb_loc/src/uwb_nls.c:342` の `wsum` が set-but-unused）。
+  **clang は通すので macOS では気づけない。GitHub Actions の GCC ビルドで発覚した。**
+  `components/uwb_loc/` は上流と byte 一致を保つ約束なのでこちらでは直せない。
+  → 上流へ報告する。CI では `tools/test_uwb_loc` の `strict` だけ対象外にしてある
+  （`test` の53件は実行している）
 - 上流の pytest 1件失敗（`test_self_survey_with_noise_and_missing_links[1]`）
   → テストの基準アンカーが同一平面。テスト側の問題
 - ~~デフォルトブランチが `master`。`main` に変えるか~~

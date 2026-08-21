@@ -33,9 +33,19 @@
 
 #include "deca_device_api.h"
 
+#include "uwb_qm33120_frame_match.hpp"
 #include "uwb_qm33120_types.hpp"
 
 namespace uwb::detail {
+
+/**
+ * @brief SDK側の FCS_LEN が、frame_match.hpp が複製した detail::kFcsLen と
+ * 今も一致していることのビルド時検算（docs/REIMPL_PLAN.md R2、G-2）。
+ * uwb_qm33120_frame_match.hpp はESP-IDF/Qorvo SDKに依存できないため
+ * kFcsLen=2を独立に持っている。SDK側 (`deca_device_api.h:236`) が変わったら
+ * ここでビルドが壊れて気づける。
+ */
+static_assert(detail::kFcsLen == FCS_LEN, "uwb::detail::kFcsLen (uwb_qm33120_frame_match.hpp) must match the SDK's FCS_LEN (deca_device_api.h)");
 
 /* ---------------------------------------------------------------------
  * millis() 相当。esp_timer_get_time() (単調・64bit・us単位) を ms に丸めて
@@ -105,14 +115,11 @@ static inline uint64_t readRxTimestamp64()
     return get40le(ts);
 }
 
-/* --- 短アドレス形式 IEEE 802.15.4 フレームの構築/解析（cpp:312-356） --- */
-
-static constexpr uint16_t kShortAddressHeaderLen = 9;
-
-static inline uint16_t shortAddressFrameLength(size_t payloadLength)
-{
-    return static_cast<uint16_t>(kShortAddressHeaderLen + payloadLength + FCS_LEN);
-}
+/* --- 短アドレス形式 IEEE 802.15.4 フレームの構築/解析（cpp:312-356） ---
+ * kShortAddressHeaderLen / shortAddressFrameLength() は
+ * uwb_qm33120_frame_match.hpp（ESP-IDF/Qorvo SDK非依存）に移した。
+ * uwb::detail 名前空間なので、以下のコードから見た参照先（表記）は変わらない。
+ */
 
 static inline void buildShortAddressFrame(uint8_t* frame, uint8_t sequence, uint16_t panId, uint16_t src,
                                            uint16_t dst, const uint8_t* payload, size_t payloadLength)
@@ -145,56 +152,9 @@ static inline bool parseShortAddressFrame(const uint8_t* frame, uint16_t frameLe
     return true;
 }
 
-static inline bool payloadMatches(const uint8_t* frame, uint16_t frameLen, const char* payload, size_t prefixLength,
-                                   size_t expectedPayloadLength)
-{
-    return (frame != nullptr) && (payload != nullptr) && (prefixLength <= expectedPayloadLength) &&
-           (frameLen == shortAddressFrameLength(expectedPayloadLength)) &&
-           (memcmp(&frame[kShortAddressHeaderLen], payload, prefixLength) == 0);
-}
-
-/**
- * @brief 期待するペイロード長が2通りあるときの照合（docs/TIMING_PRESETS.md §3、
- * タスクC-1）。新旧フレームの両対応: 版情報を持たない旧ファームのフレーム
- * （payload長 lenLegacy）と、末尾に版/種別2バイトを追加した新フレーム
- * （payload長 lenTagged）のどちらでも受理する。関数コード（prefixLength分の
- * 先頭バイト）はどちらの長さでも同じ位置・同じ内容を要求する。
- *
- * 【payloadMatches()は書き換えない】ホスト側検算（tools/test_pipeline）や
- * 既存呼び出し箇所が依存する既存の純関数のため、そのまま2回呼ぶだけに留める。
- */
-static inline bool payloadMatchesEither(const uint8_t* frame, uint16_t frameLen, const char* payload,
-                                         size_t prefixLength, size_t lenLegacy, size_t lenTagged)
-{
-    return payloadMatches(frame, frameLen, payload, prefixLength, lenLegacy) ||
-           payloadMatches(frame, frameLen, payload, prefixLength, lenTagged);
-}
-
-/**
- * @brief 拡張ペイロード末尾2バイト（kTimingPresetVersion / TimingProfile の
- * raw値）を読む（docs/TIMING_PRESETS.md §3.1、タスクC-1）。
- *
- * lenTagged (= lenLegacy+2、Poll/Responseどちらも常に+2バイト固定。
- * docs/TIMING_PRESETS.md §3.2 の表参照) の長さのフレームだけを対象にする。
- * 呼び出し側は payloadMatchesEither() で長さ・関数コードの一致を確認した
- * 「直後」に呼ぶ想定（uwb_qm33120_twr.cpp 参照）だが、本関数自身も frameLen
- * を見て安全側に倒す: lenTagged 相当でなければ version/profile を書き換えず
- * false を返す。
- *
- * @return 拡張されている(=lenTagged長)なら true。旧版(lenLegacy長)、または
- * それ以外の長さなら false（version/profileは未変更のまま）。
- */
-static inline bool readTimingTag(const uint8_t* frame, uint16_t frameLen, size_t lenLegacy, uint8_t& version,
-                                  uint8_t& profile)
-{
-    const size_t lenTagged = lenLegacy + 2;
-    if ((frame == nullptr) || (frameLen != shortAddressFrameLength(lenTagged))) {
-        return false;
-    }
-    version = frame[kShortAddressHeaderLen + lenLegacy];
-    profile = frame[kShortAddressHeaderLen + lenLegacy + 1];
-    return true;
-}
+/* payloadMatches() / payloadMatchesEither() / readTimingTag() も
+ * uwb_qm33120_frame_match.hpp に移した（同じ理由・同じ uwb::detail
+ * 名前空間）。呼び出し側からの見え方・シグネチャは変わらない。 */
 
 /* --- ステータス→エラー変換、無線停止＋ステータスクリア（cpp:358-386） --- */
 

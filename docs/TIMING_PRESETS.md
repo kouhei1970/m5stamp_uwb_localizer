@@ -271,7 +271,7 @@ endchoice
 | 不一致を1回だけ警告するための状態 | `Qm33120::Impl::warned_peers[8]` / `warned_count` | `components/uwb_qm33120/src/uwb_qm33120_impl.hpp` |
 | Kconfig（3アプリ共通） | `choice UWB_TIMING_PROFILE`（`UWB_TIMING_PROFILE_POLLING_BOTH` / `_ANCHOR_IRQ` / `_BOTH_IRQ`） | `firmware/{anchor,tag,twr}/main/Kconfig.projbuild` |
 | 起動時ログ・§4(b)の起動時チェック | `timingProfileName()`/`timingProfileNeedsAnchorIrq()`/`timingProfileNeedsTagIrq()` を使った `ESP_LOGI`/`ESP_LOGW` | `firmware/{anchor,tag,twr}/main/main.cpp` の `app_main()` |
-| プリセット表・締切式・往復のホスト検算 | シナリオ13〜17（177件中の一部。旧132件から+45） | `tools/test_pipeline/test_pipeline.cpp` |
+| プリセット表・締切式・往復のホスト検算 | シナリオ13〜17（188件中の一部。旧132件から+56） | `tools/test_pipeline/test_pipeline.cpp` |
 
 **既知の制約（実機未検証）**: 本ドキュメントの数値導出と同じく、実機での検証はまだ済んでいない。
 `PollingBoth` は現在の既定値と数値上完全に一致するため実装前後で挙動は変わらないが、
