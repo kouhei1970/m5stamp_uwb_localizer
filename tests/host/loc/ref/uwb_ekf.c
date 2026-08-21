@@ -1,3 +1,4 @@
+/* 参照実装: 上流 uwb_localizer 凍結版 (本リポジトリ commit 4298c08 時点の components/uwb_loc) をそのまま写したもの。回帰テスト test_regress.c の比較対象であり、本体 (components/uwb_loc) の変更はここに反映しない。 */
 /* 密結合 EKF (Lv3)。Python 版 uwb_loc/solvers/ekf.py に対応する。
  *
  * 「密結合」= 位置に直したものではなく**測距値そのもの**で更新する。
@@ -5,9 +6,11 @@
  * 球面 1 枚では位置が決まらないので dim+2 本たまるのを待つ)。
  *
  * 更新はスカラー逐次。S がスカラーなので**行列の逆行列が要らない**。
- * P の更新は対称 rank-1 ダウンデート P −= u uᵀ/s (uwb_symn_rank1_downdate)。
  */
 #include "uwb_internal.h"
+#include "uwb_linalg.h"
+
+#include <math.h>
 
 static uwb_real absr(uwb_real v) { return v < 0 ? -v : v; }
 
@@ -56,34 +59,35 @@ void uwb_ekf_reset(uwb_ekf *e)
  * j < i は常にゼロ)。これは積分器の連鎖 (dt^(j-i)/(j-i)!) という遷移の
  * 作り方そのものから来る性質で、uwb_ekf_predict() の in-place 更新はこの前提が
  * 成り立つことに依存している。将来遷移モデルを変えるときはこの性質を
- * 壊さないこと (壊すなら predict 側も作業配列を使う実装に戻す必要がある)。
- *
- * k は 2 (CV) か 3 (CA) しか無いので、分数はすべて定数倍で書く (除算 0)。 */
+ * 壊さないこと (壊すなら predict 側も作業配列を使う実装に戻す必要がある)。 */
 static void transition(const uwb_ekf *e, uwb_real dt, uwb_real *f1, uwb_real *q1)
 {
     int k = e->norder;
-    uwb_real s2 = e->sigma_a * e->sigma_a;
-    uwb_real d2 = dt * dt, d3 = d2 * dt;
+    int i, j;
 
-    if (k == 2) {
-        f1[0] = (uwb_real)1; f1[1] = dt;
-        f1[2] = (uwb_real)0; f1[3] = (uwb_real)1;
-        q1[0] = d3 * (uwb_real)(1.0 / 3.0) * s2;  q1[1] = d2 * (uwb_real)0.5 * s2;
-        q1[2] = q1[1];                            q1[3] = dt * s2;
-    } else {
-        uwb_real d4 = d3 * dt, d5 = d4 * dt;
-        f1[0] = (uwb_real)1; f1[1] = dt;          f1[2] = d2 * (uwb_real)0.5;
-        f1[3] = (uwb_real)0; f1[4] = (uwb_real)1; f1[5] = dt;
-        f1[6] = (uwb_real)0; f1[7] = (uwb_real)0; f1[8] = (uwb_real)1;
-        q1[0] = d5 * (uwb_real)0.05 * s2;         /* d5/20 */
-        q1[1] = d4 * (uwb_real)0.125 * s2;        /* d4/8  */
-        q1[2] = d3 * (uwb_real)(1.0 / 6.0) * s2;  /* d3/6  */
-        q1[3] = q1[1];
-        q1[4] = d3 * (uwb_real)(1.0 / 3.0) * s2;  /* d3/3  */
-        q1[5] = d2 * (uwb_real)0.5 * s2;          /* d2/2  */
-        q1[6] = q1[2];
-        q1[7] = q1[5];
-        q1[8] = dt * s2;
+    for (i = 0; i < k * k; ++i) { f1[i] = (uwb_real)0; q1[i] = (uwb_real)0; }
+    for (i = 0; i < k; ++i) f1[i * k + i] = (uwb_real)1;
+    /* dt^(j-i)/(j-i)! */
+    for (i = 0; i < k; ++i) {
+        uwb_real term = (uwb_real)1;
+        for (j = i + 1; j < k; ++j) {
+            term *= dt / (uwb_real)(j - i);
+            f1[i * k + j] = term;
+        }
+    }
+
+    {
+        uwb_real s2 = e->sigma_a * e->sigma_a;
+        uwb_real d2 = dt * dt, d3 = d2 * dt, d4 = d3 * dt, d5 = d4 * dt;
+        if (k == 2) {
+            q1[0] = d3 / (uwb_real)3; q1[1] = d2 / (uwb_real)2;
+            q1[2] = d2 / (uwb_real)2; q1[3] = dt;
+        } else {
+            q1[0] = d5 / (uwb_real)20; q1[1] = d4 / (uwb_real)8;  q1[2] = d3 / (uwb_real)6;
+            q1[3] = d4 / (uwb_real)8;  q1[4] = d3 / (uwb_real)3;  q1[5] = d2 / (uwb_real)2;
+            q1[6] = d3 / (uwb_real)6;  q1[7] = d2 / (uwb_real)2;  q1[8] = dt;
+        }
+        for (i = 0; i < k * k; ++i) q1[i] *= s2;
     }
 }
 
@@ -227,6 +231,7 @@ static int bootstrap(uwb_ekf *e, uwb_real t, const uwb_meas *meas, int n)
             uwb_real v = (uwb_real)1;
             int e2 = 2 - order;
             for (k = 0; k < e2; ++k) v *= (uwb_real)10;
+            for (k = 0; k < e2; ++k) { }
             if (e2 < 0) v = (uwb_real)1;
             for (i = 0; i < e->nd; ++i) {
                 int r = order * e->nd + i;
@@ -278,7 +283,7 @@ static void diagnostics(uwb_ekf *e, const uwb_meas *meas, int n,
     out->n_total = n;
     out->iterations = 1;
     out->ambiguous = e->ambiguous;
-    out->residual_rms = cnt > 0 ? uwb_math_sqrt(num / (uwb_real)cnt) : (uwb_real)-1;
+    out->residual_rms = cnt > 0 ? (uwb_real)sqrt((double)(num / (uwb_real)cnt)) : (uwb_real)-1;
     out->gdop = cnt > 0 ? uwb_gdop_from_jac(e->cfg, jac, cnt) : (uwb_real)-1;
     out->excluded = excluded;
     uwb_fix_finish(out);
@@ -287,15 +292,10 @@ static void diagnostics(uwb_ekf *e, const uwb_meas *meas, int n,
 int uwb_ekf_update(uwb_ekf *e, uwb_real t, const uwb_meas *meas, int n, uwb_fix *out)
 {
     unsigned long excluded = 0UL;
-    uwb_real gate2;
-    int nx, i, n_used = 0;
+    int nx = e->nx, i, n_used = 0;
 
     uwb_fix_failed(out, n);
     if (!e || !e->cfg || !meas) return 0;
-    nx = e->nx;
-    /* イノベーションゲート: |res| > gate·sqrt(s) を平方根なしで res² > gate·|gate|·s
-     * と比べる (gate < 0 なら右辺が負になり、旧実装と同じく常に棄却)。 */
-    gate2 = e->gate * absr(e->gate);
 
     /* 遅れて届いた観測 (時刻の巻き戻り) は捨てる */
     if (e->has_t && t < e->t - (uwb_real)1e-9) {
@@ -324,43 +324,69 @@ int uwb_ekf_update(uwb_ekf *e, uwb_real t, const uwb_meas *meas, int n, uwb_fix 
 
     for (i = 0; i < n; ++i) {
         uwb_real p[3], res, j3[3], sg;
-        uwb_real u[UWB_MAX_STATE];
-        uwb_real s, inv_s, gain;
+        uwb_real h[UWB_MAX_STATE], u[UWB_MAX_STATE], w[UWB_MAX_STATE];
+        uwb_real kg[UWB_MAX_STATE], v[UWB_MAX_STATE];
+        uwb_real s, r, q;
         int a, b;
 
         if (!uwb_meas_usable(e->cfg, &meas[i])) continue;
         ekf_position(e, p);
         uwb_evaluate(e->cfg, p, &meas[i], &res, j3, &sg);
 
-        /* h の非ゼロは先頭 nd 個 (= j3) だけ。
-         * u = P h。P は対称 (上三角を更新して鏡映する) なので hᵀP = uᵀ。 */
+        /* h の非ゼロは先頭 nd 個だけ。後段で読むのもその範囲だけなので
+         * 末尾のゼロ埋めは不要 (旧実装は tmp[a][b] 経由で h[nd..nx) を
+         * 読んでいたが、Joseph 展開を消した新実装では触れない)。 */
+        for (a = 0; a < e->nd; ++a) h[a] = j3[a];
+
+        /* u = P h、w = h^T P。P は毎回対称化しているので数学的には
+         * u == w のはずだが、対称性に依存せず両方を素直に計算する
+         * (h の非ゼロが nd 個だけなので、コストはどちらも nx*nd で同じ)。 */
         for (a = 0; a < nx; ++a) {
-            uwb_real su = (uwb_real)0;
-            for (b = 0; b < e->nd; ++b) su += e->P[a * nx + b] * j3[b];
-            u[a] = su;
+            uwb_real su = (uwb_real)0, sw = (uwb_real)0;
+            for (b = 0; b < e->nd; ++b) {
+                su += e->P[a * nx + b] * h[b];
+                sw += h[b] * e->P[b * nx + a];
+            }
+            u[a] = su; w[a] = sw;
         }
-        s = sg * sg;
-        for (a = 0; a < e->nd; ++a) s += j3[a] * u[a];
+        r = sg * sg;
+        s = r;
+        for (a = 0; a < e->nd; ++a) s += h[a] * u[a];
 
         if (!(s > (uwb_real)0) || s != s) {
             if (i < 32) excluded |= (1UL << i);
             continue;
         }
         /* イノベーションゲート。外れ値を状態に入れない */
-        if (res * res > gate2 * s) {
+        if (absr(res) > e->gate * (uwb_real)sqrt((double)s)) {
             if (i < 32) excluded |= (1UL << i);
             continue;
         }
 
-        /* K = u/s。x += K·res。除算は 1/s の 1 回だけ。 */
-        inv_s = (uwb_real)1 / s;
-        gain = res * inv_s;
-        for (a = 0; a < nx; ++a) e->x[a] += u[a] * gain;
+        for (a = 0; a < nx; ++a) kg[a] = u[a] / s;
+        for (a = 0; a < nx; ++a) e->x[a] += kg[a] * res;
 
-        /* Joseph 形式 (I−Khᵀ)P(I−Khᵀ)ᵀ + KRKᵀ は、P が対称なら厳密に
-         * P − K uᵀ = P − u uᵀ/s に潰れる (w = u、v = u − K(s−R) = RK のため)。
-         * 対称な rank-1 ダウンデートとして上三角だけ計算し鏡映する。 */
-        uwb_symn_rank1_downdate(e->P, nx, u, inv_s);
+        /* Joseph 形式 P <- (I-Kh^T) P (I-Kh^T)^T + K R K^T を
+         * h の非ゼロがランク1であることを使って展開すると
+         *   P[a][b] <- P[a][b] - K[a]*w[b] - v[a]*K[b] + R*K[a]*K[b]
+         *   v[a] := u[a] - K[a]*(s-R)   ( = ((I-Kh^T)P h)[a] の閉じた形 )
+         * になる。nx x nx の作業行列 (tmp, m1) が不要になり、O(nx^3) が
+         * O(nx^2) に落ちる (導出は OPT_SPEC.md 最適化 A を参照)。 */
+        q = s - r;
+        for (a = 0; a < nx; ++a) v[a] = u[a] - kg[a] * q;
+
+        for (a = 0; a < nx; ++a)
+            for (b = 0; b < nx; ++b)
+                e->P[a * nx + b] = e->P[a * nx + b]
+                                  - kg[a] * w[b] - v[a] * kg[b]
+                                  + r * kg[a] * kg[b];
+        /* 対称化。丸めで崩れるのを毎回直す */
+        for (a = 0; a < nx; ++a)
+            for (b = a + 1; b < nx; ++b) {
+                uwb_real avg = (uwb_real)0.5 * (e->P[a * nx + b] + e->P[b * nx + a]);
+                e->P[a * nx + b] = avg;
+                e->P[b * nx + a] = avg;
+            }
         ++n_used;
     }
 

@@ -7,7 +7,9 @@
 ## 0. 次セッションの任務
 
 > **実機検証の前に [`docs/REVIEW_2026-08-21.md`](REVIEW_2026-08-21.md) §0 の表を読むこと。**
-> #5〜#7（測量の同一平面検出・外れ値棄却、Release のライセンス同梱）は未対応。
+> #5（測量の同一平面検出 × アンテナ遅延）は同日夕方のリファクタで対応済み。**#6（外れ値リンク棄却）と #7（Release のライセンス同梱）は未対応。**
+>
+> **2026-08-21 夕方: 上流 `uwb_localizer` を凍結して独立し、線形代数を `components/uwb_math/`（スカラー展開）に一本化した。** `uwb_loc` / `uwb_survey` から一般 LU / Jacobi / 汎用コレスキーは消えている。設計根拠と実施状況は `docs/MATH_AUDIT_2026-08-21.md`。ホストテストは `make -C tests test strict float`（loc 77 + 新旧回帰 59 万 / math 3439 / pipeline 188 / survey 365）。float は clang だけでなく **gcc-16 と `-ffp-contract=off` でも**通すこと（FMA 縮約に助けられて clang だけ通る事故があった）。次は float 既定化（`CONFIG_UWB_LOC_USE_FLOAT`）の判断と実機 `soltest`。
 
 > 前セッション（2026-08-21）で、**§5 の「すぐ着手できる」項目 A〜F はすべて完了した。**
 > 残っているのは**実機を要する検証**と、下の 5 / 6 である。

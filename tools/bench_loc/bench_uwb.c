@@ -33,6 +33,7 @@
 #define _DARWIN_C_SOURCE
 
 #include "uwb_loc.h"
+#include "uwb_internal.h"   /* uwb_gdop_from_jac (内部関数) を直接計る */
 
 #include <math.h>
 #include <stdio.h>
@@ -285,6 +286,64 @@ static void bench_ekf_update(uwb_motion motion, const char *mlabel, int n)
     record("uwb_ekf_update", cond, BENCH_REPS, t1 - t0);
 }
 
+/* ------------------------------------------------- coplanar / GDOP */
+
+/* uwb_anchors_coplanar は毎 fix の鏡像処理 (uwb_resolve_mirror) から呼ばれる。
+ * 設定時キャッシュが効く経路 (cached) と、キャッシュを無効にして毎回
+ * 3x3 固有値を計算する経路 (nocache) を分けて計る。 */
+static void bench_coplanar(int n, int use_cache)
+{
+    uwb_config cfg;
+    uwb_real   nrm[3], off;
+    char       cond[32];
+    double     t0, t1;
+    long       i;
+
+    uwb_config_init(&cfg, ANCHORS, n);
+#ifdef UWB_MATH_H
+    if (!use_cache) cfg.plane.valid = 0;   /* 新実装: キャッシュを無効化 */
+#else
+    if (use_cache) return;                  /* 旧実装にキャッシュは無い */
+#endif
+
+    t0 = now_sec();
+    for (i = 0; i < BENCH_REPS; ++i) {
+        int c = uwb_anchors_coplanar(&cfg, nrm, &off);
+        g_sink += (double)c + (double)nrm[0];
+    }
+    t1 = now_sec();
+
+    snprintf(cond, sizeof cond, "N=%d %s", n, use_cache ? "cached" : "nocache");
+    record("uwb_anchors_coplanar", cond, BENCH_REPS, t1 - t0);
+}
+
+/* uwb_gdop_from_jac: 単位ベクトル N 本から (HᵀH)⁻¹ のトレース。 */
+static void bench_gdop(int n)
+{
+    uwb_config cfg;
+    uwb_real   jac[8 * 3];
+    char       cond[32];
+    double     t0, t1;
+    long       i;
+    int        k, a;
+
+    uwb_config_init(&cfg, ANCHORS, n);
+    for (a = 0; a < n; ++a) {
+        double d = dist3(TRUTH, ANCHORS[a].p);
+        for (k = 0; k < 3; ++k)
+            jac[a * 3 + k] = (uwb_real)(((double)TRUTH[k] - (double)ANCHORS[a].p[k]) / d);
+    }
+
+    t0 = now_sec();
+    for (i = 0; i < BENCH_REPS; ++i) {
+        g_sink += (double)uwb_gdop_from_jac(&cfg, jac, n);
+    }
+    t1 = now_sec();
+
+    snprintf(cond, sizeof cond, "N=%d", n);
+    record("uwb_gdop_from_jac", cond, BENCH_REPS, t1 - t0);
+}
+
 /* ------------------------------------------------------------------ 出力 */
 
 /* 相対比は「同じ関数名の中で最初に出てきた行 (=最小のアンカー台数、
@@ -336,6 +395,10 @@ int main(void)
 
     for (i = 0; i < N_COUNTS; ++i) bench_ekf_update(UWB_MOTION_CV, "CV(nx=6)", ANCHOR_COUNTS[i]);
     for (i = 0; i < N_COUNTS; ++i) bench_ekf_update(UWB_MOTION_CA, "CA(nx=9)", ANCHOR_COUNTS[i]);
+
+    for (i = 0; i < N_COUNTS; ++i) bench_coplanar(ANCHOR_COUNTS[i], 0);
+    for (i = 0; i < N_COUNTS; ++i) bench_coplanar(ANCHOR_COUNTS[i], 1);
+    for (i = 0; i < N_COUNTS; ++i) bench_gdop(ANCHOR_COUNTS[i]);
 
     tsv = fopen("bench_result.tsv", "w");
     if (!tsv) fprintf(stderr, "警告: bench_result.tsv を書けなかった (カレントディレクトリを確認)\n");

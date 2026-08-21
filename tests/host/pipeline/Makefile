@@ -34,6 +34,7 @@ LDLIBS    = -lm
 
 ROOT         = ../../..
 UWB_LOC_DIR  = $(ROOT)/components/uwb_loc
+UWB_MATH_DIR = $(ROOT)/components/uwb_math
 RANGING_DIR  = $(ROOT)/components/uwb_ranging
 QM33120_DIR  = $(ROOT)/components/uwb_qm33120
 CFGSTORE_DIR = $(ROOT)/components/uwb_cfgstore
@@ -42,14 +43,16 @@ CFGSTORE_DIR = $(ROOT)/components/uwb_cfgstore
 ANCHORS8_DEFS = -DUWB_MAX_ANCHORS=8 -DUWB_MAX_MEAS=8
 DEFS ?= $(ANCHORS8_DEFS)
 
-INCLUDES = -I$(UWB_LOC_DIR)/include -I$(UWB_LOC_DIR)/src -I$(RANGING_DIR)/include \
-           -I$(QM33120_DIR)/include -I$(CFGSTORE_DIR)/include
+INCLUDES = -I$(UWB_LOC_DIR)/include -I$(UWB_LOC_DIR)/src -I$(UWB_MATH_DIR)/include \
+           -I$(RANGING_DIR)/include -I$(QM33120_DIR)/include -I$(CFGSTORE_DIR)/include
 
-C_SRC = $(UWB_LOC_DIR)/src/uwb_linalg.c \
-        $(UWB_LOC_DIR)/src/uwb_model.c \
+# uwb_loc の線形代数は components/uwb_math (uwb_loc.h が uwb_math.h を include
+# する) に移ったので、その .c も一緒にビルドする。
+C_SRC = $(UWB_LOC_DIR)/src/uwb_model.c \
         $(UWB_LOC_DIR)/src/uwb_closed_form.c \
         $(UWB_LOC_DIR)/src/uwb_nls.c \
-        $(UWB_LOC_DIR)/src/uwb_ekf.c
+        $(UWB_LOC_DIR)/src/uwb_ekf.c \
+        $(UWB_MATH_DIR)/src/uwb_math.c
 
 CXX_SRC = $(RANGING_DIR)/src/uwb_ranging_anchor_table.cpp \
           $(RANGING_DIR)/src/uwb_ranging_pipeline.cpp
@@ -61,7 +64,7 @@ CXX_SRC = $(RANGING_DIR)/src/uwb_ranging_anchor_table.cpp \
 CFGSTORE_SRC = $(CFGSTORE_DIR)/src/uwb_cfgstore_blob.cpp
 
 BUILD = build
-C_OBJ   = $(patsubst $(UWB_LOC_DIR)/src/%.c,$(BUILD)/%.o,$(C_SRC))
+C_OBJ   = $(patsubst %.c,$(BUILD)/%.o,$(notdir $(C_SRC)))
 CXX_OBJ = $(patsubst $(RANGING_DIR)/src/%.cpp,$(BUILD)/%.o,$(CXX_SRC))
 CFGSTORE_OBJ = $(patsubst $(CFGSTORE_DIR)/src/%.cpp,$(BUILD)/%.o,$(CFGSTORE_SRC))
 TEST_OBJ = $(BUILD)/test_pipeline.o
@@ -75,6 +78,9 @@ $(BUILD):
 	mkdir -p $(BUILD)
 
 $(BUILD)/%.o: $(UWB_LOC_DIR)/src/%.c | $(BUILD)
+	$(CC) $(CFLAGS) $(WARN_C) $(DEFS) $(INCLUDES) -std=c99 -c $< -o $@
+
+$(BUILD)/%.o: $(UWB_MATH_DIR)/src/%.c | $(BUILD)
 	$(CC) $(CFLAGS) $(WARN_C) $(DEFS) $(INCLUDES) -std=c99 -c $< -o $@
 
 $(BUILD)/%.o: $(RANGING_DIR)/src/%.cpp | $(BUILD)

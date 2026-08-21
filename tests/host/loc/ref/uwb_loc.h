@@ -1,3 +1,4 @@
+/* 参照実装: 上流 uwb_localizer 凍結版 (本リポジトリ commit 4298c08 時点の components/uwb_loc) をそのまま写したもの。回帰テスト test_regress.c の比較対象であり、本体 (components/uwb_loc) の変更はここに反映しない。 */
 /* uwb_loc — チップ非依存の UWB 測位ライブラリ (C 版)
  *
  * Python 版 (uwb_loc) の測位部分だけを C99 に移したもの。マイコンで動かす
@@ -37,33 +38,21 @@
 #ifndef UWB_LOC_H
 #define UWB_LOC_H
 
-/* 小次元の線形代数 (components/uwb_math)。uwb_real の定義もここと共有する。 */
-#include "uwb_math.h"
-
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /* ------------------------------------------------------------------ 設定 */
 
-/* 実数型。既定は double。-DUWB_USE_FLOAT で float になる (RAM/ROM 節約。
- * Beck 法・共分散とも単精度で通るよう eps に比例したしきい値で書いてあるが、
- * まず double で動かしてから切り替えること)。
- * uwb_math.h が先に定義していればそれを使う (UWB_REAL_DEFINED ガード)。 */
-#ifndef UWB_REAL_DEFINED
-#define UWB_REAL_DEFINED 1
+/* 実数型。既定は double。-DUWB_USE_FLOAT で float になる (RAM/ROM 節約、
+ * ただし Beck 法の二分法と共分散の桁落ちに弱くなるので、まず double で
+ * 動かしてから切り替えること)。 */
 #ifdef UWB_USE_FLOAT
 typedef float uwb_real;
-#else
-typedef double uwb_real;
-#endif
-#endif
-#ifndef UWB_REAL_IS_FLOAT
-#ifdef UWB_USE_FLOAT
 #define UWB_REAL_IS_FLOAT 1
 #else
+typedef double uwb_real;
 #define UWB_REAL_IS_FLOAT 0
-#endif
 #endif
 
 /* 同時に扱えるアンカー数と 1 エポックの観測数。静的に確保するので、
@@ -104,24 +93,6 @@ typedef struct {
     uwb_real quality; /**< 0-1 の信頼度。負なら「不明」。低いと sigma を膨らませる */
 } uwb_meas;
 
-/** アンカー配置だけで決まる派生値 (同一平面判定) のキャッシュ。
- *  `uwb_config_init` / `uwb_config_refresh` が埋める。**直接触らない。**
- *
- *  同一平面判定 (uwb_anchors_coplanar) は毎 fix の鏡像処理から呼ばれるが、
- *  結果はアンカーの (enabled, 座標) だけで決まるので設定時に 1 回計算して
- *  持つ。使うときは作成時に写した (enabled, 座標) を現在のアンカー配列と
- *  比べて一致したときだけ使うので、呼び出し側がアンカーを書き換えたあと
- *  refresh を忘れても結果は正しい (毎回計算し直すだけで遅くなる)。 */
-typedef struct {
-    int           valid;                      /**< 1 なら以下が有効 */
-    int           n;                          /**< 写した台数 (= n_anchors) */
-    unsigned char enabled[UWB_MAX_ANCHORS];   /**< 写し: enabled != 0 */
-    uwb_real      p[UWB_MAX_ANCHORS][3];      /**< 写し: 座標 (enabled のものだけ意味を持つ) */
-    int           coplanar;                   /**< 判定結果 */
-    uwb_real      normal[3];                  /**< 平面の単位法線 (coplanar のとき) */
-    uwb_real      offset;                     /**< 平面 n·p = offset (coplanar のとき) */
-} uwb_plane_cache;
-
 /** 測位の設定。`uwb_config_init` で初期化してから必要な項目を変える。 */
 typedef struct {
     const uwb_anchor *anchors;
@@ -147,9 +118,6 @@ typedef struct {
                             *   Python 版の既定と同じ値になる */
     int      physical_gate;/**< 1 なら距離の妥当性と三角不等式で足切り */
     uwb_real max_range;    /**< 物理ゲートの上限 [m]。既定 200 */
-
-    /* 派生値 (init / refresh が埋める。直接触らない) */
-    uwb_plane_cache plane;
 } uwb_config;
 
 /** 測位結果。 */
@@ -175,16 +143,8 @@ typedef struct {
 
 /* ------------------------------------------------------------------ 設定 */
 
-/** 設定を既定値で埋める。anchors は呼び出し側が保持し続けること。
- *  アンカー配置の派生値 (同一平面判定) もここで計算する。 */
+/** 設定を既定値で埋める。anchors は呼び出し側が保持し続けること。 */
 void uwb_config_init(uwb_config *cfg, const uwb_anchor *anchors, int n_anchors);
-
-/** `uwb_config_init` の後でアンカーの座標や enabled を書き換えたら呼ぶ。
- *  アンカー配置だけで決まる派生値 (同一平面判定のキャッシュ) を作り直す。
- *  呼び忘れても結果は正しい (キャッシュが現在の配列と合わないと判断して
- *  毎回計算し直すだけ)。n_anchors が UWB_MAX_ANCHORS を超える配列では
- *  キャッシュは作られない (常に計算し直す)。 */
-void uwb_config_refresh(uwb_config *cfg);
 
 /** ID からアンカーの添字を引く。見つからなければ -1。 */
 int uwb_anchor_index(const uwb_config *cfg, const char *id);

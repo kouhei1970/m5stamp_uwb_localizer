@@ -16,7 +16,7 @@
 #include <string.h>
 
 #include "uwb_survey.h"
-#include "uwb_survey_dense.h"
+
 
 static int g_run  = 0;
 static int g_fail = 0;
@@ -251,7 +251,7 @@ static void scenario1_exact(void)
 static void noise_case(int n, double sigma_d, double sigma_h, unsigned int seed, int trials)
 {
     double worst = 0.0, sum_rms = 0.0, worst_delay = 0.0, worst_shape = 0.0;
-    int    t, nfail = 0;
+    int    t, nfail = 0, ndegen = 0;
     rng_t  rng;
 
     rng_seed(&rng, seed);
@@ -264,7 +264,10 @@ static void noise_case(int n, double sigma_d, double sigma_h, unsigned int seed,
         add_dist_noise(&in, n, sigma_d, &rng);
         if (sigma_h > 0.0) add_height_noise(&in, n, sigma_h, &rng);
 
-        if (!uwb_survey_solve(&in, &out) || !out.ok) { ++nfail; continue; }
+        if (!uwb_survey_solve(&in, &out) || !out.ok) {
+            if (out.degenerate) ++ndegen; else ++nfail;
+            continue;
+        }
         e = max_pos_err(&out, n);
         if (e > worst) worst = e;
         sum_rms += rms_pos_err(&out, n);
@@ -275,10 +278,18 @@ static void noise_case(int n, double sigma_d, double sigma_h, unsigned int seed,
     }
 
     printf("    n=%d sigma_d=%.0fcm sigma_h=%.0fcm x%d回: "
-           "最大座標誤差 %.4f m / 平均RMS %.4f m / 最大形状誤差 %.4f m / |δ|最大 %.4f m\n",
-           n, sigma_d * 100.0, sigma_h * 100.0, trials, worst, sum_rms / (double)trials,
-           worst_shape, worst_delay);
+           "最大座標誤差 %.4f m / 平均RMS %.4f m / 最大形状誤差 %.4f m / |δ|最大 %.4f m"
+           " / 縮退判定 %d 回\n",
+           n, sigma_d * 100.0, sigma_h * 100.0, trials, worst,
+           sum_rms / (double)(trials - ndegen - nfail), worst_shape, worst_delay, ndegen);
     CHECK(nfail == 0, "n=%d のノイズ試行で %d 回解けなかった", n, nfail);
+    /* 縮退判定（最終形状の平面フィット）は「平面でも測距を 6cm RMS で説明できるか」
+     * という尤度比検定に相当し、n=6・σ=5cm では本物の 3 次元配置でも 1% 程度の
+     * 偽陽性がある（同一平面 + ノイズの見逃しを 0.1% に抑えるための代償。
+     * uwb_survey.c の UWB_SURVEY_DEGEN_PLANAR_RMS の説明を参照）。50 回中 1 回
+     * までは許容し、それ以上なら判定が壊れているとみなす。 */
+    CHECK(ndegen <= (trials + 49) / 50, "n=%d のノイズ試行で縮退判定が %d/%d 回（偽陽性が多すぎる）",
+          n, ndegen, trials);
 }
 
 static void scenario2_noise(void)
@@ -810,113 +821,225 @@ static void scenario9_outlier(void)
 }
 
 /* ==================================================================== *
- * 10. 密行列ソルバ単体（S2）
+ * 10. 同一平面 × 共通アンテナ遅延（A-1）
+ *
+ * 生の距離 r = d + 2δ は δ>0 で三角形が一様に膨らみ、同一平面の配置でも
+ * 初期配置の段階では「厚み」があるように見える（δ=0.02 ですでに見逃して
+ * いた）。LM が δ を除去した最終形状を主成分分析して判定し直すので、
+ * δ の有無・ノイズの有無によらず degenerate=1 にならなければならない。
  * ==================================================================== */
-static void scenario10_dense(void)
+static const double FLAT6[6][3] = {{0.0, 0.0, 1.5}, {5.0, 0.0, 1.5}, {5.0, 4.0, 1.5},
+                                   {0.0, 4.0, 1.5}, {2.5, 2.0, 1.5}, {1.0, 3.0, 1.5}};
+
+static void scenario10_flat_delay(void)
 {
-    printf("--- 10. 測量専用の密行列ソルバ ---\n");
+    static const double deltas[] = {0.02, 0.05, 0.15};
+    uwb_survey_input  in;
+    uwb_survey_result out;
+    size_t            k;
+    int               i, j;
 
-    /* (a) 3x3 の対称正定値をコレスキーで解く */
-    {
-        uwb_real a[9] = {4, 1, 1, 1, 3, 0, 1, 0, 2};
-        uwb_real b[3] = {6, 4, 3};   /* 真値 x = (1,1,1) */
-        uwb_real x[3];
-        CHECK(uwb_survey_chol_solve(a, b, x, 3) == 1, "3x3 のコレスキーが失敗した");
-        CHECK(fabs((double)x[0] - 1.0) < TOL_LIN && fabs((double)x[1] - 1.0) < TOL_LIN &&
-                  fabs((double)x[2] - 1.0) < TOL_LIN,
-              "3x3 の解が違う (%.9f, %.9f, %.9f)", (double)x[0], (double)x[1], (double)x[2]);
-    }
+    printf("--- 10. 同一平面 × アンテナ遅延 δ（A-1） ---\n");
 
-    /* (b) 正定値でない行列は 0 を返す */
-    {
-        uwb_real a[4] = {1, 2, 2, 1};   /* 固有値 3, -1 */
-        uwb_real b[2] = {1, 1};
-        uwb_real x[2];
-        CHECK(uwb_survey_chol_solve(a, b, x, 2) == 0, "非正定値を受け入れてしまった");
-    }
+    for (k = 0; k < sizeof(deltas) / sizeof(deltas[0]); ++k) {
+        /* (a) 無雑音 */
+        set_flat_input(&in, 6, FLAT6);
+        for (i = 0; i < 6; ++i)
+            for (j = 0; j < 6; ++j)
+                if (i != j) in.dist[i][j] = (uwb_real)((double)in.dist[i][j] + 2.0 * deltas[k]);
+        CHECK(uwb_survey_solve(&in, &out) == 0, "同一平面+δ=%.2f で成功を返した", deltas[k]);
+        CHECK(out.degenerate == 1, "同一平面+δ=%.2f で degenerate=1 にならなかった", deltas[k]);
+        CHECK(out.ok == 0, "δ=%.2f: degenerate なのに ok=1", deltas[k]);
 
-    /* (c) 25x25（最大サイズ）。A = D + 1*1^T（対角優位で正定値）を解く。 */
-    {
-        static uwb_real a[UWB_SURVEY_MAX_UNKNOWNS * UWB_SURVEY_MAX_UNKNOWNS];
-        static uwb_real b[UWB_SURVEY_MAX_UNKNOWNS];
-        static uwb_real x[UWB_SURVEY_MAX_UNKNOWNS];
-        const int n = UWB_SURVEY_MAX_UNKNOWNS;
-        int i, j;
-        double worst = 0.0;
-
-        CHECK(n == 25, "未知数の上限が 25 でない (%d)", n);
-        for (i = 0; i < n; ++i) {
-            b[i] = (uwb_real)0;
-            for (j = 0; j < n; ++j) {
-                uwb_real v = (uwb_real)1 + ((i == j) ? (uwb_real)(i + 1) : (uwb_real)0);
-                a[i * n + j] = v;
-                b[i] += v;              /* 真値 x = (1,1,...,1) */
-            }
-        }
-        CHECK(uwb_survey_chol_solve(a, b, x, n) == 1, "25x25 のコレスキーが失敗した");
-        for (i = 0; i < n; ++i) {
-            double e = fabs((double)x[i] - 1.0);
-            if (e > worst) worst = e;
-        }
-        printf("    25x25 コレスキー: 最大誤差 %.3e\n", worst);
-        CHECK(worst < TOL_LIN, "25x25 の解の誤差が大きい: %.3e", worst);
-        CHECK(uwb_survey_chol_solve(a, b, x, UWB_SURVEY_MAX_UNKNOWNS + 1) == 0,
-              "上限超の n を受け付けた");
-    }
-
-    /* (d) 固有分解: 固有値が降順で、A v = lambda v を満たすこと */
-    {
-        const int n = 4;
-        uwb_real  src[16] = {4, 1, 0, 2, 1, 3, 1, 0, 0, 1, 5, 1, 2, 0, 1, 6};
-        uwb_real  a[16], eig[4], vec[16];
-        int       i, j, k;
-        double    worst_res = 0.0, worst_orth = 0.0;
-
-        memcpy(a, src, sizeof(a));
-        CHECK(uwb_survey_sym_eig(a, eig, vec, n) == 1, "4x4 の固有分解が失敗した");
-        for (k = 0; k + 1 < n; ++k)
-            CHECK((double)eig[k] >= (double)eig[k + 1], "固有値が降順でない");
-
-        for (k = 0; k < n; ++k)
-            for (i = 0; i < n; ++i) {
-                double s = 0.0;
-                for (j = 0; j < n; ++j) s += (double)src[i * n + j] * (double)vec[j * n + k];
-                s -= (double)eig[k] * (double)vec[i * n + k];
-                if (fabs(s) > worst_res) worst_res = fabs(s);
-            }
-        for (i = 0; i < n; ++i)
-            for (j = 0; j < n; ++j) {
-                double s = 0.0;
-                for (k = 0; k < n; ++k) s += (double)vec[k * n + i] * (double)vec[k * n + j];
-                s -= (i == j) ? 1.0 : 0.0;
-                if (fabs(s) > worst_orth) worst_orth = fabs(s);
-            }
-        printf("    4x4 固有分解: |Av-λv|max = %.3e / 直交性のずれ %.3e\n", worst_res,
-               worst_orth);
-        CHECK(worst_res < TOL_LIN, "固有ベクトルが合っていない: %.3e", worst_res);
-        CHECK(worst_orth < TOL_ORTH, "固有ベクトルが直交していない: %.3e", worst_orth);
-
-        /* トレース = 固有値の和（保存量の検算） */
+        /* (b) 5cm ノイズ。ノイズで生まれる見かけの厚みは数 cm 以下で、
+         *     しきい値（RMS 5cm）の下に収まるはず。 */
         {
-            double tr = 0.0, sum = 0.0;
-            for (i = 0; i < n; ++i) { tr += (double)src[i * n + i]; sum += (double)eig[i]; }
-            CHECK(fabs(tr - sum) < TOL_ORTH * (1.0 + fabs(tr)),
-                  "トレースが合わない (%.12f vs %.12f)", tr, sum);
+            rng_t rng;
+            int   t, ndeg = 0, nok = 0, trials = 50;
+            rng_seed(&rng, 9000u + (unsigned int)k);
+            for (t = 0; t < trials; ++t) {
+                set_flat_input(&in, 6, FLAT6);
+                for (i = 0; i < 6; ++i)
+                    for (j = 0; j < 6; ++j)
+                        if (i != j) in.dist[i][j] = (uwb_real)((double)in.dist[i][j] + 2.0 * deltas[k]);
+                add_dist_noise(&in, 6, 0.05, &rng);
+                uwb_survey_solve(&in, &out);
+                if (out.degenerate) ++ndeg;
+                if (out.ok) ++nok;
+            }
+            printf("    δ=%.2f + 5cm ノイズ x%d回: degenerate=%d / ok=%d\n", deltas[k], trials,
+                   ndeg, nok);
+            CHECK(ndeg == trials, "δ=%.2f + ノイズで縮退を %d/%d 回見逃した", deltas[k],
+                  trials - ndeg, trials);
+            CHECK(nok == 0, "δ=%.2f + ノイズで ok=1 が %d 回", deltas[k], nok);
         }
-
-        /* 同じ入力なら符号まで含めて必ず同じ結果（再現性）。 */
-        {
-            uwb_real a2[16], eig2[4], vec2[16];
-            int      same = 1;
-            memcpy(a2, src, sizeof(a2));
-            CHECK(uwb_survey_sym_eig(a2, eig2, vec2, n) == 1, "2回目の固有分解が失敗");
-            for (i = 0; i < n * n; ++i) if (vec2[i] != vec[i]) same = 0;
-            CHECK(same == 1, "固有ベクトルが再現しない");
-        }
-
-        CHECK(uwb_survey_sym_eig(a, eig, vec, UWB_SURVEY_EIG_MAX + 1) == 0,
-              "上限超の n を受け付けた");
     }
+}
+
+/* ==================================================================== *
+ * 11. 細長い配置・片方向 NaN・高さノイズ下の傾き（A-7 / A-8 / A-6）
+ * ==================================================================== */
+static void scenario11_misc_defects(void)
+{
+    uwb_survey_input  in;
+    uwb_survey_result out;
+
+    printf("--- 11. 細長い配置（A-7）/ 片方向 NaN（A-8）/ 傾きの厳密解（A-6） ---\n");
+
+    /* (A-7) 細長い配置。20m × 3m × 2.4m は第3主軸/第1主軸の二乗比が ≈ 1.6e-2
+     *       で問題なく解ける。同じ高さ分布で 80m に伸ばすと比が 9.7e-4 になり、
+     *       以前のしきい値 1e-3 では縮退と誤判定していた（比は 1e-5 に下げた）。
+     *
+     *       ただし 80m の方は **距離から z が観測できない**: z の差 Δz≈2m が
+     *       距離に与える影響は Δz²/(2d) ≈ 4/(2·40) ≈ 5cm 以下で、平面に
+     *       押し潰しても残差 RMS は ≈ 2.7cm しか増えない（5cm の測距ばらつきが
+     *       あれば z の誤差は σ·d/Δz ≈ 0.75m になる）。最終形状の平面フィット
+     *       判定はこれを縮退（= 配置を変えるべき）として弾くので、ここでは
+     *       20m を「解けること」、80m を「縮退になること」として固定する
+     *       （40m は平面残差 ≈ 5.3cm でしきい値 6cm ぎりぎりの境界例）。 */
+    {
+        static const double hall20[6][3] = {
+            {0.0, 0.0, 0.30}, {20.0, 0.0, 2.40}, {10.0, 3.0, 0.40},
+            {3.0, 2.8, 2.30}, {15.0, 0.2, 2.35}, {8.0, 1.5, 0.35}};
+        static const double hall80[6][3] = {
+            {0.0, 0.0, 0.30}, {80.0, 0.0, 2.40}, {40.0, 3.0, 0.40},
+            {10.0, 2.8, 2.30}, {60.0, 0.2, 2.35}, {30.0, 1.5, 0.35}};
+        double se = 0.0;
+        int    i, j;
+        set_flat_input(&in, 6, hall20);
+        CHECK(uwb_survey_solve(&in, &out) == 1 && out.ok, "20m×3m×2.4m が解けなかった (degenerate=%d)",
+              out.degenerate);
+        CHECK(out.degenerate == 0, "20m×3m×2.4m を縮退と誤判定した");
+        for (i = 0; i < 6; ++i)
+            for (j = i + 1; j < 6; ++j) {
+                double dx = hall20[i][0] - hall20[j][0];
+                double dy = hall20[i][1] - hall20[j][1];
+                double dz = hall20[i][2] - hall20[j][2];
+                double e  = fabs(res_dist(&out, i, j) - sqrt(dx * dx + dy * dy + dz * dz));
+                if (e > se) se = e;
+            }
+        printf("    20m×3m×2.4m: 形状誤差 %.3e m / 反復 %d\n", se, out.iterations);
+        CHECK(se < (double)TOL_EXACT * 20.0, "細長い配置の形状誤差: %.3e m", se);
+
+        set_flat_input(&in, 6, hall80);
+        CHECK(uwb_survey_solve(&in, &out) == 0 && out.degenerate == 1,
+              "80m×3m×2.4m（z が距離から観測できない）が縮退にならなかった (ok=%d)", out.ok);
+    }
+
+    /* (A-8) 片方向だけ NaN / 非正: 有効な側だけ採用してリンクを失わない。 */
+    {
+        double err;
+        make_input(&in, 6, 0.08);
+        in.dist[2][4] = (uwb_real)NAN;          /* have[2][4] は 1 のまま */
+        in.dist[0][5] = (uwb_real)-1.0;         /* 非正も無効扱い */
+        CHECK(uwb_survey_solve(&in, &out) == 1 && out.ok, "片方向 NaN で解けなかった");
+        err = max_pos_err(&out, 6);
+        printf("    片方向 NaN/非正 2 リンク: 座標誤差 %.3e m / 冗長度 %d\n", err, out.redundancy);
+        CHECK(err < (double)TOL_EXACT, "片方向 NaN の復元誤差: %.3e m", err);
+        CHECK(out.redundancy == 2, "片方向 NaN でリンクを失った (redundancy=%d)", out.redundancy);
+
+        /* 両方向とも NaN なら欠測（15 → 14 本。冗長度 1）。 */
+        make_input(&in, 6, 0.08);
+        in.dist[2][4] = in.dist[4][2] = (uwb_real)NAN;
+        CHECK(uwb_survey_solve(&in, &out) == 1 && out.ok, "両方向 NaN で解けなかった");
+        CHECK(out.redundancy == 1, "両方向 NaN が欠測にならない (redundancy=%d)", out.redundancy);
+        CHECK(max_pos_err(&out, 6) < (double)TOL_EXACT, "両方向 NaN の復元誤差");
+    }
+
+    /* (A-6) 高さに 1cm のノイズ。距離は厳密なので形状は真値と合同。
+     *       返ってきたフレームの高さ残差は、真値のフレーム（実現可能な
+     *       候補の 1 つ）の高さ残差を **下回るか等しい**はず（最小二乗の
+     *       厳密解なら必ず成り立つ。旧実装の「M⁻¹b を正規化」では破れる）。 */
+    {
+        rng_t  rng;
+        int    t, worse = 0, trials = 50;
+        double worst_tilt = 0.0, sum_tilt = 0.0;
+        rng_seed(&rng, 6060u);
+        for (t = 0; t < trials; ++t) {
+            double res_new = 0.0, res_truth = 0.0, ex, ey, tilt;
+            int    i;
+            make_input(&in, 6, 0.0);
+            add_height_noise(&in, 6, 0.01, &rng);
+            CHECK(uwb_survey_solve(&in, &out) == 1 && out.ok, "高さノイズで解けなかった");
+            for (i = 0; i < 6; ++i) {
+                double e1 = (double)out.pos[i][2] - (double)in.height[i];
+                double e2 = TRUTH[i][2] - (double)in.height[i];
+                res_new   += e1 * e1;
+                res_truth += e2 * e2;
+            }
+            if (res_new > res_truth * (1.0 + 1e-6) + 1e-12) ++worse;
+            /* 傾き: ノード1 (x=5) の x 方向、ノード3 (y=4.9) の y 方向の z ずれ */
+            ex   = ((double)out.pos[1][2] - (double)out.pos[0][2]) - (TRUTH[1][2] - TRUTH[0][2]);
+            ey   = ((double)out.pos[3][2] - (double)out.pos[0][2]) - (TRUTH[3][2] - TRUTH[0][2]);
+            tilt = sqrt(ex * ex / 25.0 + ey * ey / (4.9 * 4.9)) * 180.0 / PI_D;
+            sum_tilt += tilt;
+            if (tilt > worst_tilt) worst_tilt = tilt;
+        }
+        printf("    高さ 1cm ノイズ x%d回: 傾き誤差 平均 %.3f° / 最大 %.3f° / 真値フレームより悪い %d 回\n",
+               trials, sum_tilt / (double)trials, worst_tilt, worse);
+        CHECK(worse == 0, "高さ残差が真値フレームより大きい試行が %d 回（厳密解でない）", worse);
+    }
+}
+
+/* ==================================================================== *
+ * 12. 診断フィールド（A-3 / A-5: redundancy, n_heights, frame_determined,
+ *     delay_suspect）
+ * ==================================================================== */
+static void scenario12_diagnostics(void)
+{
+    uwb_survey_input  in;
+    uwb_survey_result out;
+
+    printf("--- 12. 診断フィールド（冗長度・高さ点数・傾き確定・δ異常） ---\n");
+
+    make_input(&in, 6, 0.05);
+    CHECK(uwb_survey_solve(&in, &out) == 1 && out.ok, "解けなかった");
+    CHECK(out.redundancy == 2, "n=6 全リンクの冗長度は 15−13=2 のはず (%d)", out.redundancy);
+    CHECK(out.n_heights == 6, "n_heights=%d", out.n_heights);
+    CHECK(out.frame_determined == 1, "高さ 6 点で frame_determined=0");
+    CHECK(out.delay_suspect == 0, "δ=0.05 で delay_suspect=1");
+
+    make_input(&in, 8, 0.05);
+    CHECK(uwb_survey_solve(&in, &out) == 1 && out.ok, "n=8 が解けなかった");
+    CHECK(out.redundancy == 9, "n=8 全リンクの冗長度は 28−19=9 のはず (%d)", out.redundancy);
+
+    make_input(&in, 4, 0.0);
+    CHECK(uwb_survey_solve(&in, &out) == 1 && out.ok, "n=4 が解けなかった");
+    CHECK(out.redundancy == 0, "n=4 (δ固定) の冗長度は 6−6=0 のはず (%d)", out.redundancy);
+
+    make_input(&in, 6, 0.08);
+    drop_link(&in, 1, 4);
+    drop_link(&in, 0, 3);
+    CHECK(uwb_survey_solve(&in, &out) == 1 && out.ok, "2本欠けで解けなかった");
+    CHECK(out.redundancy == 0, "n=6 2本欠けの冗長度は 0 のはず (%d)", out.redundancy);
+
+    /* 高さ 3 点: 傾きは未確定（鏡像 2 解）。4 点: 確定。 */
+    make_input(&in, 6, 0.0);
+    keep_heights(&in, 6, 3);
+    CHECK(uwb_survey_solve(&in, &out) == 1 && out.ok, "高さ3点で解けなかった");
+    CHECK(out.n_heights == 3, "n_heights=%d", out.n_heights);
+    CHECK(out.frame_determined == 0, "高さ 3 点で frame_determined=1 はおかしい");
+    make_input(&in, 6, 0.0);
+    keep_heights(&in, 6, 4);
+    CHECK(uwb_survey_solve(&in, &out) == 1 && out.ok, "高さ4点で解けなかった");
+    CHECK(out.frame_determined == 1, "高さ 4 点で frame_determined=0");
+    make_input(&in, 6, 0.0);
+    keep_heights(&in, 6, 0);
+    CHECK(uwb_survey_solve(&in, &out) == 1 && out.ok, "高さ0点で解けなかった");
+    CHECK(out.n_heights == 0 && out.frame_determined == 0, "高さ 0 点の診断が違う");
+
+    /* 物理的にあり得ない δ（片道 0.5m）は delay_suspect。 */
+    make_input(&in, 8, 0.5);
+    CHECK(uwb_survey_solve(&in, &out) == 1 && out.ok, "δ=0.5 で解けなかった");
+    printf("    δ=0.5 の入力: 推定 %.4f m / delay_suspect=%d\n", (double)out.common_delay_m,
+           out.delay_suspect);
+    CHECK(out.delay_suspect == 1, "|δ|=0.5 > 0.3 で delay_suspect=0");
+
+    /* 失敗時はすべてゼロ。 */
+    make_input(&in, 6, 0.0);
+    in.n = 3;
+    CHECK(uwb_survey_solve(&in, &out) == 0 && out.redundancy == 0 && out.frame_determined == 0,
+          "失敗時に診断フィールドが残っている");
 }
 
 /* ==================================================================== */
@@ -938,7 +1061,9 @@ int main(void)
     scenario7_few_heights();
     scenario8_node_counts();
     scenario9_outlier();
-    scenario10_dense();
+    scenario10_flat_delay();
+    scenario11_misc_defects();
+    scenario12_diagnostics();
 
     printf("\n=== %d 件中 %d 件失敗 ===\n", g_run, g_fail);
     return (g_fail == 0) ? 0 : 1;

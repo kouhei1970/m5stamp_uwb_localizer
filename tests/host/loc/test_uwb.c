@@ -11,7 +11,7 @@
  *   * 数値が壊れても NaN を返さず ok=0 で返る
  */
 #include "uwb_loc.h"
-#include "uwb_linalg.h"
+#include "ref/ref_bridge.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -288,28 +288,35 @@ static void test_gdop_and_crlb(void)
 
 static void test_sym_eig_vectors(void)
 {
-    /* 対称だが特別な構造のない 4x4。恒等行列だと固有ベクトルが何でも
+    /* Jacobi 法による対称固有値・固有ベクトル分解は本体 (components/uwb_loc)
+     * から削除され、参照実装 (tests/host/loc/ref、上流 uwb_localizer 凍結版)
+     * にだけ残っている。ここでは新実装そのものではなく、回帰テスト
+     * (test_regress.c) の比較対象である ref_bridge の ref_sym_eig が
+     * 正しく動くことを確かめる (test_regress.c 自身は新旧の Lv0/Lv1/Lv2 等の
+     * 出力を比較するだけで、固有値分解そのものの正しさまでは検証しないため)。
+     *
+     * 対称だが特別な構造のない 4x4。恒等行列だと固有ベクトルが何でも
      * 通ってしまうので検証にならない。 */
-    uwb_real A[16] = {
+    double A[16] = {
         4, 1, 0, 2,
         1, 3, 1, 0,
         0, 1, 5, 1,
         2, 0, 1, 6
     };
-    uwb_real orig[16];   /* uwb_sym_eig は a を破壊するので残しておく */
-    uwb_real work[16];
-    uwb_real eig[4];
-    uwb_real vec[16];
+    double orig[16];   /* ref_sym_eig は a を破壊するので残しておく */
+    double work[16];
+    double eig[4];
+    double vec[16];
     int i, j, k;
 
     memcpy(orig, A, sizeof(A));
     memcpy(work, A, sizeof(A));
 
-    CHECK(uwb_sym_eig(work, eig, vec, 4), "固有値・固有ベクトルが求まらない");
+    CHECK(ref_sym_eig(work, eig, vec, 4), "固有値・固有ベクトルが求まらない");
 
     for (i = 1; i < 4; ++i)
-        CHECK(eig[i - 1] <= eig[i] + (uwb_real)TOL_TIGHT,
-              "固有値が昇順でない (%.6f > %.6f)", (double)eig[i - 1], (double)eig[i]);
+        CHECK(eig[i - 1] <= eig[i] + TOL_TIGHT,
+              "固有値が昇順でない (%.6f > %.6f)", eig[i - 1], eig[i]);
 
     /* 固有ベクトル残差 A v_i == eig_i v_i。元の (破壊されていない) 行列で確認する。
      * vec[row*4+col] が固有ベクトル col の第 row 成分。 */
@@ -317,8 +324,8 @@ static void test_sym_eig_vectors(void)
         double res = 0.0;
         for (j = 0; j < 4; ++j) {
             double av = 0.0;
-            for (k = 0; k < 4; ++k) av += (double)orig[j * 4 + k] * (double)vec[k * 4 + i];
-            double diff = av - (double)eig[i] * (double)vec[j * 4 + i];
+            for (k = 0; k < 4; ++k) av += orig[j * 4 + k] * vec[k * 4 + i];
+            double diff = av - eig[i] * vec[j * 4 + i];
             res += diff * diff;
         }
         res = sqrt(res);
@@ -329,7 +336,7 @@ static void test_sym_eig_vectors(void)
     for (i = 0; i < 4; ++i) {
         for (j = 0; j < 4; ++j) {
             double dot = 0.0, want = (i == j) ? 1.0 : 0.0;
-            for (k = 0; k < 4; ++k) dot += (double)vec[k * 4 + i] * (double)vec[k * 4 + j];
+            for (k = 0; k < 4; ++k) dot += vec[k * 4 + i] * vec[k * 4 + j];
             CHECK(fabs(dot - want) < TOL_ORTHO,
                   "V^T V が単位行列でない (%d,%d)=%.3g", i, j, dot);
         }

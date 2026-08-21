@@ -676,6 +676,55 @@ $$
 > $G^{-1}D$ と同じ固有値を持つ。対称行列なら Jacobi 法で簡単に解けるので、
 > C 版はこの経路を使っている ([third_party/uwb_localizer/c/README.md](https://github.com/kouhei1970/uwb_localizer/blob/HEAD/c/README.md))。
 
+#### 3.6.1 本リポジトリの C 版: Schur 補元で 3×3 に落とす
+
+上流の C 版は 4×4 の $G = LL^\top$ と $L^{-1}DL^{-\top}$ の Jacobi 固有分解を
+使っていたが、本リポジトリ (`components/uwb_loc/src/uwb_closed_form.c`) は
+$\alpha = \lVert p\rVert^2$ に当たる 4 番目の未知数を**先に消して** 3×3 で解く。
+
+$y = [p;\ \alpha]$、 $G = \begin{bmatrix} G_{11} & g \\ g^\top & G_{33}\end{bmatrix}$
+( $G_{11} = 4\sum w_i a_i a_i^\top$、 $g = -2\sum w_i a_i$、 $G_{33} = \sum w_i$ )、
+$h = A^\top W b = [h_1;\ h_4]$ と分けると、式 (3.1) の 2 行目から
+$\alpha = (h_4 + \lambda/2 - g^\top p)/G_{33}$。これを 1 行目に戻すと
+
+$$
+\bigl(\underbrace{G_{11} - g g^\top / G_{33}}_{S_c} + \lambda I\bigr)\,p
+= h_1 - g\,(h_4 + \lambda/2)/G_{33}
+$$
+
+$S_c$ は Schur 補元で、 $S_c = 4\sum w_i (a_i - \bar a)(a_i - \bar a)^\top$
+(重み付き重心 $\bar a$ まわりの散布行列の 4 倍)。さらに座標を $\bar a$ に
+移す ( $d_i = a_i - \bar a$、 $q = p - \bar a$、 $b_i' = r_i^2 - \lVert d_i\rVert^2$ ) と
+$g = 0$ になって式が最も簡単になる:
+
+$$
+(S_c + \lambda I)\,q = r_0,\quad r_0 = -2\sum w_i b_i' d_i,\qquad
+\alpha(\lambda) = \bar b + \frac{\lambda}{2W},\qquad
+\varphi(\lambda) = \lVert q(\lambda)\rVert^2 - \alpha(\lambda)
+$$
+
+( $W = \sum w_i$、 $\bar b = \sum w_i b_i'/W$。) 右辺 $r_0$ は $\lambda$ に
+よらないので、 $\varphi'(\lambda) = -2\,q^\top (S_c+\lambda I)^{-1} q - 1/(2W) < 0$
+が閉じた形で出る。目的関数 $\sum w_i(\lVert p - a_i\rVert^2 - r_i^2)^2$ は
+平行移動不変なので、 $p = \bar a + q$ は元の座標で解いたものと同じ
+( $\lambda$ の値だけが変わる)。 $G + \lambda D \succ 0 \iff S_c + \lambda I \succ 0$
+だから、 $\lambda_\text{lo} = -\sigma_{\min}(S_c)$ で、 $\sigma_{\min}$ は 3×3 対称行列の
+**閉形式固有値** (`uwb_sym3_eigvals`) から取る。固有ベクトルは使わない
+(正方形や立方体の配置では縮退して不良条件になる)。ニュートン反復 1 回は
+3×3 の $LDL^\top$ 分解 1 個 (除算 3 回、平方根なし) と代入 2 回で済み、
+4×4 のコレスキー・Jacobi・ $L^{-1}$ は要らない。余因子逆行列 (除算 1 回) は
+後退安定でなく、float では $\kappa = \sigma_{\max}/\sigma_{\min} \approx 200$ の
+配置で解が $2\times10^{-4}$ m 狂った (4×4 の固有分解版は $3\times10^{-7}$ m)
+ので使わない。 $LDL^\top$ なら同じ配置で $4\times10^{-6}$ m。
+
+単精度で堅くなった点: 旧実装は $\lambda_\text{lo} + 10^{-9}|\lambda_\text{lo}|$ から
+探索を始めていたが、 $10^{-9}$ は float の $\varepsilon$ ( $1.2\times10^{-7}$ ) より
+小さいので `lo == lam_lo` になり、極 ( $1+\lambda\mu = 0$ ) を踏んで一歩も
+動けずに失敗していた (FMA 縮約で偶然非ゼロになる環境でだけ通っていた)。
+新実装は刻みを $64\,\varepsilon\,\sigma_{\max}$ と $\varepsilon$ に比例させ、極を
+踏んだ (行列式が丸め誤差に埋もれた) ときは $\varphi = +\infty$ 側として
+区間を詰める。収束判定の床も $\varepsilon$ 比例にしてある。
+
 ### 3.7 LLS との違い
 
 | | LLS (§2) | Beck (§3) |
@@ -1242,6 +1291,27 @@ $$
 何本も繰り返すこの実装では、この性質が要る。
 さらに毎回 $P \leftarrow (P + P^\top)/2$ で対称化する。
 
+#### 6.3.1 本リポジトリの C 版: 対称 rank-1 ダウンデート
+
+観測 1 本 ( $H = h^\top$ ) のとき $u = Ph$、 $S = h^\top u + \sigma^2$、 $K = u/S$ と
+置いて Joseph 形式を展開すると
+
+$$
+P - K u^\top - u K^\top + K(h^\top P h)K^\top + \sigma^2 K K^\top
+= P - K u^\top - u K^\top + S\,K K^\top
+= P - \frac{u u^\top}{S}
+$$
+
+( $h^\top P h + \sigma^2 = S$ と $S K K^\top = u K^\top$ を使った。) つまり
+**$P$ が対称なら Joseph 形式は $P \leftarrow P - u u^\top/S$ に厳密に潰れる**。
+本リポジトリの C 版 (`uwb_ekf.c`) はこれを `uwb_symn_rank1_downdate` で
+上三角だけ計算して下三角へ鏡映するので、結果は構成的に対称になり、
+後段の $(P+P^\top)/2$ も不要。 $n_x \times n_x$ の 4 項の積和が 1 項になり、
+除算は $1/S$ の 1 回、ゲート $|\nu| > \gamma\sqrt{S}$ は $\nu^2 > \gamma^2 S$ で
+平方根も取らない。Joseph 形式の利点 (対称・半正定値が保たれる) は
+rank-1 の形でも同じ: $P - uu^\top/S = P^{1/2}(I - vv^\top/(v^\top v + \sigma^2))P^{1/2}$
+( $v = P^{1/2}h$ ) で、括弧の中の固有値は $[\sigma^2/S,\,1]$ にある。
+
 **副次効果**: 1 本ずつ順に処理すると、2 本目は**1 本目で更新済みの位置**で
 線形化される。反復 EKF に近い効果がただで手に入る。
 
@@ -1395,6 +1465,17 @@ $$
 
 アンカー座標を中心化して特異値分解し、第 3 特異値 $/\sqrt{n}$ を
 「平面からの広がり」とみなす。これが最大特異値の 5% 未満なら**同一平面**と判定する。
+
+> **本リポジトリの C 版** (`uwb_model.c:uwb_anchors_coplanar`) は特異値分解の
+> 代わりに、中心化した散布行列 $C = \sum (a_i-\bar a)(a_i-\bar a)^\top$ (3×3 対称)
+> の固有値を閉形式 (`uwb_sym3_eigvals`) で取り、
+> $\lambda_{\min}/\lambda_{\max} < 0.05^2$ で判定する (特異値比 5% と同じ。
+> 平方根は取らない)。法線は最小固有値の固有ベクトル (`uwb_sym3_min_eigvec`)。
+> 判定はアンカーの (enabled, 座標) だけで決まるので、`uwb_config_init` /
+> `uwb_config_refresh` で 1 回計算して `uwb_config.plane` に持ち、毎 fix の
+> 鏡像処理 (`uwb_resolve_mirror`) では作成時に写した座標と今の配列を
+> 比べて一致すればそれを使う。呼び出し側がアンカーを書き換えたあと
+> refresh を忘れても、不一致を検出して計算し直すので結果は変わらない。
 
 **3 次元測位では、アンカーが同一平面に並んでいないことが本質的に効く。**
 理由は 2 つある。

@@ -2,11 +2,15 @@
  *
  * docs/SURVEY_SPEC.md の [2]〜[5] に相当する **純計算部分**。
  * ESP-IDF にも FreeRTOS にも UWB チップにも依存しない。ホストで
- * `cc` だけでビルドできる（tools/test_survey/Makefile 参照）。
+ * `cc` だけでビルドできる（tests/host/survey/Makefile 参照）。
  *
  *   * **malloc を呼ばない。** 作業領域はすべてスタックの固定長配列
- *   * 依存は <math.h> / <string.h> と uwb_loc.h の uwb_real だけ
- *   * 扱う行列は最大 25x25（= 3*8+1 個の未知数）。倍精度で 5KB
+ *   * 依存は <math.h> / <string.h> と components/uwb_math（スカラー展開した
+ *     3x3 / 3x3 ブロックの線形代数。uwb_real の typedef もここから借りる）
+ *   * 正規方程式（最大 25x25 = 3*8+1 個の未知数）は 3x3 ブロックの
+ *     下三角パック（uwb_bchol、倍精度で 3KB）で持ち、ブロックコレスキーで解く。
+ *     一般の固有分解・一般の密コレスキーは使わない（ESP32-S3 は単精度 FPU
+ *     のみで除算・sqrt が高いため）
  *
  * components/uwb_loc/ と同じ流儀で書いてある（将来 uwb_localizer の c/ へ
  * 還元できるように）。
@@ -75,18 +79,25 @@
  * ------------------------------------------------------------------------
  * スタック使用量
  *
- * `uwb_survey_solve()` は正規方程式 25x25 をスタックに置く。倍精度で
- * 呼び出し全体の深さは **約 10KB**（実測: solve 3.1KB + lm_run 6.2KB +
- * sym_eig 0.6KB。-DUWB_USE_FLOAT なら約半分）。ESP-IDF では
- * **16KB 以上**のスタックを持つタスクから呼ぶこと
+ * `uwb_survey_solve()` は正規方程式（3x3 ブロックの下三角パック）を
+ * スタックに置く。倍精度で呼び出し全体の深さは **約 6.7KB**
+ * （xtensa-esp32s3-elf-gcc 14.2 -O2 -fstack-usage の実測: solve 2512B
+ * （escape_local_minima / shape_degenerate はインライン化）+ lm_run 4032B
+ * （uwb_bchol 3KB + 作業配列）+ uwb_bchol_factor 96B + uwb_m3_chol 64B。
+ * -DUWB_USE_FLOAT なら 1504 + 2032 + 80 + 48 = **約 3.7KB**）。
+ * 旧実装（25x25 密行列 + 8x8 Jacobi）の 9.4KB / 5.0KB から 3 割減ったが、
+ * 余裕を見て ESP-IDF では **12KB 以上**のスタックを持つタスクから呼ぶこと
  * （app_main の既定 3.5KB では足りない）。
  * グローバル変数は一切持たないので再入可能。
  */
 #ifndef UWB_SURVEY_H
 #define UWB_SURVEY_H
 
-/* uwb_real（既定 double、-DUWB_USE_FLOAT で float）だけを借りる。 */
-#include "uwb_loc.h"
+/* uwb_real（既定 double、-DUWB_USE_FLOAT で float）と小次元の線形代数。
+ * uwb_real の typedef は UWB_REAL_DEFINED で守られているので、uwb_loc.h と
+ * 同じ翻訳単位に include しても衝突しない（uwb_loc.h 側にも同じガードが
+ * ある前提。幅は両コンポーネントとも CONFIG_UWB_LOC_USE_FLOAT に従う）。 */
+#include "uwb_math.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -139,6 +150,17 @@ typedef struct {
                                             *   0 のときは規約で一意化してある */
     unsigned long excluded;                /**< 外れ値として落としたリンクのビットマスク。
                                             *   ビット位置は uwb_survey_link_index(i,j) */
+    int      redundancy;                   /**< 冗長度 = 採用リンク数 − (3n−6 + δ推定なら1)。
+                                            *   **0 なら残差 0 のまま別解に落ちうる**
+                                            *   （docs/SURVEY_SPEC.md §1 (E)）。呼び出し側は
+                                            *   0 以下のとき必ず警告すること。失敗時は 0 */
+    int      n_heights;                    /**< 高さ実測の点数（have_height の数） */
+    int      frame_determined;             /**< 1 = 傾き（回転 2 自由度）が高さから一意に決まった
+                                            *   （高さ実測 4 点以上かつ同一平面でない）。
+                                            *   0 なら形状と z 並進だけが意味を持ち、傾きは
+                                            *   規約で埋めてある（3 点以下では鏡像 2 解が残る） */
+    int      delay_suspect;                /**< 1 = |common_delay_m| > 0.3 m。配線・配置・測距の
+                                            *   誤り（または冗長度 0 の別解）を疑う */
 } uwb_survey_result;
 
 /* ------------------------------------------------------------------ API */
@@ -150,21 +172,28 @@ void uwb_survey_input_init(uwb_survey_input *in, int n);
  * 測量を解く。
  *
  * 手順は docs/SURVEY_SPEC.md §2 のとおり:
- *   [2] 欠測リンクを最短経路で補完 → 古典的 MDS で初期配置
+ *   [2] 欠測リンクを最短経路で補完 → 逐次三辺測量（ピボット付き
+ *       コレスキー 3 段）で初期配置
  *   [3] Levenberg-Marquardt で距離残差を最小化（共通遅延も同時推定）
- *   [4] 実測高さで 傾き2 + z並進1 を固定（鏡像は規約で一意化）
+ *       → 収束した形状を主成分分析して縮退（同一平面・直線）を判定
+ *   [4] 実測高さで 傾き2 + z並進1 を固定（球面拘束付き最小二乗の厳密解。
+ *       鏡像は規約で一意化）
  *   [5] ノード0 を XY 原点、ノード1 を +X 軸上に置く
  *
  * 解けたら 1 を返し out->ok にも 1 を書く。解けなければ 0。
  * 失敗時も out は必ずゼロ初期化されており、縮退が理由なら
- * out->degenerate = 1 と MDS の生の座標が入る（診断用）。
+ * out->degenerate = 1 と、その時点の生の座標（初期配置または LM 後の
+ * 形状。フレームは任意）が入る（診断用）。
  *
  * 失敗する条件:
  *   - n が範囲外 / 引数が NULL
  *   - 測距が取れているリンクだけでは形状が決まらない
  *     （どれかのノードのリンクが 3 本未満、リンク総数が 3n-6 未満、
  *      リンクのグラフが非連結）
- *   - MDS の固有値が退化（同一平面・直線配置）→ degenerate = 1
+ *   - 配置が縮退（同一平面・直線）→ degenerate = 1。初期配置と LM 収束後の
+ *     両方で見る。**後者が本判定**: 生の距離には共通遅延 2δ が乗っていて
+ *     同一平面でも三角形が膨らんで見えるため、初期配置だけでは δ≠0 の
+ *     同一平面を見逃す。LM は δ を同時推定するので収束後の形状で判定する
  *   - LM が破綻した（正規方程式が解けない、NaN が出た）
  *
  * 共通遅延の識別可能性: リンク本数 m が 3n-6+1 以上でないと delta は

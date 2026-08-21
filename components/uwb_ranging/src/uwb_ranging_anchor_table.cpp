@@ -52,6 +52,11 @@ bool AnchorTable::update(size_t index, const AnchorEntry& entry)
     dst.antenna_delay_m  = static_cast<uwb_real>(entry.antenna_delay_m);
     dst.sigma0           = 0; // 0 => uwb_loc 側の既定 (0.1m) にフォールバック
     dst.sigma_per_m       = 0;
+    // 座標 / enabled が変わったので、アンカー配置だけで決まる派生値
+    // (同一平面判定のキャッシュ) を作り直す。呼ばなくても uwb_loc 側が
+    // キャッシュの不一致を検出して毎回計算し直すので結果は変わらないが、
+    // 毎 fix の鏡像処理で固有値計算が走ることになる。
+    uwb_config_refresh(&config_);
     return true;
 }
 
@@ -136,6 +141,9 @@ void AnchorTable::rebuildStorage()
         config_          = previous;
         config_.anchors   = newAnchors;
         config_.n_anchors = newNAnchors;
+        // previous と一緒に古い派生値キャッシュ (config_.plane) も戻って
+        // しまうので、新しいアンカー配置で作り直す。
+        uwb_config_refresh(&config_);
     }
     configInitialized_ = true;
 }

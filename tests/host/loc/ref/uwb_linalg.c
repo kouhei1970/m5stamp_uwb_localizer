@@ -1,3 +1,4 @@
+/* 参照実装: 上流 uwb_localizer 凍結版 (本リポジトリ commit 4298c08 時点の components/uwb_loc) をそのまま写したもの。回帰テスト test_regress.c の比較対象であり、本体 (components/uwb_loc) の変更はここに反映しない。 */
 #include "uwb_linalg.h"
 
 #include <math.h>

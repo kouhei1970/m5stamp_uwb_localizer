@@ -1,9 +1,10 @@
+/* 参照実装: 上流 uwb_localizer 凍結版 (本リポジトリ commit 4298c08 時点の components/uwb_loc) をそのまま写したもの。回帰テスト test_regress.c の比較対象であり、本体 (components/uwb_loc) の変更はここに反映しない。 */
 /* 重み付き非線形最小二乗とロバスト化。
- * Python 版 uwb_loc/solvers/nls.py + robust.py に対応する。
- *
- * 正規方程式 JᵀWJ は 3x3 (2 次元なら 2x2) 対称なので 6 (3) 要素に直接累積し、
- * LDLᵀ で解く (除算 3、sqrt 0)。一般 LU は使わない。 */
+ * Python 版 uwb_loc/solvers/nls.py + robust.py に対応する。 */
 #include "uwb_internal.h"
+#include "uwb_linalg.h"
+
+#include <math.h>
 
 static uwb_real absr(uwb_real v) { return v < 0 ? -v : v; }
 
@@ -64,88 +65,6 @@ static uwb_real assemble(const nls_set *s, const uwb_real *p, int robust,
     return cost;
 }
 
-/* ------------------------------------------------------------ 正規方程式 */
-
-/* H = JᵀWJ (パック対称、nf=3 なら 6 要素 / nf=2 なら 3 要素) と
- * g = JᵀW r を直接累積する。jac の行は 3 成分 (nf=2 なら xy だけ使う)。 */
-static void normal_eq(int nf, int n, const uwb_real *jac, const uwb_real *w,
-                      const uwb_real *resid, uwb_real *h, uwb_real *g)
-{
-    int i;
-    g[0] = g[1] = g[2] = (uwb_real)0;
-    if (nf == 3) {
-        uwb_sym3_zero(h);
-        for (i = 0; i < n; ++i) {
-            const uwb_real *j = &jac[i * 3];
-            uwb_sym3_add_scaled_outer(h, w[i], j);
-            if (resid) uwb_v3_axpy(w[i] * resid[i], j, g);
-        }
-    } else {
-        uwb_sym2_zero(h);
-        for (i = 0; i < n; ++i) {
-            const uwb_real *j = &jac[i * 3];
-            uwb_sym2_add_scaled_outer(h, w[i], j);
-            if (resid) {
-                uwb_real wr = w[i] * resid[i];
-                g[0] += wr * j[0];
-                g[1] += wr * j[1];
-            }
-        }
-    }
-}
-
-/* 正規方程式の解と逆行列。LDLᵀ (uwb_internal.h)、特異判定は緩い方
- * (require_pd = 0: ピボットが 0 / NaN / inf のときだけ失敗)。
- *
- * 旧実装 (部分ピボット LU。ピボットが厳密に 0 のときだけ失敗) と同じ意味論を
- * 保つため。理由:
- *   - Gauss-Newton の step: 解けないと反復が止まるが、LM 減衰を増やせば
- *     解けるようになるので、怪しい step でもコスト判定に任せる方がよい
- *   - 共分散: タグがアンカー平面上に収束した (z が観測不能) ような退化では
- *     H_zz が 1e-9 程度まで潰れる。旧実装は ok=1 で巨大な cov (sigma が
- *     数万 m) を返し、呼び出し側が sigma で判断していた。ok=0 に変えると
- *     x, y は正しいのに位置ごと捨てることになるので、旧来の振る舞いを保つ
- * 退化の検出は fix.sigma / fix.gdop で行う (GDOP 側は 64 eps の厳密判定)。 */
-static int sym_inverse_lenient(int nf, const uwb_real *h, uwb_real *inv)
-{
-    int k, n = nf == 3 ? 6 : 3;
-    if (nf == 3) { if (!uwb_ldl3_inverse(h, (uwb_real)0, 0, inv)) return 0; }
-    else         { if (!uwb_ldl2_inverse(h, (uwb_real)0, 0, inv)) return 0; }
-    for (k = 0; k < n; ++k)
-        if (inv[k] != inv[k] || inv[k] - inv[k] != (uwb_real)0) return 0;   /* NaN / inf */
-    return 1;
-}
-
-static int sym_solve_lenient(int nf, const uwb_real *h, const uwb_real *b, uwb_real *x)
-{
-    if (nf == 3) {
-        uwb_ldl3 f;
-        if (!uwb_ldl3_factor(h, (uwb_real)0, 0, &f)) return 0;
-        uwb_ldl3_solve(&f, b, x);
-    } else {
-        uwb_ldl2 f;
-        if (!uwb_ldl2_factor(h, (uwb_real)0, 0, &f)) return 0;
-        uwb_ldl2_solve(&f, b, x);
-    }
-    return x[0] == x[0] && x[1] == x[1] && (nf == 2 || x[2] == x[2]);
-}
-
-/* 共分散 = H⁻¹ を cov[9] (行優先 3x3) に展開する。解けなければ 0 (cov は 0)。 */
-static int cov_from_hessian(int nf, const uwb_real *h, uwb_real *cov)
-{
-    uwb_real inv[6];
-    int k;
-    for (k = 0; k < 9; ++k) cov[k] = (uwb_real)0;
-    if (!sym_inverse_lenient(nf, h, inv)) return 0;
-    if (nf == 3) {
-        uwb_sym3_to_full(inv, cov);
-    } else {
-        cov[0] = inv[0]; cov[1] = inv[1];
-        cov[3] = inv[1]; cov[4] = inv[2];
-    }
-    return 1;
-}
-
 /* Gauss-Newton + Levenberg-Marquardt 減衰。
  * LM を入れてあるのは、アンカーが一直線・タグが平面上といった退化配置でも
  * 発散せずに止まるようにするため。 */
@@ -154,7 +73,7 @@ static void solve_nls(const nls_set *s, const uwb_real *p0, int robust, nls_resu
     const uwb_config *cfg = s->cfg;
     int nf = uwb_n_free(cfg);
     uwb_real lam = (uwb_real)1e-6;
-    uwb_real cost, tol2;
+    uwb_real cost;
     int it, k;
 
     for (k = 0; k < 3; ++k) r->p[k] = p0[k];
@@ -168,27 +87,27 @@ static void solve_nls(const nls_set *s, const uwb_real *p0, int robust, nls_resu
         return;
     }
 
-    /* 収束判定は ‖step‖ < tol。平方根を避けて二乗で比べる (tol ≤ 0 なら
-     * 旧実装と同じく決して満たさない)。 */
-    tol2 = cfg->tol > (uwb_real)0 ? cfg->tol * cfg->tol : (uwb_real)-1;
-
     cost = assemble(s, r->p, robust, r->resid, r->jac, r->sigma, r->w);
 
     for (it = 1; it <= cfg->max_iter; ++it) {
-        uwb_real hmat[6], grad[3], step[3] = {0, 0, 0};
-        uwb_real cand[3], c_new, damp;
+        uwb_real jm[UWB_MAX_MEAS * 3], hmat[9], grad[3], step[3];
+        uwb_real cand[3], c_new, trace = (uwb_real)0, damp;
         uwb_real r2[UWB_MAX_MEAS], j2[UWB_MAX_MEAS * 3], s2[UWB_MAX_MEAS], w2[UWB_MAX_MEAS];
-        int i, solved;
+        int i;
 
         r->iterations = it;
-        normal_eq(nf, s->n, r->jac, r->w, r->resid, hmat, grad);
+        for (i = 0; i < s->n; ++i)
+            for (k = 0; k < nf; ++k) jm[i * nf + k] = r->jac[i * 3 + k];
 
-        damp = (nf == 3 ? uwb_sym3_trace(hmat) : uwb_sym2_trace(hmat)) / (uwb_real)nf;
+        uwb_ata_weighted(jm, r->w, s->n, nf, hmat);
+        uwb_atb_weighted(jm, r->w, r->resid, s->n, nf, grad);
+
+        for (k = 0; k < nf; ++k) trace += hmat[k * nf + k];
+        damp = trace / (uwb_real)nf;
         if (!(damp > (uwb_real)1e-9)) damp = (uwb_real)1e-9;
-        if (nf == 3) uwb_sym3_add_diag(hmat, lam * damp);
-        else         uwb_sym2_add_diag(hmat, lam * damp);
-        solved = sym_solve_lenient(nf, hmat, grad, step);
-        if (!solved) break;
+        for (k = 0; k < nf; ++k) hmat[k * nf + k] += lam * damp;
+
+        if (!uwb_solve_lin(hmat, grad, step, nf)) break;
 
         for (k = 0; k < 3; ++k) cand[k] = r->p[k];
         for (k = 0; k < nf; ++k) cand[k] += step[k];
@@ -207,7 +126,7 @@ static void solve_nls(const nls_set *s, const uwb_real *p0, int robust, nls_resu
             lam *= (uwb_real)0.3;
             if (lam < (uwb_real)1e-9) lam = (uwb_real)1e-9;
             for (k = 0; k < nf; ++k) nrm += step[k] * step[k];
-            if (nrm < tol2) break;
+            if ((uwb_real)sqrt((double)nrm) < cfg->tol) break;
         } else {
             lam *= (uwb_real)4;
             if (lam > (uwb_real)1e8) break;
@@ -216,13 +135,23 @@ static void solve_nls(const nls_set *s, const uwb_real *p0, int robust, nls_resu
 
     /* 共分散 = (J^T W J)^-1。解けなければ ok=0。 */
     {
-        uwb_real hmat[6], g[3];
+        uwb_real jm[UWB_MAX_MEAS * 3], hmat[9], inv[9];
         uwb_real wsum = (uwb_real)0, num = (uwb_real)0;
         int i;
-        normal_eq(nf, s->n, r->jac, r->w, 0, hmat, g);
-        r->ok = cov_from_hessian(nf, hmat, r->cov);
+        for (i = 0; i < s->n; ++i)
+            for (k = 0; k < nf; ++k) jm[i * nf + k] = r->jac[i * 3 + k];
+        uwb_ata_weighted(jm, r->w, s->n, nf, hmat);
+
+        for (k = 0; k < 9; ++k) r->cov[k] = (uwb_real)0;
+        r->ok = uwb_inverse(hmat, inv, nf);
+        if (r->ok) {
+            int a, b;
+            for (a = 0; a < nf; ++a)
+                for (b = 0; b < nf; ++b) r->cov[a * 3 + b] = inv[a * nf + b];
+        }
         for (i = 0; i < s->n; ++i) { wsum += r->w[i]; num += r->w[i] * r->resid[i] * r->resid[i]; }
-        r->residual_rms = wsum > (uwb_real)0 ? uwb_math_sqrt(num / wsum) : (uwb_real)-1;
+        r->residual_rms = wsum > (uwb_real)0
+                              ? (uwb_real)sqrt((double)(num / wsum)) : (uwb_real)-1;
         r->gdop = uwb_gdop_from_jac(cfg, r->jac, s->n);
         for (k = 0; k < 3; ++k) if (r->p[k] != r->p[k]) r->ok = 0;
     }
@@ -237,11 +166,7 @@ static void solve_nls(const nls_set *s, const uwb_real *p0, int robust, nls_resu
  *
  * ただし **どちらが悪いかは 1 組だけでは決まらない**ので、Python 版と同じく
  * 「何本と矛盾したか」を数え、過半と矛盾したものだけ落とす。1 本ずつの
- * 小競り合いで巻き添えにしない。
- *
- * アンカー間距離は二乗のまま比べる (組ごとの sqrt が要らない):
- *   ri + rj + slack < dij  ⟺  和 < 0 または 和² < dij²
- *   |ri − rj| − slack > dij ⟺  差 > 0 かつ 差² > dij² */
+ * 小競り合いで巻き添えにしない。 */
 static void physical_gate(const uwb_config *cfg, const uwb_meas *meas, int n,
                           nls_set *set, unsigned long *excluded)
 {
@@ -273,17 +198,13 @@ static void physical_gate(const uwb_config *cfg, const uwb_meas *meas, int n,
             const uwb_anchor *ai = &cfg->anchors[meas[rng[i]].anchor];
             for (j = i + 1; j < nr; ++j) {
                 const uwb_anchor *aj = &cfg->anchors[meas[rng[j]].anchor];
-                uwb_real dv[3], dij2, ri, rj, sum, diff;
-                int conflict;
-                uwb_v3_sub(ai->p, aj->p, dv);
-                dij2 = uwb_v3_norm2(dv);
+                uwb_real dv[3], dij, ri, rj;
+                int k;
+                for (k = 0; k < 3; ++k) dv[k] = ai->p[k] - aj->p[k];
+                dij = (uwb_real)sqrt((double)(dv[0]*dv[0] + dv[1]*dv[1] + dv[2]*dv[2]));
                 ri = meas[rng[i]].value;
                 rj = meas[rng[j]].value;
-                sum  = ri + rj + slack;
-                diff = absr(ri - rj) - slack;
-                conflict = (sum < (uwb_real)0) || (sum * sum < dij2);
-                if (!conflict) conflict = (diff > (uwb_real)0) && (diff * diff > dij2);
-                if (conflict) {
+                if (ri + rj + slack < dij || absr(ri - rj) - slack > dij) {
                     ++conflicts[i];
                     ++conflicts[j];
                 }
@@ -420,7 +341,7 @@ int uwb_solve_lv0(const uwb_config *cfg, const uwb_meas *meas, int n, uwb_fix *o
     {
         nls_result r;
         uwb_real num = (uwb_real)0;
-        uwb_real hmat[6], g[3];
+        uwb_real jm[UWB_MAX_MEAS * 3], hmat[9], inv[9];
         for (k = 0; k < 3; ++k) r.p[k] = p[k];
         for (i = 0; i < set.n; ++i) {
             uwb_real e, j3[3], sg;
@@ -430,11 +351,18 @@ int uwb_solve_lv0(const uwb_config *cfg, const uwb_meas *meas, int n, uwb_fix *o
             r.w[i] = (uwb_real)1 / (sg * sg);
             num += e * e;
         }
-        normal_eq(nf, set.n, r.jac, r.w, 0, hmat, g);
-        /* 共分散が解けなくても Lv0 は位置を返す (旧実装と同じ。ok=1 で上書き)。 */
-        (void)cov_from_hessian(nf, hmat, r.cov);
+        for (i = 0; i < set.n; ++i)
+            for (k = 0; k < nf; ++k) jm[i * nf + k] = r.jac[i * 3 + k];
+        uwb_ata_weighted(jm, r.w, set.n, nf, hmat);
+        for (k = 0; k < 9; ++k) r.cov[k] = (uwb_real)0;
+        r.ok = uwb_inverse(hmat, inv, nf);
+        if (r.ok) {
+            int a, b;
+            for (a = 0; a < nf; ++a)
+                for (b = 0; b < nf; ++b) r.cov[a * 3 + b] = inv[a * nf + b];
+        }
         /* Lv0 の残差 RMS は Python 版と同じく重み無しの RMS */
-        r.residual_rms = uwb_math_sqrt(num / (uwb_real)set.n);
+        r.residual_rms = (uwb_real)sqrt((double)(num / (uwb_real)set.n));
         r.gdop = uwb_gdop_from_jac(cfg, r.jac, set.n);
         r.iterations = 0;
         r.ok = 1;
