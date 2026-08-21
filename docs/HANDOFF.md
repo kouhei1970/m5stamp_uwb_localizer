@@ -49,6 +49,19 @@
 firmware/{probe,devtest,twr,tag,anchor,soltest}   全て警告0・エラー0
 tools/test_pipeline    188件    tools/test_survey  281件    tools/test_uwb_loc  53件
 ```
+**GitHub Actions でも同じものが回っている**（`.github/workflows/build.yml`）。
+ホストテスト3種 + strict、ファーム14通り、タグ `v*` で Release 添付。
+**Release `v0.1.0` 公開済み**（14個の zip。`docs/PREBUILT_BINARIES.md`）。
+
+### 最終セッション（2026-08-21 午後）の終了時点での宿題
+| # | 内容 | 誰が |
+|---|---|---|
+| 1 | **GitHub の Social preview が壊れている。** 3回アップロードしたが画像本体が配信されない（`og:image` の URL が 404）。DevTools で送信は 204 成功、読み戻しだけ失敗 → **GitHub 側の不具合**。クライアント側（拡張/ブラウザ/ネットワーク）は調査済みで無実 | ユーザ。**数日後に再試行。それまで Settings で Remove image しておく**（壊れた画像より自動生成カードの方がまし） |
+| 2 | `assets/social_card.{png,jpg}` は 1280x640 で作り直し済み・コミット済み | — |
+| 3 | 上流 `uwb_localizer` へ報告: `uwb_nls.c:342` の `wsum` が GCC `-Werror=unused-but-set-variable` で落ちる（clang は通す） | ユーザ判断 |
+| 4 | 上流 `perf/exploit-structure` をマージするか | ユーザ判断 |
+| 5 | エディタの clangd が旧ディレクトリ名のパスを見ている | どれか1つで `idf.py fullclean && idf.py build` |
+| 6 | **最終レビュー**（ユーザが「最終レビューの前に一度セッションを閉じる」と言って終了） | 次セッションの最初にやる |
 
 ---
 
