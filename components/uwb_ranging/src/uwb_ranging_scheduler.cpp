@@ -40,6 +40,13 @@ RangingSample RangingScheduler::rangeOne(size_t anchorIndex)
     sample.anchor_index = anchorIndex;
     sample.ok             = false;
 
+    // タスクF(docs/HANDOFF.md §5): 測距「開始」の直前に埋める。観測値
+    // sample.distance_m が「タグがどこにいた時の距離か」を表すには、TWR
+    // 往復（最大 elapsed_ms 程度）の間タグが動いていないと仮定する必要が
+    // あり、その仮定の基準点は往復の開始時刻であるべきだから
+    // （終了時刻を使うと、往復中の移動量ぶん系統的に遅れた時刻になる）。
+    sample.t_us = esp_timer_get_time();
+
     const AnchorEntry& anchor = table_.entry(anchorIndex);
 
     if (cfg_.method == RangingMethod::DS) {

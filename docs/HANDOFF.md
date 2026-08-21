@@ -6,21 +6,28 @@
 
 ## 0. 次セッションの任務
 
-> **確定した仕様変更に合わせて、設計変更と実装を進める**（ユーザ指示 2026-08-21）
+> 前セッション（2026-08-21）で、**§5 の「すぐ着手できる」項目 A〜F はすべて完了した。**
+> 残っているのは**実機を要する検証**と、下の 5 / 6 である。
 
-仕様は固まっているが、**実装が追いついていない**箇所がある。優先順に:
+### 2026-08-21 に完了した仕様と実装
+
+| # | 仕様 | 実装状況 |
+|---|---|---|
+| **1** | `docs/IRQ_POLICY.md`（IRQ 方針） | **実装済み**。IRQ は起床信号としてのみ使い、判読はポーリングと共通。`pin_irq` 未配線なら自動フォールバック。**極性は実機未検証** |
+| **2** | 同上（遅延値の扱い） | **実装済み**。`docs/TIMING_PRESETS.md` に3プリセット。版番号と種別をフレームに載せ、不一致を警告 |
+| **3** | 役割の確定（タグ=StampFly） | **実装済み**。`boards/stampfly.h` 作成。GROVE 2系統4本=SPI、SPI3_HOST、`pin_irq` 既定 UNUSED。**HANDOFF が挙げていた「別配線候補 G6/G8/G11」は誤りだった**（ToF INT ×2 と BMI270 INT1 に配線済みでコネクタに出ていない） |
+| **4** | アンカーのピン構成A/B | **実装済み**。`boards/atoms3.h` に `UWB_BOARD_ATOMS3_PINOUT` の Kconfig 切替 |
+
+### 残っている仕様
 
 | # | 仕様 | 実装状況 | やること |
 |---|---|---|---|
-| **1** | **`docs/IRQ_POLICY.md`**（IRQ 方針） | **実装済み** | アンカー側に IRQ 経路を追加。**ポーリングは残す**。`pin_irq` 未接続なら自動フォールバック |
-| **2** | 同上（遅延値の扱い） | **実装済み** | 遅延値を**役割 × IRQ有無のプリセット**に。**バージョン不一致の検出**（タグ/アンカーで食い違うと測距が壊れる） |
-| **3** | 役割の確定（タグ=StampFly） | **`boards/stampfly.h` が存在しない** | 新規作成。GROVE 4本=SPI、`pin_irq` 既定 UNUSED、別配線候補 G6/G8/G11 をコメントに |
-| **4** | アンカーのピン構成A/B | 未実装 | `boards/atoms3.h` に Kconfig 切替（ToF を Grove に挿すか底面に手配線するか） |
 | 5 | `docs/SURVEY_SPEC.md` の訂正 | 計算部分のみ実装 | `survey chirality` / 冗長度表示 は S3-S5（ESP-NOW）と同時 |
 | 6 | `docs/STAMPFLY_INTEGRATION.md` 案B-2 | 未着手 | 実機で測位が出てから |
 
-**1〜4 は実機なしで進められる。** 3 → 1 → 2 → 4 の順が自然
-（ボード定義が無いと IRQ 経路の条件分岐を書けないため）。
+**次にやるべきことは実機での検証である。** 手順と順序は
+**[`docs/EXPERIMENT_PLAN.md`](EXPERIMENT_PLAN.md)** にまとめてある
+（何をどの順で確かめ、どのフラグをいつ有効にするか、実機でしか潰せない前提10件）。
 
 ---
 
@@ -31,7 +38,7 @@
 
 | リポジトリ | 場所 | 状態 |
 |---|---|---|
-| **m5stamp_uwb_localizer**（本体） | `/Users/kouhei/tmp/github/m5stack_uwb` | **GitHub 公開済み** `kouhei1970/m5stamp_uwb_localizer` (public)。全コミット push 済み |
+| **m5stamp_uwb_localizer**（本体） | `/Users/kouhei/tmp/github/m5stamp_uwb_localizer` | **GitHub 公開済み** `kouhei1970/m5stamp_uwb_localizer` (public)。全コミット push 済み |
 | **uwb_localizer**（上流） | `/Users/kouhei/tmp/github/uwb_localizer` | ブランチ `perf/exploit-structure` を push 済み。**未マージ**。PR 未作成 |
 | stampfly_ecosystem | `third_party/stampfly_ecosystem` | 2026-08-19 の読み取り専用クローン。**書き込み禁止** |
 | M5Stamp-UWB / uwb_localizer 参照用 | `third_party/` | 読み取り専用 |
@@ -40,7 +47,7 @@
 ### ビルド・テストの現況（すべて通る）
 ```
 firmware/{probe,devtest,twr,tag,anchor,soltest}   全て警告0・エラー0
-tools/test_pipeline    132件    tools/test_survey  281件    tools/test_uwb_loc  53件
+tools/test_pipeline    188件    tools/test_survey  281件    tools/test_uwb_loc  53件
 ```
 
 ---
@@ -144,19 +151,19 @@ Web 取得は `WebFetch` / `curl` に限定し、サブエージェントにも�
 ### すぐ着手できる（実機不要）
 | # | 内容 | 備考 |
 |---|---|---|
-| **A** | **`boards/stampfly.h` の作成** | GROVE 4本(G13/G15/G1/G2)=SPI、`pin_irq` は既定 UNUSED。別配線候補 G6/G8/G11 をコメントに |
-| B | `boards/atoms3.h` に構成A/B の Kconfig 切替 | ToF を Grove に挿すか底面に手配線するか |
-| C | 遅延プリセット化 + バージョン不一致検出 | **タグとアンカーで遅延値が食い違うと測距が壊れる**。実運用で必ず踏む |
-| D | `firmware/twr` の `spi_fast_hz` / アンカーアドレスを Kconfig 化 | 切り分けの最頻出項目 |
-| E | `RangingScheduler::stats()` を tag の JSON に接続 | 「どのアンカーが悪いか」は最初に知りたい情報 |
-| F | `RangingSample` に絶対タイムスタンプ追加 | 周内スミア対策（1周32ms → ±16ms、1m/s で 16mm） |
+| ~~**A**~~ | ~~**`boards/stampfly.h` の作成**~~ | **完了 (2026-08-21)**。GROVE 4本(G13/G15/G1/G2)=SPI、`pin_irq` は既定 UNUSED。別配線候補 G6/G8/G11 をコメントに |
+| ~~B~~ | ~~`boards/atoms3.h` に構成A/B の Kconfig 切替~~ | **完了 (2026-08-21)**。ToF を Grove に挿すか底面に手配線するか |
+| ~~C~~ | ~~遅延プリセット化 + バージョン不一致検出~~ | **完了 (2026-08-21)**。タグとアンカーで遅延値が食い違うと測距が壊れる。実運用で必ず踏む |
+| ~~D~~ | ~~`firmware/twr` の `spi_fast_hz` / アンカーアドレスを Kconfig 化~~ | **完了 (2026-08-21)**。`UWB_TWR_TAG_ADDR`/`UWB_TWR_ANCHOR_ADDR`（既定は元の固定値のまま）と `UWB_SPI_FAST_HZ`（既定0=`boards/*.h`のまま。`firmware/probe`にも同じ形で追加）。切り分けの最頻出項目 |
+| ~~E~~ | ~~`RangingScheduler::stats()` を tag の JSON に接続~~ | **完了 (2026-08-21)**。毎周期の`fix`行とは別に`"type":"stats"`行を`UWB_TAG_STATS_INTERVAL_MS`（既定1000ms、0で無出力）ごとに出す。「どのアンカーが悪いか」は最初に知りたい情報 |
+| ~~F~~ | ~~`RangingSample` に絶対タイムスタンプ追加~~ | **完了 (2026-08-21)**。`t_us`（測距開始直前に`esp_timer_get_time()`で記録）を追加し、`fix`行`anchors[]`各要素にも`t`（`fix`の`t`と同じ基準の相対秒）として出力。周内スミア対策（1周32ms → ±16ms、1m/s で 16mm） |
 
 ### 実機が要る
 | # | 内容 |
 |---|---|
 | **Phase 1 受入** | `firmware/probe` で Device ID `0xDECA0314`。**ピン配線が未検証なのでここが最初の関門** |
 | R5 | 遅延値の追い込み（公式手順: `dwt_starttx()` が `DWT_ERROR` を返すまで下げる） |
-| R6 | **アンカー側の** IRQ 駆動化 |
+| R6 | **アンカー側の** IRQ 駆動化 — **コードは実装済み**（`docs/IRQ_POLICY.md`「実装状況」節）。残るのは実機での極性検証（`gpio_config()`のアクティブHIGH前提が正しいか）だけ |
 | R10-R12 | ch9 の PLL 再校正(20°Cごと)、アンテナ遅延校正、診断情報→測位重み |
 | S3-S5 | ESP-NOW、測量モード、コーディネータ |
 | S7 | I2C ToF（高さ自動計測） |

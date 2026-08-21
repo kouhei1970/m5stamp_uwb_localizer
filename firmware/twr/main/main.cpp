@@ -87,8 +87,11 @@ static constexpr uwb::TimingProfile TIMING_PROFILE = uwb::TimingProfile::Polling
 
 /* --- ネットワーク共通パラメータ（4組み合わせ共通。examples 配下の各 .ino と同じ値） --- */
 static constexpr uint16_t PAN_ID           = 0xDECA;
-static constexpr uint16_t TAG_SHORT_ADDR    = 0x0001;
-static constexpr uint16_t ANCHOR_SHORT_ADDR = 0x0002;
+// タスクD-1(docs/HANDOFF.md §5): Kconfig化。既定値は元のソース上の固定値
+// 0x0001/0x0002のまま変えていない(firmware/anchorのUWB_ANCHOR_SHORT_ADDRと
+// 同じ書き方)。
+static constexpr uint16_t TAG_SHORT_ADDR    = CONFIG_UWB_TWR_TAG_ADDR;
+static constexpr uint16_t ANCHOR_SHORT_ADDR = CONFIG_UWB_TWR_ANCHOR_ADDR;
 
 #if !CONFIG_UWB_TWR_ROLE_ANCHOR
 /* TAG側の200ms間隔制御にのみ使う。ANCHOR側は毎ループブロッキング呼び出しで
@@ -143,6 +146,12 @@ static uwb::Config makeConfigFromBoard()
     cfg.pin_gp7      = port.pin_gp7;
     cfg.spi_slow_hz  = port.spi_slow_hz;
     cfg.spi_fast_hz  = port.spi_fast_hz;
+    // タスクD-2(docs/HANDOFF.md §5): 既定0のときはboards/*.hの値(16MHz)を
+    // 一切上書きせず、この関数を追加する前と完全に同一の挙動にする。
+    // Device IDが読めない/たまに化けるときの切り分け用。
+#if CONFIG_UWB_SPI_FAST_HZ > 0
+    cfg.spi_fast_hz = CONFIG_UWB_SPI_FAST_HZ;
+#endif
     cfg.init_spi_bus = port.init_spi_bus;
     // CONFIG_UWB_ENABLE_IRQ is undefined (not just 0) by ESP-IDF's Kconfig
     // when set to n, so #if defined(...) && ... is used instead of #ifdef
@@ -491,6 +500,10 @@ extern "C" void app_main(void)
     uwb::Qm33120 uwbDevice;
     const uwb::Config cfg = makeConfigFromBoard();
     const uwb::PhyConfig phy; // defaults: ch9, preamble128, PAC8, 6.8Mbps (see uwb_qm33120_types.hpp)
+
+    // タスクD-2: 実際に使うSPI高速クロックを起動ログに出す(切り分け作業で
+    // Kconfigの値が本当に反映されたかを確認できるように)。
+    ESP_LOGI(TAG, "spi_fast=%lu", (unsigned long)cfg.spi_fast_hz);
 
     if (!uwbDevice.begin(cfg, phy)) {
         ESP_LOGE(TAG, "begin() failed: error=%s", uwbDevice.lastErrorName());

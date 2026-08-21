@@ -80,6 +80,21 @@ menu "UWB Tag Configuration"
             ポーリングが終わり次第すぐ次の周を始める。下流の消費側の
             想定周期に合わせて意図的に更新レートを抑えたい場合に上げる。
 
+    config UWB_TAG_STATS_INTERVAL_MS
+        int "測距成功率(\"type\":\"stats\")行を出す間隔 [ms]（0で出力しない）"
+        range 0 60000
+        default 1000
+        help
+            uwb::RangingScheduler::stats() が持つ「どのアンカーが悪いか」の
+            成功率統計を、毎周期の "type":"fix" 行とは別に "type":"stats"
+            行としてこの間隔で出す(docs/HANDOFF.md §5 タスクE)。fix は
+            毎周期（約31Hz）出るため、そこへ成功率を足すとログが太る。
+            JsonLinesHal（third_party/uwb_localizer 側）は未知のtypeを
+            読み捨てるので互換性は安全（本ファイル冒頭コメント参照）。
+
+            0 にすると stats 行そのものを出さない（従来どおり fix/meas/
+            anchors のみ）。
+
     config UWB_TAG_CONSOLE
         bool "シリアルコンソール (USB-Serial/JTAG) を有効にする"
         default y

@@ -82,6 +82,48 @@ menu "UWB TWR Configuration"
 
     endchoice
 
+    config UWB_TWR_TAG_ADDR
+        hex "TAG (initiator) short address"
+        range 0x0000 0xFFFE
+        default 0x0001
+        help
+            The TWR short address used by the TAG role (requestRange()/
+            requestDSRange() as initiatorAddress; also the address this
+            build's ANCHOR role expects Poll frames to come from).
+
+            Do not use 0xFFFF - it is the broadcast address. TAG and
+            ANCHOR must agree on both this value and UWB_TWR_ANCHOR_ADDR,
+            or ranging will not succeed (a mismatch just looks like "no
+            response", the log alone cannot tell you which side is wrong).
+
+    config UWB_TWR_ANCHOR_ADDR
+        hex "ANCHOR (responder) short address"
+        range 0x0000 0xFFFE
+        default 0x0002
+        help
+            The TWR short address used by the ANCHOR role (respondRange()/
+            respondDSRange()); also the responderAddress this build's TAG
+            role targets.
+
+            Do not use 0xFFFF - it is the broadcast address. TAG and
+            ANCHOR must agree on both this value and UWB_TWR_TAG_ADDR, or
+            ranging will not succeed.
+
+    config UWB_SPI_FAST_HZ
+        int "SPI fast clock override [Hz] (0 = use boards/*.h default)"
+        range 0 32000000
+        default 0
+        help
+            Overrides cfg.spi_fast_hz after it has been populated from
+            boards/*.h's BOARD_*_UWB_PORT_CONFIG. The default, 0, leaves
+            it untouched - i.e. exactly the boards/*.h value (currently
+            16 MHz), identical to the behaviour before this option
+            existed.
+
+            Useful for bisecting a Device ID that cannot be read, or that
+            reads back intermittently corrupted, by lowering the SPI
+            clock. The QM33120W/DW3720 SPI clock ceiling is 32 MHz.
+
     choice UWB_TIMING_PROFILE
         prompt "TWR timing preset"
         default UWB_TIMING_PROFILE_POLLING_BOTH

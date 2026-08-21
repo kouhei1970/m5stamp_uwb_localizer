@@ -44,4 +44,19 @@ menu "UWB Probe Configuration"
 
     endchoice
 
+    config UWB_SPI_FAST_HZ
+        int "SPI fast clock override [Hz] (0 = use boards/*.h default)"
+        range 0 32000000
+        default 0
+        help
+            Overrides cfg.spi_fast_hz after it has been populated from
+            boards/*.h's BOARD_*_UWB_PORT_CONFIG. The default, 0, leaves
+            it untouched - i.e. exactly the boards/*.h value (currently
+            16 MHz), identical to the behaviour before this option
+            existed.
+
+            Useful for bisecting a Device ID that cannot be read, or that
+            reads back intermittently corrupted, by lowering the SPI
+            clock. The QM33120W/DW3720 SPI clock ceiling is 32 MHz.
+
 endmenu

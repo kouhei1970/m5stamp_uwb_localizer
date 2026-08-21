@@ -301,11 +301,13 @@ struct EpochTiming {
 
 /** 毎エポック出す "type":"fix" 行（本プロジェクト独自の診断情報。
  *  JsonLinesHal 側は type を認識せず読み捨てるだけなので安全に共存できる）。
- *  トップレベルの ok/ambiguous/p/... は Lv2（本番）の結果を表す。 */
+ *  トップレベルの ok/ambiguous/p/... は Lv2（本番）の結果を表す。
+ *  @param bootUs タスクF(docs/HANDOFF.md §5): anchors[].t を fix 行の
+ *                 "t" と同じ基準（起動からの秒）に直すための引き算に使う。 */
 static void printFixLine(double t, uint32_t cycleMs, const uwb::AnchorTable& table,
                           const uwb::RangingSample* samples, size_t n, const uwb::PositionResult& lv0,
                           const uwb::PositionResult& lv2, bool haveLv3, const uwb::PositionResult& lv3,
-                          const EpochTiming& timing)
+                          const EpochTiming& timing, int64_t bootUs)
 {
     if (!jsonOutputEnabled()) {
         return;
@@ -344,13 +346,57 @@ static void printFixLine(double t, uint32_t cycleMs, const uwb::AnchorTable& tab
         }
         char id[8];
         formatAnchorId(table.entry(samples[i].anchor_index).short_addr, id, sizeof(id));
+        // タスクF: t_us は rangeOne() が測距開始直前に必ず埋める（成功/失敗を
+        // 問わない。uwb_ranging_scheduler.cpp 参照）ので、ok:false でも
+        // 「いつ試みたか」は分かる。fix行トップレベルの "t" と比較できる
+        // よう、生の t_us ではなく bootUs を引いた相対秒で出す。
+        const double tAnchor = static_cast<double>(samples[i].t_us - bootUs) / 1e6;
         if (samples[i].ok) {
-            jsonAppend(buf, JSON_BUF_SIZE, &off, "%s{\"a\":\"%s\",\"ok\":true,\"d\":%.4f,\"elapsed_ms\":%lu}",
-                       (i == 0) ? "" : ",", id, static_cast<double>(samples[i].distance_m),
-                       static_cast<unsigned long>(samples[i].elapsed_ms));
+            jsonAppend(buf, JSON_BUF_SIZE, &off,
+                       "%s{\"a\":\"%s\",\"ok\":true,\"d\":%.4f,\"elapsed_ms\":%lu,\"t\":%.4f}", (i == 0) ? "" : ",",
+                       id, static_cast<double>(samples[i].distance_m), static_cast<unsigned long>(samples[i].elapsed_ms),
+                       tAnchor);
         } else {
-            jsonAppend(buf, JSON_BUF_SIZE, &off, "%s{\"a\":\"%s\",\"ok\":false}", (i == 0) ? "" : ",", id);
+            jsonAppend(buf, JSON_BUF_SIZE, &off, "%s{\"a\":\"%s\",\"ok\":false,\"t\":%.4f}", (i == 0) ? "" : ",", id,
+                       tAnchor);
         }
+    }
+    jsonAppend(buf, JSON_BUF_SIZE, &off, "]}\n");
+    std::fputs(buf, stdout);
+}
+
+/**
+ * @brief 約1秒ごとに出す "type":"stats" 行（タスクE、docs/HANDOFF.md §5）。
+ *
+ * uwb::AnchorStats{attempts,successes,successRate()}（uwb_ranging_types.hpp）
+ * は実装済みだが接続先が無かったので、ここで RangingScheduler::stats() を
+ * JSON Lines 出力へつなぐ。毎周期(約31Hz)出る "fix" 行に足すとログが太る
+ * ため、あえて別行・別間隔にする（決定事項。呼び出し側で
+ * CONFIG_UWB_TAG_STATS_INTERVAL_MS ごとに間引いて呼ぶこと）。
+ * JsonLinesHal は未知の type を "other" として黙って読み捨てる仕様なので
+ * （本ファイル冒頭コメント参照）、既存のPython可視化との互換性は保たれる。
+ *
+ * その周期に測ったものだけでなく、**登録されている全アンカー**
+ * （無効化されているものも含む。stats_[i] は attempts=0 のまま）を出す。
+ */
+static void printStatsLine(double t, const uwb::AnchorTable& table, const uwb::RangingScheduler& scheduler,
+                            uint32_t cycleMs)
+{
+    if (!jsonOutputEnabled()) {
+        return;
+    }
+    char* const buf = g_jsonBuf;
+    size_t off      = 0;
+    jsonAppend(buf, JSON_BUF_SIZE, &off,
+               "{\"v\":1,\"type\":\"stats\",\"t\":%.3f,\"tag\":\"tag0\",\"cycle_ms\":%lu,\"anchors\":[", t,
+               static_cast<unsigned long>(cycleMs));
+    for (size_t i = 0; i < table.size(); ++i) {
+        const uwb::AnchorStats& s = scheduler.stats(i);
+        char id[8];
+        formatAnchorId(table.entry(i).short_addr, id, sizeof(id));
+        jsonAppend(buf, JSON_BUF_SIZE, &off, "%s{\"a\":\"%s\",\"att\":%lu,\"succ\":%lu,\"rate\":%.4f}",
+                   (i == 0) ? "" : ",", id, static_cast<unsigned long>(s.attempts),
+                   static_cast<unsigned long>(s.successes), static_cast<double>(s.successRate()));
     }
     jsonAppend(buf, JSON_BUF_SIZE, &off, "]}\n");
     std::fputs(buf, stdout);
@@ -546,6 +592,11 @@ extern "C" void app_main(void)
     uint32_t epochCount      = 0;
     uint32_t okFixCount      = 0;
 
+    // タスクE: "type":"stats" 行の間引き用。起動直後ではなく、最初の
+    // CONFIG_UWB_TAG_STATS_INTERVAL_MS が経ってから出す(0件のstatsを
+    // 出すより、1周期ぶん貯まってからの方が意味がある)。
+    int64_t lastStatsUs = bootUs;
+
     while (true) {
 #if CONFIG_UWB_TAG_CONSOLE
         /* --- 1周期の先頭でだけ設定を取り込む ---
@@ -597,7 +648,17 @@ extern "C" void app_main(void)
         }
 
         printMeasLine(t, table, samples, n);
-        printFixLine(t, scheduler.lastCycleMs(), table, samples, n, lv0, lv2, haveLv3, lv3, timing);
+        printFixLine(t, scheduler.lastCycleMs(), table, samples, n, lv0, lv2, haveLv3, lv3, timing, bootUs);
+
+        // タスクE: 約 CONFIG_UWB_TAG_STATS_INTERVAL_MS ごとに "type":"stats"
+        // 行を出す。0 なら出さない（Kconfigのhelp参照）。
+        if (CONFIG_UWB_TAG_STATS_INTERVAL_MS > 0) {
+            const int64_t nowUs = esp_timer_get_time();
+            if ((nowUs - lastStatsUs) >= static_cast<int64_t>(CONFIG_UWB_TAG_STATS_INTERVAL_MS) * 1000) {
+                printStatsLine(t, table, scheduler, scheduler.lastCycleMs());
+                lastStatsUs = nowUs;
+            }
+        }
 
 #if CONFIG_UWB_TAG_CONSOLE
         if (consoleReady) {

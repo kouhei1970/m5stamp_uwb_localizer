@@ -55,6 +55,11 @@ struct RangingSample {
     float distance_m        = 0.0f;  //!< 生の測距値 [m]（アンテナ遅延は未補正のまま渡す。
                                       //!< 補正は uwb_loc 側が anchor.antenna_delay_m で行う）
     uint32_t elapsed_ms     = 0;     //!< この1回のTWR往復に要した時間 [ms]
+
+    //!< この測距が行われた時刻 [us]。esp_timer_get_time() の生値（起動からの単調増加）。
+    //!< 0 は「未設定」。1周32msで5台を順に測るため、同一周でも台ごとに最大32msの差がある
+    //!< （docs/HANDOFF.md §5 F。1m/s で 32mm の歪み）。
+    int64_t t_us = 0;
 };
 
 /** 1台ぶんの測距成功率統計。 */

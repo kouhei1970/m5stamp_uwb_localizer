@@ -136,6 +136,16 @@ void app_main(void)
 
     uwb_port_config_t cfg = BOARD_UWB_PORT_CONFIG;
 
+    /* Task D-2 (docs/HANDOFF.md SS5): override cfg.spi_fast_hz only when the
+     * Kconfig value is non-zero. The default, 0, leaves the struct exactly
+     * as BOARD_UWB_PORT_CONFIG built it (the per-board header under
+     * boards/, currently 16 MHz) - identical to the behaviour before this
+     * option existed. */
+#if CONFIG_UWB_SPI_FAST_HZ > 0
+    cfg.spi_fast_hz = CONFIG_UWB_SPI_FAST_HZ;
+#endif
+    ESP_LOGI(TAG, "spi_fast=%lu", (unsigned long)cfg.spi_fast_hz);
+
     esp_err_t err = uwb_port_init(&cfg);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "uwb_port_init failed: %s", esp_err_to_name(err));
