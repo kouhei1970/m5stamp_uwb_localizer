@@ -4,8 +4,8 @@ idf_component_register(
     INCLUDE_DIRS
         "."
         # Repo root, three levels up from firmware/devtest/main/, so that
-        # #include "boards/stamps3.h" / "boards/atoms3.h" resolves (same
-        # convention as firmware/probe/main/CMakeLists.txt).
+        # #include "boards/stamps3.h" / "boards/atoms3.h" / "boards/stampfly.h"
+        # resolves (same convention as firmware/probe/main/CMakeLists.txt).
         "../../.."
     REQUIRES
         uwb_qm33120

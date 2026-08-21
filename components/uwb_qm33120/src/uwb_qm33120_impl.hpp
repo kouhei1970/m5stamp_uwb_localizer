@@ -47,6 +47,26 @@ struct Qm33120::Impl {
     uint8_t tx_sequence       = 0;
     uint16_t tx_antenna_delay = 16385;
     Error last_error           = Error::Ok;
+    /* IRQ("起床信号")が実際に有効かどうか(docs/IRQ_POLICY.md)。config.use_irq
+     * が true でも、pin_irq未配線やISR登録失敗でフォールバックした場合は
+     * falseのままになる。init()が立て、end()が落とす。原本(M5Stamp_UWB)には
+     * 対応物が無い新規メンバ。 */
+    bool irq_active            = false;
+
+    /**
+     * @brief 相手（ショートアドレス）ごとに、タイミングプリセットの版/種別
+     * 不一致を既に警告したかの記録（docs/TIMING_PRESETS.md §3.3、タスクC-3）。
+     * 毎周期5台分ログが埋まるのを防ぐため、同じ相手については1回だけ警告する。
+     * 5アンカー×1タグ程度の規模を想定した線形走査で十分なので8個で足りる。
+     *
+     * あふれ対策: 8個を超えて新しいピアが現れた場合、**最古を捨てるのではなく
+     * 単純に以後の新規ピアは記録・警告しない**方式にした（実装:
+     * uwb_qm33120_twr.cpp の checkTimingTagAndWarn()）。起動直後に全ピアぶんの
+     * 警告を1回ずつ出し切れば十分な用途であり、運用中に相手が入れ替わり
+     * 続ける想定は薄いため、最古を捨てて出し直す複雑さは不要と判断した。
+     */
+    uint16_t warned_peers[8] = {0};
+    uint8_t warned_count      = 0;
 };
 
 } // namespace uwb

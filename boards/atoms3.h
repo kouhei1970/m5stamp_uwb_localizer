@@ -20,25 +20,48 @@
  * 完全に空いている GPIO は実質 6 本のみ。内訳は 2 箇所に分かれている:
  *   - 底面 6 ピンヘッダ: G5 / G6 / G7 / G8
  *   - Grove ポート (HY2.0-4P): G1 / G2 (本来は I2C の SDA/SCL)
- * この 6 本を SCK/MOSI/MISO/CS/RST/IRQ に全て割り当てる。
+ * SPI (SCK/MOSI/MISO/CS) はどちらの構成でも共通してこの底面 6 ピンヘッダの
+ * うち G5/G6/G7/G8 を使う。
  * 出典: https://docs.m5stack.com/en/core/AtomS3
  * ※ この内訳は実物で要確認（docs/SOLDER_PADS.md の未確認事項リスト参照）
  *
- * - SCK/MOSI/MISO/CS: 底面 6 ピンヘッダの空き GPIO
- * - RST/IRQ: 本来 Grove ポートの I2C (SDA/SCL) に使われる G1/G2 を転用。
- *   これにより Grove I2C は使用不可になる（トレードオフとして明記）。
- *
- * WAKEUP と GP7 は UWB_PORT_PIN_UNUSED（未配線）とする。
+ * WAKEUP と GP7 はどちらの構成でも UWB_PORT_PIN_UNUSED（未配線）とする。
  * 機能面での支障は無い: 本モジュールの最小配線要件は
  * GND/VCC/CLK/MOSI(CDI)/MISO(CDO)/CS のみであり、本ドライバはポーリング
- * 方式で動作するため IRQ 自体も必須ではない（AtomS3 でも IRQ は G2 に配線）。
+ * 方式で動作するため IRQ 自体も必須ではない。
  * WAKEUP 未配線時は uwb_port_wakeup_device_with_io() が CS パルスによる
  * フォールバック経路を使う（components/uwb_port/src/uwb_port.c 実装済み）。
  *
- * ■ G38 / G39 は I2C として空けてある（ToF による高さ自動計測のため）
- * 底面ヘッダには G38 / G39 も出ている。I2C として使い、ToF 距離センサを
- * 増設することで高さの自動計測ができる（docs/SURVEY_SPEC.md 参照）。
- * SPI / RST / IRQ を一切削らずに済む。
+ * ============================================================
+ * ■ ピン構成 A / B の切替（docs/IRQ_POLICY.md 22〜27行の表、2026-08-21 確定）
+ * ============================================================
+ * RST/IRQ と ToF(高さ自動計測用 I2C, docs/SURVEY_SPEC.md 参照) の割当を
+ * 入れ替えた2通りの構成を Kconfig (CONFIG_UWB_BOARD_ATOMS3_PINOUT_B、
+ * 各アプリの main/Kconfig.projbuild の choice UWB_BOARD_ATOMS3_PINOUT) で
+ * 選べるようにしてある。マクロ BOARD_ATOMS3_UWB_PORT_CONFIG の中身は
+ * このビルド設定で切り替わるが、呼び出し側（各 firmware アプリの
+ * main.c(pp)）はマクロ名を変えずに済む。
+ *
+ * |        | SPI   | RST / IRQ    | ToF (I2C) | ToF の接続        | 推奨ボード   |
+ * |--------|-------|--------------|-----------|-------------------|--------------|
+ * | 構成A  | G5-G8 | Grove G1/G2  | G38/G39   | 底面へ手配線      | 無印 AtomS3  |
+ * | 構成B  | G5-G8 | G38/G39      | Grove G1/G2 | Grove に挿すだけ | AtomS3R      |
+ *
+ * - **構成A（既定）**: RST/IRQ に Grove ポート (G1/G2、本来は I2C SDA/SCL)
+ *   を転用し、ToF は底面ヘッダの G38/G39 へ手配線する。無印 AtomS3 では
+ *   G38/G39 が IMU(MPU6886) の I2C と共用になるため、この構成でないと
+ *   ToF が IMU と同じバスに相乗りしてしまう（本リポジトリは IMU を
+ *   使わないため実害は無いが、念のため使わない前提のボード=無印を推奨）。
+ * - **構成B**: RST/IRQ に底面ヘッダの G38/G39 を使い、ToF は Grove ポート
+ *   (G1/G2) に挿すだけで済む。AtomS3R は IMU(BMI270)/地磁気(BMM150) が
+ *   G0/G45 に移っているため G38/G39 が完全に専有できる
+ *   （下記「無印 AtomS3 と AtomS3R の違い」参照）。
+ *
+ * 構成B の pin_rst=38 / pin_irq=39 は「底面ヘッダに G38/G39 が出ている」
+ * 「AtomS3R では IMU が G0/G45 に移っているので G38/G39 を専有できる」の
+ * 2点を根拠に割り当てた組み合わせであり、**G38 と G39 のどちらが RST で
+ * どちらが IRQ かは実機のシルク印刷・導通確認による確認をまだ行っておらず
+ * 未確認**。実物到着時に入れ替えが必要になる可能性がある。
  *
  * ■ 無印 AtomS3 と AtomS3R の違い（2026-08-21 ユーザ情報）
  * **AtomS3R が現行版。無印は在庫限り。**
@@ -57,6 +80,30 @@
  *
  * 想定: G38 = SDA, G39 = SCL（**実物で要確認**）
  */
+#if CONFIG_UWB_BOARD_ATOMS3_PINOUT_B
+/* 構成B: RST/IRQ = G38/G39（底面ヘッダ）、ToF は Grove(G1/G2) に挿すだけ。
+ * AtomS3R 向け（無印では G38/G39 が MPU6886 と共用のため構成A を推奨）。 */
+#define BOARD_ATOMS3_PINOUT_NAME "B"
+#define BOARD_ATOMS3_UWB_PORT_CONFIG                                     \
+    {                                                                    \
+        .spi_host     = SPI2_HOST,                                      \
+        .pin_sck      = 7,  /* G7: bottom 6-pin header, free GPIO, docs.m5stack.com/en/core/AtomS3 */ \
+        .pin_mosi     = 6,  /* G6: bottom 6-pin header, free GPIO, docs.m5stack.com/en/core/AtomS3 */ \
+        .pin_miso     = 5,  /* G5: bottom 6-pin header, free GPIO, docs.m5stack.com/en/core/AtomS3 */ \
+        .pin_cs       = 8,  /* G8: bottom 6-pin header, free GPIO, docs.m5stack.com/en/core/AtomS3 */ \
+        .pin_rst      = 38, /* G38: bottom header, AtomS3R では IMU が G0/G45 に移り専有できる。RST/IRQのどちらがG38かは実機未確認 */ \
+        .pin_irq      = 39, /* G39: bottom header, 同上。RST/IRQのどちらがG39かは実機未確認 */ \
+        .pin_wakeup   = UWB_PORT_PIN_UNUSED, /* no free GPIO left; see comment above (CS-pulse wakeup fallback) */ \
+        .pin_gp7      = UWB_PORT_PIN_UNUSED, /* no free GPIO left; see comment above */ \
+        .spi_slow_hz  = 2000000,                                        \
+        .spi_fast_hz  = 16000000,                                       \
+        .init_spi_bus = true,                                           \
+    }
+#else
+/* 構成A（既定）: RST/IRQ = Grove(G1/G2)、ToF は底面ヘッダ G38/G39 へ手配線。
+ * 無印 AtomS3 向け（G38/G39 が MPU6886 の I2C と共用のため、AtomS3R での
+ * 構成B ほど綺麗ではないが、この構成なら無印でも動く）。 */
+#define BOARD_ATOMS3_PINOUT_NAME "A"
 #define BOARD_ATOMS3_UWB_PORT_CONFIG                                     \
     {                                                                    \
         .spi_host     = SPI2_HOST,                                      \
@@ -72,3 +119,4 @@
         .spi_fast_hz  = 16000000,                                       \
         .init_spi_bus = true,                                           \
     }
+#endif

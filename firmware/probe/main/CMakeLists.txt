@@ -4,7 +4,8 @@ idf_component_register(
     INCLUDE_DIRS
         "."
         # Repo root, three levels up from firmware/probe/main/, so that
-        # #include "boards/stamps3.h" / "boards/atoms3.h" resolves.
+        # #include "boards/stamps3.h" / "boards/atoms3.h" / "boards/stampfly.h"
+        # resolves.
         "../../.."
     REQUIRES
         uwb_port

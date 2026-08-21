@@ -25,6 +25,7 @@
 
 #include "uwb_cfgstore_blob.hpp"
 #include "uwb_qm33120_frame_match.hpp"
+#include "uwb_qm33120_timing.hpp"
 #include "uwb_qm33120_units.hpp"
 #include "uwb_ranging_anchor_table.hpp"
 #include "uwb_ranging_pipeline.hpp"
@@ -738,6 +739,378 @@ static void scenario12_cfgstore_corruption()
     }
 }
 
+/* ==================================================================== *
+ * 13. docs/TIMING_PRESETS.md §2 プリセット表の検算（タスクE-1）。
+ *     uwb_qm33120_timing.hpp は ESP-IDF/Qorvo SDK 非依存なのでここから
+ *     直接includeでき、実物の timingPresetSs()/timingPresetDs() を叩ける。
+ * ==================================================================== */
+static void scenario13_timing_preset_table()
+{
+    std::printf("--- 13. docs/TIMING_PRESETS.md §2 プリセット表の検算 ---\n");
+    using uwb::TimingProfile;
+
+    // §2.1 RangeConfig(SS-TWR)。
+    {
+        const uwb::TimingPresetSs p = uwb::timingPresetSs(TimingProfile::PollingBoth);
+        CHECK(p.responseTxDelayUus == 3000 && p.responseRxAfterTxDelayUus == 500 && p.rxTimeoutUus == 4500,
+              "SS PollingBothが表と違う (tx=%u rx=%u to=%u)", p.responseTxDelayUus, p.responseRxAfterTxDelayUus,
+              p.rxTimeoutUus);
+    }
+    {
+        const uwb::TimingPresetSs p = uwb::timingPresetSs(TimingProfile::AnchorIrq);
+        CHECK(p.responseTxDelayUus == 878 && p.responseRxAfterTxDelayUus == 400 && p.rxTimeoutUus == 1200,
+              "SS AnchorIrqが表と違う (tx=%u rx=%u to=%u)", p.responseTxDelayUus, p.responseRxAfterTxDelayUus,
+              p.rxTimeoutUus);
+    }
+    {
+        const uwb::TimingPresetSs p = uwb::timingPresetSs(TimingProfile::BothIrq);
+        CHECK(p.responseTxDelayUus == 878 && p.responseRxAfterTxDelayUus == 400 && p.rxTimeoutUus == 1200,
+              "SS BothIrqが表と違う (tx=%u rx=%u to=%u)", p.responseTxDelayUus, p.responseRxAfterTxDelayUus,
+              p.rxTimeoutUus);
+    }
+
+    // §2.2 DSRangeConfig(DS-TWR)。
+    {
+        const uwb::TimingPresetDs p = uwb::timingPresetDs(TimingProfile::PollingBoth);
+        CHECK(p.responseTxDelayUus == 3000 && p.responseRxAfterTxDelayUus == 1500 && p.finalTxDelayUus == 1800 &&
+                  p.finalRxAfterResponseTxDelayUus == 500 && p.resultRxAfterFinalTxDelayUus == 200 &&
+                  p.rxTimeoutUus == 3000,
+              "DS PollingBothが表と違う (tx=%u rx=%u ftx=%u frx=%u rrx=%u to=%u)", p.responseTxDelayUus,
+              p.responseRxAfterTxDelayUus, p.finalTxDelayUus, p.finalRxAfterResponseTxDelayUus,
+              p.resultRxAfterFinalTxDelayUus, p.rxTimeoutUus);
+    }
+    {
+        const uwb::TimingPresetDs p = uwb::timingPresetDs(TimingProfile::AnchorIrq);
+        CHECK(p.responseTxDelayUus == 878 && p.responseRxAfterTxDelayUus == 400 && p.finalTxDelayUus == 1365 &&
+                  p.finalRxAfterResponseTxDelayUus == 500 && p.resultRxAfterFinalTxDelayUus == 0 &&
+                  p.rxTimeoutUus == 1200,
+              "DS AnchorIrqが表と違う (tx=%u rx=%u ftx=%u frx=%u rrx=%u to=%u)", p.responseTxDelayUus,
+              p.responseRxAfterTxDelayUus, p.finalTxDelayUus, p.finalRxAfterResponseTxDelayUus,
+              p.resultRxAfterFinalTxDelayUus, p.rxTimeoutUus);
+    }
+    {
+        const uwb::TimingPresetDs p = uwb::timingPresetDs(TimingProfile::BothIrq);
+        CHECK(p.responseTxDelayUus == 878 && p.responseRxAfterTxDelayUus == 400 && p.finalTxDelayUus == 683 &&
+                  p.finalRxAfterResponseTxDelayUus == 200 && p.resultRxAfterFinalTxDelayUus == 0 &&
+                  p.rxTimeoutUus == 1200,
+              "DS BothIrqが表と違う (tx=%u rx=%u ftx=%u frx=%u rrx=%u to=%u)", p.responseTxDelayUus,
+              p.responseRxAfterTxDelayUus, p.finalTxDelayUus, p.finalRxAfterResponseTxDelayUus,
+              p.resultRxAfterFinalTxDelayUus, p.rxTimeoutUus);
+    }
+
+    // その他のヘルパ。
+    CHECK(std::strcmp(uwb::timingProfileName(TimingProfile::PollingBoth), "PollingBoth") == 0,
+          "timingProfileName(PollingBoth)が違う");
+    CHECK(std::strcmp(uwb::timingProfileName(TimingProfile::AnchorIrq), "AnchorIrq") == 0,
+          "timingProfileName(AnchorIrq)が違う");
+    CHECK(std::strcmp(uwb::timingProfileName(TimingProfile::BothIrq), "BothIrq") == 0,
+          "timingProfileName(BothIrq)が違う");
+    CHECK(std::strcmp(uwb::timingProfileName(static_cast<TimingProfile>(99)), "?") == 0,
+          "timingProfileName(不正値)が\"?\"でない");
+
+    CHECK(!uwb::timingProfileNeedsAnchorIrq(TimingProfile::PollingBoth), "needsAnchorIrq(PollingBoth)がtrue");
+    CHECK(uwb::timingProfileNeedsAnchorIrq(TimingProfile::AnchorIrq), "needsAnchorIrq(AnchorIrq)がfalse");
+    CHECK(uwb::timingProfileNeedsAnchorIrq(TimingProfile::BothIrq), "needsAnchorIrq(BothIrq)がfalse");
+    CHECK(!uwb::timingProfileNeedsTagIrq(TimingProfile::PollingBoth), "needsTagIrq(PollingBoth)がtrue");
+    CHECK(!uwb::timingProfileNeedsTagIrq(TimingProfile::AnchorIrq), "needsTagIrq(AnchorIrq)がtrue");
+    CHECK(uwb::timingProfileNeedsTagIrq(TimingProfile::BothIrq), "needsTagIrq(BothIrq)がfalse");
+
+    CHECK(uwb::timingProfileValid(0) && uwb::timingProfileValid(1) && uwb::timingProfileValid(2),
+          "0..2がtimingProfileValid()でfalseになった");
+    CHECK(!uwb::timingProfileValid(3), "3がtimingProfileValid()でtrueになった");
+}
+
+/* ==================================================================== *
+ * 14. PollingBothがRangeConfig/DSRangeConfigの既定値と一致すること
+ *     （タスクE-2）。
+ *
+ * 【重要な限界】RangeConfig/DSRangeConfig自体（uwb_qm33120_types.hpp）は
+ * uwb_port.h経由でdriver/spi_master.h(ESP-IDF)を引き込むため、ホストからは
+ * includeできない（payloadMatches()と同じ、本プロジェクトの既存の制約。
+ * tools/test_pipeline/Makefileが types.hpp を include path に含めておらず、
+ * -I$(QM33120_DIR)/include のみでビルドしていることからも分かる）。
+ * したがってここでは構造体を実際にインスタンス化する代わりに、
+ * uwb_qm33120_types.hppのメンバ初期化子の値をそのまま転記して比較する
+ * （転記元の行番号を各値にコメントで添える。ズレたらどちらかを直す判断が
+ * 要る）。
+ * ==================================================================== */
+static void scenario14_timing_preset_matches_struct_defaults()
+{
+    std::printf("--- 14. PollingBothがRangeConfig/DSRangeConfigの既定値と一致すること ---\n");
+
+    // 出典: uwb_qm33120_types.hpp RangeConfig（responseRxAfterTxDelayUus:307,
+    // responseTxDelayUus:310, rxTimeoutUus:313）。
+    const uint32_t ssDefaultResponseTxDelayUus        = 3000;
+    const uint32_t ssDefaultResponseRxAfterTxDelayUus = 500;
+    const uint32_t ssDefaultRxTimeoutUus                = 4500;
+    const uwb::TimingPresetSs ssPreset = uwb::timingPresetSs(uwb::TimingProfile::PollingBoth);
+    CHECK(ssPreset.responseTxDelayUus == ssDefaultResponseTxDelayUus &&
+              ssPreset.responseRxAfterTxDelayUus == ssDefaultResponseRxAfterTxDelayUus &&
+              ssPreset.rxTimeoutUus == ssDefaultRxTimeoutUus,
+          "SS PollingBothがRangeConfigの既定値と一致しない");
+
+    // 出典: uwb_qm33120_types.hpp DSRangeConfig（responseRxAfterTxDelayUus:367,
+    // responseTxDelayUus:371, finalTxDelayUus:375,
+    // finalRxAfterResponseTxDelayUus:379, resultRxAfterFinalTxDelayUus:403,
+    // rxTimeoutUus:407）。
+    const uint32_t dsDefaultResponseTxDelayUus             = 3000;
+    const uint32_t dsDefaultResponseRxAfterTxDelayUus      = 1500;
+    const uint32_t dsDefaultFinalTxDelayUus                 = 1800;
+    const uint32_t dsDefaultFinalRxAfterResponseTxDelayUus = 500;
+    const uint32_t dsDefaultResultRxAfterFinalTxDelayUus   = 200;
+    const uint32_t dsDefaultRxTimeoutUus                    = 3000;
+    const uwb::TimingPresetDs dsPreset = uwb::timingPresetDs(uwb::TimingProfile::PollingBoth);
+    CHECK(dsPreset.responseTxDelayUus == dsDefaultResponseTxDelayUus &&
+              dsPreset.responseRxAfterTxDelayUus == dsDefaultResponseRxAfterTxDelayUus &&
+              dsPreset.finalTxDelayUus == dsDefaultFinalTxDelayUus &&
+              dsPreset.finalRxAfterResponseTxDelayUus == dsDefaultFinalRxAfterResponseTxDelayUus &&
+              dsPreset.resultRxAfterFinalTxDelayUus == dsDefaultResultRxAfterFinalTxDelayUus &&
+              dsPreset.rxTimeoutUus == dsDefaultRxTimeoutUus,
+          "DS PollingBothがDSRangeConfigの既定値と一致しない");
+}
+
+/* ==================================================================== *
+ * 15. docs/TIMING_PRESETS.md §1.2 締切式の検算（タスクE-3）。
+ *     各プロファイルについて:
+ *       responseRxAfterTxDelayUusの実us < responseTxDelayUusの実us - 179
+ *       finalRxAfterResponseTxDelayUusの実us < finalTxDelayUusの実us - 179
+ *     （実us換算 = uus * 512 / 499.2）
+ * ==================================================================== */
+namespace {
+double uusToRealUsForDeadlineCheck(uint32_t uus)
+{
+    return static_cast<double>(uus) * 512.0 / 499.2;
+}
+} // namespace
+
+static void scenario15_timing_deadline_formula()
+{
+    std::printf("--- 15. docs/TIMING_PRESETS.md §1.2 締切式の検算 ---\n");
+    using uwb::TimingProfile;
+
+    const TimingProfile profiles[] = {TimingProfile::PollingBoth, TimingProfile::AnchorIrq, TimingProfile::BothIrq};
+    for (TimingProfile p : profiles) {
+        const uwb::TimingPresetSs ss  = uwb::timingPresetSs(p);
+        const double ssTxReal          = uusToRealUsForDeadlineCheck(ss.responseTxDelayUus);
+        const double ssRxReal          = uusToRealUsForDeadlineCheck(ss.responseRxAfterTxDelayUus);
+        CHECK(ssRxReal < (ssTxReal - 179.0),
+              "SS %s: responseRxAfterTxDelayUus(実%.1fus)がresponseTxDelayUus-179(実%.1fus)以上",
+              uwb::timingProfileName(p), ssRxReal, ssTxReal - 179.0);
+
+        const uwb::TimingPresetDs ds     = uwb::timingPresetDs(p);
+        const double dsRespTxReal         = uusToRealUsForDeadlineCheck(ds.responseTxDelayUus);
+        const double dsRespRxReal         = uusToRealUsForDeadlineCheck(ds.responseRxAfterTxDelayUus);
+        CHECK(dsRespRxReal < (dsRespTxReal - 179.0),
+              "DS %s: responseRxAfterTxDelayUus(実%.1fus)がresponseTxDelayUus-179(実%.1fus)以上",
+              uwb::timingProfileName(p), dsRespRxReal, dsRespTxReal - 179.0);
+
+        const double dsFinalTxReal = uusToRealUsForDeadlineCheck(ds.finalTxDelayUus);
+        const double dsFinalRxReal = uusToRealUsForDeadlineCheck(ds.finalRxAfterResponseTxDelayUus);
+        CHECK(dsFinalRxReal < (dsFinalTxReal - 179.0),
+              "DS %s: finalRxAfterResponseTxDelayUus(実%.1fus)がfinalTxDelayUus-179(実%.1fus)以上",
+              uwb::timingProfileName(p), dsFinalRxReal, dsFinalTxReal - 179.0);
+    }
+}
+
+/* ==================================================================== *
+ * 16. applyTimingProfile()がプリセットに無いフィールドを壊さないこと
+ *     （タスクE-4）。
+ *
+ * 【重要な限界】RangeConfig/DSRangeConfig/applyTimingProfile()自体は
+ * ESP-IDF依存(uwb_qm33120_types.hppがuwb_port.h経由でdriver/spi_master.hを
+ * 引き込む)のためホストからincludeできない（シナリオ14と同じ制約）。
+ * ここではuwb_qm33120_types.hppのapplyTimingProfile()の実装
+ * （*Uusフィールドへの代入のみ、他のフィールドには一切触れない）を
+ * そのまま模した局所ミラーで検算する。実装がズレたら意味が無いので、
+ * uwb_qm33120_types.hppのapplyTimingProfile()を変更したときは必ずここも
+ * 見比べること。
+ * ==================================================================== */
+namespace {
+
+struct MirrorRangeConfig {
+    uint16_t panId                     = 0xDECA;
+    uint16_t initiatorAddress          = 0x0001;
+    uint16_t responderAddress          = 0x0002;
+    uint32_t responseRxAfterTxDelayUus = 500;
+    uint32_t responseTxDelayUus        = 3000;
+    uint32_t rxTimeoutUus              = 4500;
+    uint32_t hostTimeoutMs             = 10;
+    bool enableClockOffsetCorrection    = true;
+};
+
+void mirrorApplyTimingProfile(MirrorRangeConfig& cfg, uwb::TimingProfile p)
+{
+    const uwb::TimingPresetSs preset = uwb::timingPresetSs(p);
+    cfg.responseTxDelayUus            = preset.responseTxDelayUus;
+    cfg.responseRxAfterTxDelayUus     = preset.responseRxAfterTxDelayUus;
+    cfg.rxTimeoutUus                  = preset.rxTimeoutUus;
+}
+
+struct MirrorDsRangeConfig {
+    uint16_t panId                          = 0xDECA;
+    uint16_t initiatorAddress               = 0x0001;
+    uint16_t responderAddress               = 0x0002;
+    uint32_t responseRxAfterTxDelayUus      = 1500;
+    uint32_t responseTxDelayUus             = 3000;
+    uint32_t finalTxDelayUus                = 1800;
+    uint32_t finalRxAfterResponseTxDelayUus = 500;
+    uint32_t resultRxAfterFinalTxDelayUus   = 200;
+    uint32_t rxTimeoutUus                   = 3000;
+    uint32_t hostTimeoutMs                  = 10;
+    uint8_t resultRepeatCount               = 1;
+    uint32_t resultRepeatGapMs              = 3;
+};
+
+void mirrorApplyTimingProfile(MirrorDsRangeConfig& cfg, uwb::TimingProfile p)
+{
+    const uwb::TimingPresetDs preset   = uwb::timingPresetDs(p);
+    cfg.responseTxDelayUus              = preset.responseTxDelayUus;
+    cfg.responseRxAfterTxDelayUus       = preset.responseRxAfterTxDelayUus;
+    cfg.finalTxDelayUus                 = preset.finalTxDelayUus;
+    cfg.finalRxAfterResponseTxDelayUus  = preset.finalRxAfterResponseTxDelayUus;
+    cfg.resultRxAfterFinalTxDelayUus    = preset.resultRxAfterFinalTxDelayUus;
+    cfg.rxTimeoutUus                    = preset.rxTimeoutUus;
+}
+
+} // namespace
+
+static void scenario16_apply_timing_profile_preserves_other_fields()
+{
+    std::printf("--- 16. applyTimingProfile()がプリセット外フィールドを壊さないこと ---\n");
+
+    // --- RangeConfig(SS-TWR) ---
+    {
+        MirrorRangeConfig cfg;
+        cfg.panId                    = 0x1234;
+        cfg.initiatorAddress         = 0x5678;
+        cfg.responderAddress         = 0x9ABC;
+        cfg.hostTimeoutMs            = 42;
+        cfg.enableClockOffsetCorrection = false;
+        mirrorApplyTimingProfile(cfg, uwb::TimingProfile::AnchorIrq);
+
+        CHECK(cfg.panId == 0x1234 && cfg.initiatorAddress == 0x5678 && cfg.responderAddress == 0x9ABC,
+              "SS: panId/アドレスが変化した");
+        CHECK(cfg.hostTimeoutMs == 42, "SS: hostTimeoutMsが変化した");
+        CHECK(cfg.enableClockOffsetCorrection == false, "SS: enableClockOffsetCorrectionが変化した");
+        CHECK(cfg.responseTxDelayUus == 878 && cfg.responseRxAfterTxDelayUus == 400 && cfg.rxTimeoutUus == 1200,
+              "SS: プリセットが正しく適用されなかった (AnchorIrq)");
+    }
+
+    // --- DSRangeConfig(DS-TWR) ---
+    {
+        MirrorDsRangeConfig cfg;
+        cfg.panId               = 0x1111;
+        cfg.initiatorAddress    = 0x2222;
+        cfg.responderAddress    = 0x3333;
+        cfg.hostTimeoutMs       = 99;
+        cfg.resultRepeatCount   = 7;
+        cfg.resultRepeatGapMs   = 123;
+        mirrorApplyTimingProfile(cfg, uwb::TimingProfile::BothIrq);
+
+        CHECK(cfg.panId == 0x1111 && cfg.initiatorAddress == 0x2222 && cfg.responderAddress == 0x3333,
+              "DS: panId/アドレスが変化した");
+        CHECK(cfg.hostTimeoutMs == 99, "DS: hostTimeoutMsが変化した");
+        CHECK(cfg.resultRepeatCount == 7, "DS: resultRepeatCountが変化した");
+        CHECK(cfg.resultRepeatGapMs == 123, "DS: resultRepeatGapMsが変化した");
+        CHECK(cfg.responseTxDelayUus == 878 && cfg.responseRxAfterTxDelayUus == 400 && cfg.finalTxDelayUus == 683 &&
+                  cfg.finalRxAfterResponseTxDelayUus == 200 && cfg.resultRxAfterFinalTxDelayUus == 0 &&
+                  cfg.rxTimeoutUus == 1200,
+              "DS: プリセットが正しく適用されなかった (BothIrq)");
+    }
+}
+
+/* ==================================================================== *
+ * 17. payloadMatchesEither()/readTimingTag() の検算（タスクE-5）。
+ *
+ * 【重要な限界】これらの実体は uwb_qm33120_internal.hpp（src/、esp_timer.h /
+ * deca_device_api.h に依存）にあり、既存の payloadMatches() 同様ホストから
+ * includeできない。ここでは同ヘッダの実装（ヘッダ長9バイト+FCS長2バイト、
+ * memcmpによる先頭一致、末尾2バイトの読み出し）をそのまま模した局所ミラーで
+ * 検算する。実装がズレたら意味が無いので、uwb_qm33120_internal.hppの
+ * payloadMatchesEither()/readTimingTag()を変更したときは必ずここも見比べる
+ * こと。
+ * ==================================================================== */
+namespace {
+
+constexpr size_t kMirrorHeaderLen = 9; // uwb_qm33120_internal.hpp kShortAddressHeaderLen
+constexpr size_t kMirrorFcsLen    = 2; // deca_device_api.h FCS_LEN (=2UL)
+
+uint16_t mirrorFrameLen(size_t payloadLen)
+{
+    return static_cast<uint16_t>(kMirrorHeaderLen + payloadLen + kMirrorFcsLen);
+}
+
+bool mirrorPayloadMatches(const uint8_t* frame, uint16_t frameLen, const char* payload, size_t prefixLength,
+                           size_t expectedPayloadLength)
+{
+    return (frame != nullptr) && (payload != nullptr) && (prefixLength <= expectedPayloadLength) &&
+           (frameLen == mirrorFrameLen(expectedPayloadLength)) &&
+           (std::memcmp(&frame[kMirrorHeaderLen], payload, prefixLength) == 0);
+}
+
+bool mirrorPayloadMatchesEither(const uint8_t* frame, uint16_t frameLen, const char* payload, size_t prefixLength,
+                                 size_t lenLegacy, size_t lenTagged)
+{
+    return mirrorPayloadMatches(frame, frameLen, payload, prefixLength, lenLegacy) ||
+           mirrorPayloadMatches(frame, frameLen, payload, prefixLength, lenTagged);
+}
+
+bool mirrorReadTimingTag(const uint8_t* frame, uint16_t frameLen, size_t lenLegacy, uint8_t& version,
+                          uint8_t& profile)
+{
+    const size_t lenTagged = lenLegacy + 2;
+    if ((frame == nullptr) || (frameLen != mirrorFrameLen(lenTagged))) {
+        return false;
+    }
+    version = frame[kMirrorHeaderLen + lenLegacy];
+    profile = frame[kMirrorHeaderLen + lenLegacy + 1];
+    return true;
+}
+
+} // namespace
+
+static void scenario17_payload_matches_either_and_timing_tag()
+{
+    std::printf("--- 17. payloadMatchesEither()/readTimingTag() 検算（ミラー実装） ---\n");
+
+    // 旧長(3バイトpayload、版情報なし)の "DWP" Poll。
+    uint8_t legacy[14] = {0};
+    std::memcpy(&legacy[kMirrorHeaderLen], "DWP", 3);
+    CHECK(mirrorPayloadMatchesEither(legacy, sizeof(legacy), "DWP", 3, /*lenLegacy=*/3, /*lenTagged=*/5),
+          "旧長(payload3)のPollが受理されなかった");
+    {
+        uint8_t v = 0xAA, p = 0xAA;
+        CHECK(!mirrorReadTimingTag(legacy, sizeof(legacy), 3, v, p),
+              "旧長フレームがreadTimingTagでtrueになった");
+    }
+
+    // 新長(5バイトpayload、版/種別付き)の "DWP" Poll。
+    uint8_t tagged[16] = {0};
+    std::memcpy(&tagged[kMirrorHeaderLen], "DWP", 3);
+    tagged[kMirrorHeaderLen + 3] = 7; // version
+    tagged[kMirrorHeaderLen + 4] = 1; // profile = AnchorIrq(1)
+    CHECK(mirrorPayloadMatchesEither(tagged, sizeof(tagged), "DWP", 3, /*lenLegacy=*/3, /*lenTagged=*/5),
+          "新長(payload5)のPollが受理されなかった");
+    {
+        uint8_t v = 0, p = 0;
+        CHECK(mirrorReadTimingTag(tagged, sizeof(tagged), 3, v, p),
+              "新長フレームがreadTimingTagでfalseになった");
+        CHECK(v == 7 && p == 1, "version/profileの往復が一致しない (v=%u p=%u)", v, p);
+    }
+
+    // それ以外の長さ(旧/新のどちらでもない)は拒否する。
+    uint8_t wrongLen[15] = {0};
+    std::memcpy(&wrongLen[kMirrorHeaderLen], "DWP", 3);
+    CHECK(!mirrorPayloadMatchesEither(wrongLen, sizeof(wrongLen), "DWP", 3, 3, 5),
+          "旧(3)/新(5)どちらでもない長さが受理された");
+
+    // 長さが合っていても関数コード(先頭3バイト)が違えば拒否する。
+    uint8_t wrongCode[14] = {0};
+    std::memcpy(&wrongCode[kMirrorHeaderLen], "XXX", 3);
+    CHECK(!mirrorPayloadMatchesEither(wrongCode, sizeof(wrongCode), "DWP", 3, 3, 5),
+          "関数コード不一致が受理された");
+}
+
 int main()
 {
     std::printf("=== tools/test_pipeline: uwb_ranging 測位パイプライン 合成データ検証 ===\n");
@@ -756,6 +1129,11 @@ int main()
     scenario10_cfgstore_roundtrip();
     scenario11_cfgstore_boundaries();
     scenario12_cfgstore_corruption();
+    scenario13_timing_preset_table();
+    scenario14_timing_preset_matches_struct_defaults();
+    scenario15_timing_deadline_formula();
+    scenario16_apply_timing_profile_preserves_other_fields();
+    scenario17_payload_matches_either_and_timing_tag();
 
     std::printf("\n=== %d 件中 %d 件失敗 ===\n", g_run, g_fail);
     return (g_fail == 0) ? 0 : 1;

@@ -121,6 +121,13 @@ public:
     const char* lastErrorName() const;
     const Config& config() const;
 
+    /**
+     * @brief config.use_irq が有効で、かつ実際に uwb_port_irq_enable() +
+     * dwt_setinterrupt() が成功した状態かどうか。false の場合、待ちループは
+     * ポーリング（vTaskDelay(1)相当）で動作している（docs/IRQ_POLICY.md）。
+     */
+    bool irqActive() const;
+
 private:
     struct Impl;
     Impl* _impl;

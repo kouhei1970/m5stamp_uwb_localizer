@@ -4,15 +4,43 @@ menu "UWB TWR Configuration"
         prompt "Target host board"
         default UWB_TWR_BOARD_STAMPS3
         help
-            Select which host board's pin definitions (boards/stamps3.h or
-            boards/atoms3.h, at the repo root) main.cpp uses to configure
-            uwb::Qm33120.
+            Select which host board's pin definitions (boards/stamps3.h,
+            boards/atoms3.h, or boards/stampfly.h, at the repo root)
+            main.cpp uses to configure uwb::Qm33120.
 
         config UWB_TWR_BOARD_STAMPS3
             bool "M5StampS3A"
 
         config UWB_TWR_BOARD_ATOMS3
             bool "M5 AtomS3"
+
+        config UWB_TWR_BOARD_STAMPFLY
+            bool "StampFly (M5StampS3A on drone, GROVE x2 -> SPI)"
+            help
+                GROVE 2系統4本を SPI に使い切るため IRQ / RST は無し。
+                ポーリング動作になる (docs/IRQ_POLICY.md, boards/stampfly.h)。
+
+    endchoice
+
+    choice UWB_BOARD_ATOMS3_PINOUT
+        prompt "AtomS3 pin layout"
+        depends on UWB_TWR_BOARD_ATOMS3
+        default UWB_BOARD_ATOMS3_PINOUT_A
+        help
+            Selects which of the two AtomS3 pin layouts boards/atoms3.h
+            builds (docs/IRQ_POLICY.md). Layout A repurposes the Grove port
+            (G1/G2) for RST/IRQ and wires a ToF sensor to the bottom header
+            (G38/G39); recommended for the plain AtomS3, whose G38/G39 are
+            shared with the onboard MPU6886 IMU. Layout B instead uses the
+            bottom header (G38/G39) for RST/IRQ and plugs the ToF sensor
+            straight into the Grove port; recommended for AtomS3R, whose
+            G38/G39 have nothing else attached.
+
+        config UWB_BOARD_ATOMS3_PINOUT_A
+            bool "Layout A: RST/IRQ=Grove(G1/G2), ToF I2C=G38/G39 (hand-wired to bottom header)"
+
+        config UWB_BOARD_ATOMS3_PINOUT_B
+            bool "Layout B: RST/IRQ=G38/G39, ToF I2C=Grove(G1/G2) (plug-and-play)"
 
     endchoice
 
@@ -53,5 +81,62 @@ menu "UWB TWR Configuration"
             bool "DS-TWR"
 
     endchoice
+
+    choice UWB_TIMING_PROFILE
+        prompt "TWR timing preset"
+        default UWB_TIMING_PROFILE_POLLING_BOTH
+        help
+            Selects the delay-parameter preset (role x IRQ-availability)
+            fixed in docs/TIMING_PRESETS.md (response delay, RX timeout,
+            etc).
+
+            **TAG and ANCHOR must use the same preset.** A one-sided change
+            breaks ranging - and the only symptom is "no distance", with the
+            log alone unable to tell which side is wrong. To catch this, the
+            actually-applied version number and profile are carried in the
+            Poll/Response frames so the receiving side can compare against
+            its own and warn on a mismatch (ranging still proceeds -
+            docs/TIMING_PRESETS.md SS3).
+
+            This setting is never changed automatically. For example, if
+            AnchorIrq is selected but pin_irq is unwired, the wait falls
+            back to polling while the delay values themselves stay
+            unchanged; only a boot-time warning is logged
+            (docs/TIMING_PRESETS.md SS4(b)).
+
+        config UWB_TIMING_PROFILE_POLLING_BOTH
+            bool "Polling on both sides (~31 Hz, identical to the current default)"
+
+        config UWB_TIMING_PROFILE_ANCHOR_IRQ
+            bool "IRQ on the anchor only (~59 Hz, standard configuration)"
+
+        config UWB_TIMING_PROFILE_BOTH_IRQ
+            bool "IRQ on both sides (~90 Hz, when the tag can be wired separately)"
+
+    endchoice
+
+    config UWB_ENABLE_IRQ
+        bool "Use IRQ as a wakeup signal (falls back to polling automatically if unwired)"
+        default n
+        help
+            Use the IRQ (interrupt request) line only as a "wakeup signal"
+            for the receive-wait loops. Status-register decoding, frame
+            matching, and error handling always go through the same
+            polling-derived code path regardless of whether IRQ is enabled
+            (dwt_setcallbacks()/dwt_isr() are intentionally not used - see
+            docs/IRQ_POLICY.md).
+
+            Anchor-role boards (AtomS3, pin_irq wired) are the primary
+            beneficiary; TAG-role boards on StampFly have no pin_irq wired
+            at all and always fall back to polling regardless of this
+            setting. The default is n because the IRQ polarity assumption
+            (active-high) has not yet been verified on real hardware.
+
+            Even when enabled, an unwired pin_irq or a failed ISR
+            registration falls back to polling automatically
+            (uwb::Qm33120::irqActive() reports whether IRQ actually ended
+            up active; this is also logged at boot). The polling path is
+            always kept as a first-class implementation, not a degraded
+            fallback.
 
 endmenu

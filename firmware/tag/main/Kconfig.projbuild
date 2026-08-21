@@ -5,13 +5,40 @@ menu "UWB Tag Configuration"
         default UWB_TAG_BOARD_STAMPS3
         help
             main.cpp が uwb::Qm33120 の設定に使うピン定義
-            （リポジトリ直下の boards/stamps3.h / boards/atoms3.h）を選ぶ。
+            （リポジトリ直下の boards/stamps3.h / boards/atoms3.h /
+            boards/stampfly.h）を選ぶ。
 
         config UWB_TAG_BOARD_STAMPS3
             bool "M5StampS3A"
 
         config UWB_TAG_BOARD_ATOMS3
             bool "M5 AtomS3"
+
+        config UWB_TAG_BOARD_STAMPFLY
+            bool "StampFly (M5StampS3A on drone, GROVE x2 -> SPI)"
+            help
+                GROVE 2系統4本を SPI に使い切るため IRQ / RST は無し。
+                ポーリング動作になる (docs/IRQ_POLICY.md, boards/stampfly.h)。
+
+    endchoice
+
+    choice UWB_BOARD_ATOMS3_PINOUT
+        prompt "AtomS3 のピン構成"
+        depends on UWB_TAG_BOARD_ATOMS3
+        default UWB_BOARD_ATOMS3_PINOUT_A
+        help
+            boards/atoms3.h が生成するピン構成を2通りから選ぶ
+            (docs/IRQ_POLICY.md)。構成Aは Grove ポート(G1/G2)を RST/IRQ に
+            転用し、ToF は底面ヘッダ(G38/G39)へ手配線する構成で、G38/G39が
+            オンボードの MPU6886 IMU と共用になる無印 AtomS3 向け。
+            構成Bは底面ヘッダ(G38/G39)を RST/IRQ に使い、ToF は Grove に
+            挿すだけで済む構成で、G38/G39 に何も繋がっていない AtomS3R 向け。
+
+        config UWB_BOARD_ATOMS3_PINOUT_A
+            bool "構成A: RST/IRQ=Grove(G1/G2), ToF I2C=G38/G39（底面へ手配線）"
+
+        config UWB_BOARD_ATOMS3_PINOUT_B
+            bool "構成B: RST/IRQ=G38/G39, ToF I2C=Grove(G1/G2)（Grove に挿すだけ）"
 
     endchoice
 
@@ -114,5 +141,56 @@ menu "UWB Tag Configuration"
         help
             UWB_TAG_AUTO_2D_FALLBACK が発動したときのみ使われる。
             ワールド座標系でのタグの想定運用高さを設定すること。
+
+    choice UWB_TIMING_PROFILE
+        prompt "TWR 遅延プリセット"
+        default UWB_TIMING_PROFILE_POLLING_BOTH
+        help
+            docs/TIMING_PRESETS.md で確定した、役割(タグ/アンカー) × IRQ有無の
+            組み合わせごとの遅延パラメータ一式（応答遅延・受信タイムアウト等）
+            を切り替える。
+
+            **タグとアンカーは必ず同じプリセットを選ぶこと。** 片側だけ変える
+            と測距が成立しない。しかも症状は「距離が出ない」だけでどちらが
+            悪いのかログからは分からないため、フレーム(Poll/Response)に
+            版番号と種別を載せて相手と比較し、不一致なら警告する仕組みが
+            入っている（測距自体は続行する。docs/TIMING_PRESETS.md §3）。
+
+            この設定値は自動では変わらない。例えば BothIrq を選んでも
+            タグの pin_irq が未配線で待ちがポーリングへフォールバックした
+            場合、遅延の値自体は変えず、起動ログで警告するだけになる
+            （docs/TIMING_PRESETS.md §4(b)）。
+
+        config UWB_TIMING_PROFILE_POLLING_BOTH
+            bool "両側ポーリング（約31Hz。現在の既定値と同一）"
+
+        config UWB_TIMING_PROFILE_ANCHOR_IRQ
+            bool "アンカーのみ IRQ（約59Hz。標準構成）"
+
+        config UWB_TIMING_PROFILE_BOTH_IRQ
+            bool "両側 IRQ（約90Hz。タグを別配線できた場合）"
+
+    endchoice
+
+    config UWB_ENABLE_IRQ
+        bool "IRQ を起床信号として使う（未配線なら自動でポーリングへフォールバック）"
+        default n
+        help
+            IRQ（割り込み要求）を、受信を待つループの「起床信号」としてだけ
+            使う。ステータスレジスタの判読・フレーム照合・エラー処理は
+            IRQ有効/無効に関わらず完全に同一のポーリング経路を通る
+            （dwt_setcallbacks()/dwt_isr()は使わない。docs/IRQ_POLICY.md）。
+
+            タグは標準構成（StampFly、GROVE 4本をSPIに使い切る）では
+            IRQ 線が残らずポーリングで成立させる方針であり、単体
+            M5StampS3A/AtomS3 でタグを組む場合のみ pin_irq が配線される。
+            いずれの場合も実機での極性検証がまだ済んでいないため既定は
+            n（無効）にしてある。
+
+            有効にしても pin_irq が未配線（StampFly構成）、または ISR
+            登録に失敗した場合は自動的にポーリングへフォールバックする
+            （`uwb::Qm33120::irqActive()` で実際に有効になったかを確認
+            できる。起動ログにも出る）。ポーリング経路は常に第一級の
+            実装として残っており、劣化版ではない。
 
 endmenu

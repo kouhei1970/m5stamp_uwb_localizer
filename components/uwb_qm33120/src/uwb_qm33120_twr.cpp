@@ -68,9 +68,43 @@
  *    respondDSRange() に追加した。SS-TWR（requestRange/respondRange）は
  *    公式 ex_06a/ex_06b が一度も使っていないため、既定の0（無効）のまま
  *    据え置いた（詳細は各関数のコメント）。
+ *
+ * --- IRQ（起床信号）対応 (docs/IRQ_POLICY.md、タスクC) ---
+ * 4関数（requestRange/respondRange/requestDSRange/respondDSRange）すべての
+ * 受信待ちループで、`vTaskDelay(pdMS_TO_TICKS(1))` を
+ * `(void)uwb_port_irq_wait(1)` に置き換えている。設計の要点:
+ *
+ *  - **IRQ は「起床信号」としてのみ使う。** dwt_readsysstatuslo() による
+ *    ステータスレジスタの判読、frameMatchesExpectation() によるフレーム
+ *    照合、エラー処理は一切変更していない。ポーリング経路とIRQ経路で
+ *    復号ロジックは完全に同一の1本のコードパスを通る。
+ *  - **dwt_setcallbacks() / dwt_isr() は使わない。** 使うと
+ *    ステータス判読・フレーム取得がSDK内部のコールバック経路に分岐し、
+ *    ポーリング経路と2本立てになる。バグの温床・検証コストの二重化を
+ *    避けるため、意図的に使わない
+ *    （docs/IRQ_POLICY.md「ポーリング経路は劣化版ではなく正規の動作
+ *    モードとして保守する」）。
+ *  - **uwb_port_irq_wait(1) は IRQ が無効なとき
+ *    vTaskDelay(pdMS_TO_TICKS(1)) と完全に等価に振る舞う**
+ *    （components/uwb_port/include/uwb_port.h）。したがって
+ *    Qm33120::Config::use_irq が false、または pin_irq が未配線、または
+ *    ISR登録に失敗した場合、この4関数の挙動はIRQ対応前とビット単位で
+ *    同一になる。
+ *  - 各受信待ちループへ入る直前（RXを起動した直後）に
+ *    uwb_port_irq_clear_pending() を呼び、取りこぼした（前回のフレーム分の）
+ *    通知を捨ててから待ちに入る。エッジを取りこぼしても待ちは最大1msで
+ *    必ず抜ける（ポーリングにフォールバックするだけ）ので安全側に落ちる。
+ *  - **置き換えたのは「受信を待つループの中の1msスリープ」だけ。**
+ *    自分の送信完了(DWT_INT_TXFRS_BIT_MASK)を待つループ（respondRange()の
+ *    Response送信後、respondDSRange()のDWD結果送信後）や、結果フレーム
+ *    再送間隔(resultRepeatGapMs)のvTaskDelayは対象外（そのまま）。
+ *    dwt_setinterrupt()で有効化しているのはRXFCG/RX_TO/RX_ERRのみで
+ *    TXFRSは含まれないため、これらのTX待ちループをIRQ待ちに置き換えると
+ *    IRQが来ずに毎回タイムアウトしてしまう。
  */
 #include "uwb_qm33120.hpp"
 
+#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -82,8 +116,82 @@ extern "C" {
 #include "uwb_qm33120_frame_match.hpp"
 #include "uwb_qm33120_impl.hpp"
 #include "uwb_qm33120_internal.hpp"
+#include "uwb_qm33120_timing.hpp"
 
 namespace uwb {
+
+namespace {
+
+static const char* const kTimingLogTag = "uwb_qm33120_twr";
+
+/** Qm33120::Impl::warned_peers[8] のサイズと一致させること（uwb_qm33120_impl.hpp）。 */
+static constexpr uint8_t kMaxWarnedPeers = 8;
+
+/**
+ * @brief 相手（peerAddr）から受け取ったフレームのタイミングプリセット
+ * 版/種別を検査し、不一致なら1回だけ警告する
+ * （docs/TIMING_PRESETS.md §3.3、タスクC-3）。測距は続行する（拒否すると
+ * 切り分けが難しくなるため。docs/IRQ_POLICY.md「不一致を検出したら警告する」）。
+ *
+ * 記録・あふれ対策の方針は uwb_qm33120_impl.hpp の warned_peers コメント参照。
+ *
+ * 【Qm33120::Impl& を取らない理由】Implはprivateなネスト型
+ * (uwb_qm33120.hpp)のため、クラスの外に定義するこの無名namespace内の
+ * 自由関数はその型名を書けない（フル定義がuwb_qm33120_impl.hpp経由で見えて
+ * いてもアクセス指定は別）。そのため呼び出し側(Qm33120のメンバ関数内、
+ * _impl経由でのアクセスは許可される)から必要なフィールドを個別に渡す。
+ *
+ * @param warnedPeers  Qm33120::Impl::warned_peers（呼び出し側が渡す）。
+ * @param warnedCount  Qm33120::Impl::warned_count（呼び出し側が渡す）。
+ * @param myProfile    自分の config.timing_profile。
+ * @param context      ログに出す短い文脈（どの関数からの呼び出しか）。
+ * @param peerAddr     相手のショートアドレス。
+ * @param extended     detail::readTimingTag() の戻り値
+ *                      （true=拡張ペイロード=版/種別が読めた、false=旧ファーム）。
+ * @param peerVersion  extended==true のときだけ有効。
+ * @param peerProfile  extended==true のときだけ有効（TimingProfile の raw値）。
+ */
+void checkTimingTagAndWarn(uint16_t* warnedPeers, uint8_t& warnedCount, TimingProfile myProfile,
+                            const char* context, uint16_t peerAddr, bool extended, uint8_t peerVersion,
+                            uint8_t peerProfile)
+{
+    for (uint8_t i = 0; i < warnedCount; ++i) {
+        if (warnedPeers[i] == peerAddr) {
+            return; // 既に警告済み。
+        }
+    }
+
+    bool mismatch = false;
+    if (!extended) {
+        ESP_LOGW(kTimingLogTag,
+                 "%s: peer=0x%04X は版情報を持たないファーム（旧長のフレーム）を送ってきました。"
+                 "タイミングプリセットが一致している保証がありません。"
+                 "タグとアンカーを同じプリセットで焼き直すこと（docs/TIMING_PRESETS.md）。",
+                 context, static_cast<unsigned>(peerAddr));
+        mismatch = true;
+    } else if (peerVersion != kTimingPresetVersion) {
+        ESP_LOGW(kTimingLogTag,
+                 "%s: peer=0x%04X とプリセット表の版が違います (mine=%u peer=%u)。"
+                 "タグとアンカーを同じプリセットで焼き直すこと（docs/TIMING_PRESETS.md）。",
+                 context, static_cast<unsigned>(peerAddr), static_cast<unsigned>(kTimingPresetVersion),
+                 static_cast<unsigned>(peerVersion));
+        mismatch = true;
+    } else if (peerProfile != static_cast<uint8_t>(myProfile)) {
+        const char* peerName =
+            timingProfileValid(peerProfile) ? timingProfileName(static_cast<TimingProfile>(peerProfile)) : "?";
+        ESP_LOGW(kTimingLogTag,
+                 "%s: peer=0x%04X とタイミングプリセットの種別が違います (mine=%s peer=%s)。"
+                 "タグとアンカーを同じプリセットで焼き直すこと（docs/TIMING_PRESETS.md）。",
+                 context, static_cast<unsigned>(peerAddr), timingProfileName(myProfile), peerName);
+        mismatch = true;
+    }
+
+    if (mismatch && (warnedCount < kMaxWarnedPeers)) {
+        warnedPeers[warnedCount++] = peerAddr;
+    }
+}
+
+} // namespace
 
 RangeResult Qm33120::requestRange(const RangeConfig& range)
 {
@@ -95,8 +203,13 @@ RangeResult Qm33120::requestRange(const RangeConfig& range)
         return result;
     }
 
-    uint8_t pollFrame[12]       = {0};
-    const uint8_t pollPayload[] = {'T', 'W', 'P'};
+    // 【タスクC-2】Poll ペイロードにプリセットの版/種別を載せる
+    // (docs/TIMING_PRESETS.md §3.2: "TWP" 3バイト -> 5バイト)。送るのは
+    // 「Kconfigで設定した種別」ではなく「実際に適用した種別」
+    // (_impl->config.timing_profile。docs/TIMING_PRESETS.md §3.1)。
+    uint8_t pollFrame[14]       = {0};
+    const uint8_t pollPayload[] = {'T', 'W', 'P', kTimingPresetVersion,
+                                    static_cast<uint8_t>(_impl->config.timing_profile)};
     const uint8_t pollSeq       = ++_impl->tx_sequence;
     detail::buildShortAddressFrame(pollFrame, pollSeq, range.panId, range.initiatorAddress, range.responderAddress,
                                     pollPayload, sizeof(pollPayload));
@@ -119,6 +232,10 @@ RangeResult Qm33120::requestRange(const RangeConfig& range)
         setError(result.error);
         return result;
     }
+    // DWT_RESPONSE_EXPECTED によりTX完了後ただちにRXが開始される。受信待ち
+    // ループへ入る直前に、取りこぼした通知を捨てる（本ファイル冒頭コメント
+    // 参照）。IRQが無効なら何もしない。
+    uwb_port_irq_clear_pending();
 
     const uint32_t startMs = detail::nowMs();
     while ((detail::nowMs() - startMs) < range.hostTimeoutMs) {
@@ -134,13 +251,27 @@ RangeResult Qm33120::requestRange(const RangeConfig& range)
             dwt_writesysstatuslo(SYS_STATUS_ALL_RX_GOOD | DWT_INT_TXFRS_BIT_MASK);
 
             RxResult parsed;
-            const bool headerOk  = detail::parseShortAddressFrame(rawFrame, frameLen, parsed);
-            const bool payloadOk = detail::payloadMatches(rawFrame, frameLen, "TWR", 3, 11);
+            const bool headerOk = detail::parseShortAddressFrame(rawFrame, frameLen, parsed);
+            // 【タスクC-2】"TWR" ペイロードは 11(旧) または 13(版/種別付き)
+            // バイトのどちらでも受理する (docs/TIMING_PRESETS.md §3.3)。
+            const bool payloadOk =
+                detail::payloadMatchesEither(rawFrame, frameLen, "TWR", 3, /*lenLegacy=*/11, /*lenTagged=*/13);
             const detail::ParsedFrameSummary summary{headerOk,      payloadOk,     parsed.sequence,
                                                        parsed.panId, parsed.src,    parsed.dst};
             const detail::FrameExpectation expect{/*checkSequence=*/true, pollSeq, range.panId,
                                                    range.responderAddress, range.initiatorAddress};
             if (detail::frameMatchesExpectation(summary, expect)) {
+                // 【タスクC-3】相手(Anchor)のプリセット版/種別を読み、
+                // 不一致なら警告する（測距は続行する）。
+                {
+                    uint8_t peerVersion = 0, peerProfile = 0;
+                    const bool extended =
+                        detail::readTimingTag(rawFrame, frameLen, /*lenLegacy=*/11, peerVersion, peerProfile);
+                    checkTimingTagAndWarn(_impl->warned_peers, _impl->warned_count, _impl->config.timing_profile,
+                                           "requestRange: Response<-ANCHOR", range.responderAddress, extended,
+                                           peerVersion, peerProfile);
+                }
+
                 const uint32_t pollTxTs = dwt_readtxtimestamplo32();
                 const uint32_t respRxTs = dwt_readrxtimestamplo32(static_cast<dwt_ip_sts_segment_e>(0));
                 const uint32_t pollRxTs = detail::get32le(&rawFrame[12]);
@@ -212,7 +343,9 @@ RangeResult Qm33120::requestRange(const RangeConfig& range)
             setError(result.error);
             return result;
         }
-        vTaskDelay(pdMS_TO_TICKS(1));
+        // IRQが来るか1ms経つまで待つ。IRQ無効時はvTaskDelay(pdMS_TO_TICKS(1))
+        // と完全に等価（本ファイル冒頭コメント参照）。
+        (void)uwb_port_irq_wait(1);
     }
 
     detail::stopRadioAndClearRxStatus();
@@ -243,6 +376,9 @@ ResponderResult Qm33120::respondRange(const RangeConfig& range)
         setError(result.error);
         return result;
     }
+    // 受信待ちループへ入る直前に、取りこぼした通知を捨てる
+    // (本ファイル冒頭コメント参照)。IRQが無効なら何もしない。
+    uwb_port_irq_clear_pending();
 
     const uint32_t startMs = detail::nowMs();
     while ((detail::nowMs() - startMs) < range.hostTimeoutMs) {
@@ -258,8 +394,11 @@ ResponderResult Qm33120::respondRange(const RangeConfig& range)
             dwt_writesysstatuslo(SYS_STATUS_ALL_RX_GOOD);
 
             RxResult parsed;
-            const bool headerOk  = detail::parseShortAddressFrame(pollFrame, frameLen, parsed);
-            const bool payloadOk = detail::payloadMatches(pollFrame, frameLen, "TWP", 3, 3);
+            const bool headerOk = detail::parseShortAddressFrame(pollFrame, frameLen, parsed);
+            // 【タスクC-2】"TWP" ペイロードは 3(旧) または 5(版/種別付き)
+            // バイトのどちらでも受理する (docs/TIMING_PRESETS.md §3.3)。
+            const bool payloadOk =
+                detail::payloadMatchesEither(pollFrame, frameLen, "TWP", 3, /*lenLegacy=*/3, /*lenTagged=*/5);
             const detail::ParsedFrameSummary summary{headerOk,      payloadOk,  parsed.sequence,
                                                        parsed.panId, parsed.src, parsed.dst};
             // src は照合しない（どの Tag からの Poll でも受理する。元コードの
@@ -267,6 +406,17 @@ ResponderResult Qm33120::respondRange(const RangeConfig& range)
             const detail::FrameExpectation expect{/*checkSequence=*/false, 0, range.panId, /*src=*/0,
                                                    range.responderAddress};
             if (detail::frameMatchesExpectation(summary, expect)) {
+                // 【タスクC-3】相手(Tag)のプリセット版/種別を読み、
+                // 不一致なら警告する（測距は続行する）。
+                {
+                    uint8_t peerVersion = 0, peerProfile = 0;
+                    const bool extended =
+                        detail::readTimingTag(pollFrame, frameLen, /*lenLegacy=*/3, peerVersion, peerProfile);
+                    checkTimingTagAndWarn(_impl->warned_peers, _impl->warned_count, _impl->config.timing_profile,
+                                           "respondRange: Poll<-TAG", parsed.src, extended, peerVersion,
+                                           peerProfile);
+                }
+
                 uint8_t ts[5] = {0};
                 dwt_readrxtimestamp(ts, static_cast<dwt_ip_sts_segment_e>(0));
                 const uint64_t pollRxTs = detail::get40le(ts);
@@ -275,11 +425,15 @@ ResponderResult Qm33120::respondRange(const RangeConfig& range)
                 const uint64_t respTxTs =
                     ((static_cast<uint64_t>(respTxTime & 0xFFFFFFFEUL)) << 8) + _impl->tx_antenna_delay;
 
-                uint8_t respPayload[11] = {'T', 'W', 'R'};
+                // 【タスクC-2】Response ペイロードにもプリセットの版/種別を
+                // 載せる (docs/TIMING_PRESETS.md §3.2: "TWR" 11バイト -> 13バイト)。
+                uint8_t respPayload[13] = {'T', 'W', 'R'};
                 detail::set32le(&respPayload[3], static_cast<uint32_t>(pollRxTs));
                 detail::set32le(&respPayload[7], static_cast<uint32_t>(respTxTs));
+                respPayload[11] = kTimingPresetVersion;
+                respPayload[12] = static_cast<uint8_t>(_impl->config.timing_profile);
 
-                uint8_t respFrame[20] = {0};
+                uint8_t respFrame[22] = {0};
                 detail::buildShortAddressFrame(respFrame, parsed.sequence, range.panId, range.responderAddress,
                                                 parsed.src, respPayload, sizeof(respPayload));
 
@@ -331,7 +485,9 @@ ResponderResult Qm33120::respondRange(const RangeConfig& range)
             setError(result.error);
             return result;
         }
-        vTaskDelay(pdMS_TO_TICKS(1));
+        // IRQが来るか1ms経つまで待つ。IRQ無効時はvTaskDelay(pdMS_TO_TICKS(1))
+        // と完全に等価（本ファイル冒頭コメント参照）。
+        (void)uwb_port_irq_wait(1);
     }
 
     detail::stopRadioAndClearRxStatus();
@@ -354,8 +510,12 @@ DSRangeResult Qm33120::requestDSRange(const DSRangeConfig& range)
         return result;
     }
 
-    uint8_t pollFrame[12]       = {0};
-    const uint8_t pollPayload[] = {'D', 'W', 'P'};
+    // 【タスクC-2】Poll ペイロードにプリセットの版/種別を載せる
+    // (docs/TIMING_PRESETS.md §3.2: "DWP" 3バイト -> 5バイト)。requestRange()
+    // と同じ理由で「実際に適用した種別」を送る。
+    uint8_t pollFrame[14]       = {0};
+    const uint8_t pollPayload[] = {'D', 'W', 'P', kTimingPresetVersion,
+                                    static_cast<uint8_t>(_impl->config.timing_profile)};
     const uint8_t pollSeq       = ++_impl->tx_sequence;
     detail::buildShortAddressFrame(pollFrame, pollSeq, range.panId, range.initiatorAddress, range.responderAddress,
                                     pollPayload, sizeof(pollPayload));
@@ -385,6 +545,10 @@ DSRangeResult Qm33120::requestDSRange(const DSRangeConfig& range)
         setError(result.error);
         return result;
     }
+    // DWT_RESPONSE_EXPECTED によりTX完了後ただちにRXが開始される。受信待ち
+    // ループへ入る直前に、取りこぼした通知を捨てる（本ファイル冒頭コメント
+    // 参照）。IRQが無効なら何もしない。
+    uwb_port_irq_clear_pending();
 
     uint8_t respFrame[32]     = {0};
     uint16_t respLen          = 0;
@@ -403,14 +567,25 @@ DSRangeResult Qm33120::requestDSRange(const DSRangeConfig& range)
             dwt_readrxdata(respFrame, respLen, 0);
             dwt_writesysstatuslo(SYS_STATUS_ALL_RX_GOOD | DWT_INT_TXFRS_BIT_MASK);
 
-            const bool headerOk  = detail::parseShortAddressFrame(respFrame, respLen, parsed);
-            const bool payloadOk = detail::payloadMatches(respFrame, respLen, "DWR", 3, 11);
+            const bool headerOk = detail::parseShortAddressFrame(respFrame, respLen, parsed);
+            // 【タスクC-2】"DWR" ペイロードは 11(旧) または 13(版/種別付き)
+            // バイトのどちらでも受理する (docs/TIMING_PRESETS.md §3.3)。
+            const bool payloadOk =
+                detail::payloadMatchesEither(respFrame, respLen, "DWR", 3, /*lenLegacy=*/11, /*lenTagged=*/13);
             const detail::ParsedFrameSummary summary{headerOk,      payloadOk,  parsed.sequence,
                                                        parsed.panId, parsed.src, parsed.dst};
             const detail::FrameExpectation expect{/*checkSequence=*/true, pollSeq, range.panId,
                                                    range.responderAddress, range.initiatorAddress};
             if (detail::frameMatchesExpectation(summary, expect)) {
                 respMatched = true;
+                // 【タスクC-3】相手(Anchor)のプリセット版/種別を読み、
+                // 不一致なら警告する（測距は続行する）。
+                uint8_t peerVersion = 0, peerProfile = 0;
+                const bool extended =
+                    detail::readTimingTag(respFrame, respLen, /*lenLegacy=*/11, peerVersion, peerProfile);
+                checkTimingTagAndWarn(_impl->warned_peers, _impl->warned_count, _impl->config.timing_profile,
+                                       "requestDSRange: Response<-ANCHOR", range.responderAddress, extended,
+                                       peerVersion, peerProfile);
             } else {
                 // 【R2】不一致 -> エラーにせず受信継続（本ファイル冒頭コメント参照）。
                 respMismatchSeen = true;
@@ -426,7 +601,9 @@ DSRangeResult Qm33120::requestDSRange(const DSRangeConfig& range)
         if (respMatched) {
             break;
         }
-        vTaskDelay(pdMS_TO_TICKS(1));
+        // IRQが来るか1ms経つまで待つ。IRQ無効時はvTaskDelay(pdMS_TO_TICKS(1))
+        // と完全に等価（本ファイル冒頭コメント参照）。
+        (void)uwb_port_irq_wait(1);
     }
 
     if (!respMatched) {
@@ -472,6 +649,10 @@ DSRangeResult Qm33120::requestDSRange(const DSRangeConfig& range)
         setError(result.error);
         return result;
     }
+    // DWT_RESPONSE_EXPECTED によりTX完了後ただちにRXが開始される。受信待ち
+    // ループへ入る直前に、取りこぼした通知を捨てる（本ファイル冒頭コメント
+    // 参照）。IRQが無効なら何もしない。
+    uwb_port_irq_clear_pending();
 
     uint8_t distFrame[32]         = {0};
     uint16_t distLen              = 0;
@@ -513,7 +694,9 @@ DSRangeResult Qm33120::requestDSRange(const DSRangeConfig& range)
         if (distMatched) {
             break;
         }
-        vTaskDelay(pdMS_TO_TICKS(1));
+        // IRQが来るか1ms経つまで待つ。IRQ無効時はvTaskDelay(pdMS_TO_TICKS(1))
+        // と完全に等価（本ファイル冒頭コメント参照）。
+        (void)uwb_port_irq_wait(1);
     }
 
     if (!distMatched) {
@@ -557,6 +740,9 @@ DSResponderResult Qm33120::respondDSRange(const DSRangeConfig& range)
         setError(result.error);
         return result;
     }
+    // 受信待ちループへ入る直前に、取りこぼした通知を捨てる
+    // (本ファイル冒頭コメント参照)。IRQが無効なら何もしない。
+    uwb_port_irq_clear_pending();
 
     uint8_t pollFrame[32] = {0};
     uint16_t pollLen      = 0;
@@ -575,8 +761,11 @@ DSResponderResult Qm33120::respondDSRange(const DSRangeConfig& range)
             dwt_readrxdata(pollFrame, pollLen, 0);
             dwt_writesysstatuslo(SYS_STATUS_ALL_RX_GOOD);
 
-            const bool headerOk  = detail::parseShortAddressFrame(pollFrame, pollLen, parsed);
-            const bool payloadOk = detail::payloadMatches(pollFrame, pollLen, "DWP", 3, 3);
+            const bool headerOk = detail::parseShortAddressFrame(pollFrame, pollLen, parsed);
+            // 【タスクC-2】"DWP" ペイロードは 3(旧) または 5(版/種別付き)
+            // バイトのどちらでも受理する (docs/TIMING_PRESETS.md §3.3)。
+            const bool payloadOk =
+                detail::payloadMatchesEither(pollFrame, pollLen, "DWP", 3, /*lenLegacy=*/3, /*lenTagged=*/5);
             const detail::ParsedFrameSummary summary{headerOk,      payloadOk,  parsed.sequence,
                                                        parsed.panId, parsed.src, parsed.dst};
             // src は照合しない（どの Tag からの Poll でも受理する。元コードの
@@ -585,6 +774,14 @@ DSResponderResult Qm33120::respondDSRange(const DSRangeConfig& range)
                                                    range.responderAddress};
             if (detail::frameMatchesExpectation(summary, expect)) {
                 pollMatched = true;
+                // 【タスクC-3】相手(Tag)のプリセット版/種別を読み、
+                // 不一致なら警告する（測距は続行する）。
+                uint8_t peerVersion = 0, peerProfile = 0;
+                const bool extended =
+                    detail::readTimingTag(pollFrame, pollLen, /*lenLegacy=*/3, peerVersion, peerProfile);
+                checkTimingTagAndWarn(_impl->warned_peers, _impl->warned_count, _impl->config.timing_profile,
+                                       "respondDSRange: Poll<-TAG", parsed.src, extended, peerVersion,
+                                       peerProfile);
             } else {
                 // 【R2】不一致 -> 受信継続（本ファイル冒頭コメント参照）。
                 pollMismatchSeen = true;
@@ -600,7 +797,9 @@ DSResponderResult Qm33120::respondDSRange(const DSRangeConfig& range)
         if (pollMatched) {
             break;
         }
-        vTaskDelay(pdMS_TO_TICKS(1));
+        // IRQが来るか1ms経つまで待つ。IRQ無効時はvTaskDelay(pdMS_TO_TICKS(1))
+        // と完全に等価（本ファイル冒頭コメント参照）。
+        (void)uwb_port_irq_wait(1);
     }
 
     if (!pollMatched) {
@@ -619,11 +818,15 @@ DSResponderResult Qm33120::respondDSRange(const DSRangeConfig& range)
     const uint64_t respTxTsPlan =
         ((static_cast<uint64_t>(respTxTime & 0xFFFFFFFEUL)) << 8) + _impl->tx_antenna_delay;
 
-    uint8_t respPayload[11] = {'D', 'W', 'R'};
+    // 【タスクC-2】Response ペイロードにもプリセットの版/種別を載せる
+    // (docs/TIMING_PRESETS.md §3.2: "DWR" 11バイト -> 13バイト)。
+    uint8_t respPayload[13] = {'D', 'W', 'R'};
     detail::set32le(&respPayload[3], static_cast<uint32_t>(pollRxTs));
     detail::set32le(&respPayload[7], static_cast<uint32_t>(respTxTsPlan));
+    respPayload[11] = kTimingPresetVersion;
+    respPayload[12] = static_cast<uint8_t>(_impl->config.timing_profile);
 
-    uint8_t respFrame[20] = {0};
+    uint8_t respFrame[22] = {0};
     detail::buildShortAddressFrame(respFrame, parsed.sequence, range.panId, range.responderAddress, parsed.src,
                                     respPayload, sizeof(respPayload));
 
@@ -649,6 +852,10 @@ DSResponderResult Qm33120::respondDSRange(const DSRangeConfig& range)
         setError(result.error);
         return result;
     }
+    // DWT_RESPONSE_EXPECTED によりTX完了後ただちにRXが開始される。受信待ち
+    // ループへ入る直前に、取りこぼした通知を捨てる（本ファイル冒頭コメント
+    // 参照）。IRQが無効なら何もしない。
+    uwb_port_irq_clear_pending();
 
     uint8_t finalFrame[32]      = {0};
     uint16_t finalLen           = 0;
@@ -695,7 +902,9 @@ DSResponderResult Qm33120::respondDSRange(const DSRangeConfig& range)
         if (finalMatched) {
             break;
         }
-        vTaskDelay(pdMS_TO_TICKS(1));
+        // IRQが来るか1ms経つまで待つ。IRQ無効時はvTaskDelay(pdMS_TO_TICKS(1))
+        // と完全に等価（本ファイル冒頭コメント参照）。
+        (void)uwb_port_irq_wait(1);
     }
 
     if (!finalMatched) {

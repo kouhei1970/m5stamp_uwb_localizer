@@ -19,8 +19,9 @@ idf_component_register(
     INCLUDE_DIRS
         "."
         # Repo root, three levels up from firmware/tag/main/, so that
-        # #include "boards/stamps3.h" / "boards/atoms3.h" resolves (same
-        # convention as firmware/probe, firmware/devtest, firmware/twr).
+        # #include "boards/stamps3.h" / "boards/atoms3.h" / "boards/stampfly.h"
+        # resolves (same convention as firmware/probe, firmware/devtest,
+        # firmware/twr).
         "../../.."
     REQUIRES
         uwb_ranging

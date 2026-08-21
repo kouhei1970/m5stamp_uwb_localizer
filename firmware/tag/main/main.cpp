@@ -58,7 +58,11 @@
 #if CONFIG_UWB_TAG_BOARD_ATOMS3
 #include "boards/atoms3.h"
 #define BOARD_UWB_PORT_CONFIG BOARD_ATOMS3_UWB_PORT_CONFIG
-#define BOARD_NAME            "AtomS3"
+#define BOARD_NAME            "AtomS3(pinout " BOARD_ATOMS3_PINOUT_NAME ")"
+#elif CONFIG_UWB_TAG_BOARD_STAMPFLY
+#include "boards/stampfly.h"
+#define BOARD_UWB_PORT_CONFIG BOARD_STAMPFLY_UWB_PORT_CONFIG
+#define BOARD_NAME            "StampFly"
 #else
 #include "boards/stamps3.h"
 #define BOARD_UWB_PORT_CONFIG BOARD_STAMPS3_UWB_PORT_CONFIG
@@ -74,6 +78,17 @@
 static const char* TAG = "uwb_tag";
 
 #define UWB_DEV_ID_EXPECTED 0xDECA0314UL
+
+/* --- タイミングプリセット(docs/TIMING_PRESETS.md、タスクD) ---
+ * Kconfig の choice UWB_TIMING_PROFILE から uwb::TimingProfile を決める。
+ * アンカー側(firmware/anchor)と必ず同じものを選ぶこと。 */
+#if CONFIG_UWB_TIMING_PROFILE_ANCHOR_IRQ
+static constexpr uwb::TimingProfile TIMING_PROFILE = uwb::TimingProfile::AnchorIrq;
+#elif CONFIG_UWB_TIMING_PROFILE_BOTH_IRQ
+static constexpr uwb::TimingProfile TIMING_PROFILE = uwb::TimingProfile::BothIrq;
+#else
+static constexpr uwb::TimingProfile TIMING_PROFILE = uwb::TimingProfile::PollingBoth;
+#endif
 
 /* --- ネットワーク共通パラメータ（firmware/anchor と揃えること） --- */
 static constexpr uint16_t PAN_ID          = 0xDECA;
@@ -131,6 +146,20 @@ static uwb::Config makeConfigFromBoard()
     cfg.spi_slow_hz  = port.spi_slow_hz;
     cfg.spi_fast_hz  = port.spi_fast_hz;
     cfg.init_spi_bus = port.init_spi_bus;
+    // CONFIG_UWB_ENABLE_IRQ が n のとき、ESP-IDF の Kconfig はこのマクロ自体を
+    // 定義しない（0として定義されるわけではない）ので #ifdef ではなく
+    // #if defined(...) && ... で判定する (docs/IRQ_POLICY.md, main/Kconfig.projbuild)。
+    // pin_irq が UWB_PORT_PIN_UNUSED の場合や ISR 登録に失敗した場合は
+    // Qm33120::init() が自動的にポーリングへフォールバックする。
+#if defined(CONFIG_UWB_ENABLE_IRQ) && CONFIG_UWB_ENABLE_IRQ
+    cfg.use_irq = true;
+#else
+    cfg.use_irq = false;
+#endif
+    // タイミングプリセット(docs/TIMING_PRESETS.md、タスクD)。相手(Anchor)へ
+    // Poll フレームで伝わり、不一致検出に使われる
+    // (uwb_qm33120_twr.cpp checkTimingTagAndWarn())。
+    cfg.timing_profile = TIMING_PROFILE;
     return cfg;
 }
 
@@ -435,9 +464,46 @@ extern "C" void app_main(void)
     schedCfg.tagShortAddr         = TAG_SHORT_ADDR;
     schedCfg.perAnchorIntervalMs = CONFIG_UWB_TAG_PER_ANCHOR_INTERVAL_MS;
     schedCfg.cycleIntervalMs      = CONFIG_UWB_TAG_CYCLE_INTERVAL_MS;
+    // ssDefaults/dsDefaultsは構造体既定値(=PollingBothの値と
+    // 完全一致。docs/TIMING_PRESETS.md §2)のまま個別上書きされていないので、
+    // ここでプリセットを適用しても既定Kconfig(PollingBoth)ではno-op。
+    // AnchorIrq/BothIrqを選んだときにここで初めて反映される。
+    uwb::applyTimingProfile(schedCfg.ssDefaults, TIMING_PROFILE);
+    uwb::applyTimingProfile(schedCfg.dsDefaults, TIMING_PROFILE);
     static uwb::RangingScheduler scheduler(uwbDevice, table, schedCfg);
 
     ESP_LOGI(TAG, "begin() + PHY config OK, starting ranging loop");
+
+    // --- IRQ（起床信号）の実際の有効状態をログに出す (docs/IRQ_POLICY.md) ---
+    // Kconfigの設定値(CONFIG_UWB_ENABLE_IRQ)ではなく、Qm33120::irqActive()が
+    // 返す「実際に有効化できたか」を出す。フォールバックが起きていないかを
+    // 起動ログだけで判別できるようにするため。
+    if (uwbDevice.irqActive()) {
+        ESP_LOGI(TAG, "irq=active (pin=%d)", cfg.pin_irq);
+    } else if (cfg.pin_irq == UWB_PORT_PIN_UNUSED) {
+        ESP_LOGI(TAG, "irq=polling (pin_irq unwired)");
+    } else if (!cfg.use_irq) {
+        ESP_LOGI(TAG, "irq=polling (disabled by Kconfig)");
+    } else {
+        ESP_LOGW(TAG, "irq=polling (enable failed)");
+    }
+
+    // --- タイミングプリセット(docs/TIMING_PRESETS.md) ---
+    ESP_LOGI(TAG, "timing profile=%s (version=%u)", uwb::timingProfileName(TIMING_PROFILE),
+             (unsigned)uwb::kTimingPresetVersion);
+    // 起動時チェック(docs/TIMING_PRESETS.md §4(b)): BothIrqはタグ側IRQも
+    // 前提にしているのに、実際にはIRQが有効化されていない場合は目立つ
+    // 警告を出す。**値は自動で変えない**(片側が勝手に変えると測距が壊れる)。
+    if (uwb::timingProfileNeedsTagIrq(TIMING_PROFILE) && !uwbDevice.irqActive()) {
+        ESP_LOGW(TAG,
+                 "timing profile=%s はタグ側IRQも前提ですが irqActive()=false です"
+                 "(pin_irq 未配線 / Kconfigで無効 / ISR登録失敗のいずれか)。"
+                 "待ちはポーリングへフォールバックしましたが、折返しに最大1.2msかかるため"
+                 "このプリセットの締切に間に合わない可能性が高いです。"
+                 "値は自動で変えません — タグ・アンカー双方を PollingBoth で焼き直すこと"
+                 "（docs/TIMING_PRESETS.md）。",
+                 uwb::timingProfileName(TIMING_PROFILE));
+    }
 
 #if CONFIG_UWB_TAG_CONSOLE
     /* --- シリアルコンソール（別タスクで動く REPL）を起動する ---

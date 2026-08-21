@@ -106,6 +106,68 @@ struct dwt_spi_s *uwb_port_spi(void);
  */
 void uwb_port_wakeup_device_with_io(void);
 
+/* ------------------------------------------------------------------------
+ * IRQ ("wakeup signal") support (docs/IRQ_POLICY.md)
+ *
+ * これらの関数は IRQ を「起床信号」としてのみ使う。ステータスレジスタの
+ * 判読（dwt_readsysstatuslo() 等）はここでは一切行わず、従来のポーリング
+ * 経路と完全に同一のまま呼び出し側（uwb_qm33120）が行う。dwt_setcallbacks()
+ * / dwt_isr() は使わない（docs/IRQ_POLICY.md「ポーリング経路は劣化版では
+ * なく正規の動作モードとして保守する」）。
+ *
+ * シングルタスク前提: このファイル冒頭のコメントのとおり、このコンポーネント
+ * は複数タスクからの同時利用を想定していない。uwb_port_irq_wait() /
+ * uwb_port_irq_clear_pending() も例外ではなく、複数タスクから同時に呼ぶ
+ * ことは想定しない。
+ * ------------------------------------------------------------------------ */
+
+/**
+ * @brief pin_irq に GPIO 割り込みを登録し、「起床信号」として使えるようにする。
+ *
+ * gpio_install_isr_service(0) を内部で呼ぶ。既にアプリ側が先に呼んでいる
+ * 場合は ESP_ERR_INVALID_STATE が返るが、その場合は「既にインストール済み」
+ * を意味するので成功として扱う。
+ *
+ * @return ESP_OK: 有効化に成功した。
+ *         ESP_ERR_NOT_SUPPORTED: pin_irq が UWB_PORT_PIN_UNUSED（未配線）。
+ *         その他: gpio_config() / gpio_isr_handler_add() 等の失敗
+ *         （esp_err_to_name() でログに出せる値）。
+ */
+esp_err_t uwb_port_irq_enable(void);
+
+/**
+ * @brief uwb_port_irq_enable() を取り消す（ISRハンドラの登録解除、内部の
+ * バイナリセマフォの解放）。uwb_port_irq_enable() が一度も成功していない
+ * 状態で呼んでも ESP_OK を返す（冪等）。
+ */
+esp_err_t uwb_port_irq_disable(void);
+
+/**
+ * @brief IRQ待ちが実際に使える状態か（uwb_port_irq_enable() に成功して
+ * いるか）を返す。
+ */
+bool uwb_port_irq_available(void);
+
+/**
+ * @brief 待ちを始める前に、取りこぼした（まだ消費していない）通知を捨てる。
+ * IRQが使えない状態（uwb_port_irq_available()==false）では何もしない。
+ */
+void uwb_port_irq_clear_pending(void);
+
+/**
+ * @brief IRQ が来るか timeout_ms 経つまで待つ。
+ *
+ * @return true: IRQ（起床信号）で起床した / false: タイムアウトした
+ *
+ * @note **IRQ が使えないとき（uwb_port_irq_available()==false）は
+ *       vTaskDelay(pdMS_TO_TICKS(timeout_ms)) と完全に等価に振る舞い、
+ *       常に false を返す。** 呼び出し側（uwb_qm33120の各待ちループ）が
+ *       IRQ の有無で分岐しなくて済むようにするための設計（
+ *       docs/IRQ_POLICY.md 実装要件1）。したがって IRQ 無効時の呼び出し側の
+ *       挙動は、この関数を導入する前とビット単位で同一になる。
+ */
+bool uwb_port_irq_wait(uint32_t timeout_ms);
+
 #ifdef __cplusplus
 }
 #endif

@@ -38,6 +38,7 @@
 
 #include "uwb_port.h"
 
+#include "uwb_qm33120_timing.hpp"
 #include "uwb_qm33120_units.hpp"
 
 namespace uwb {
@@ -70,7 +71,11 @@ struct Config {
     int pin_miso                = UWB_PORT_PIN_UNUSED;
     int pin_cs                  = UWB_PORT_PIN_UNUSED;
     int pin_rst                 = UWB_PORT_PIN_UNUSED; //!< optional hardware reset pin.
-    int pin_irq                 = UWB_PORT_PIN_UNUSED; //!< optional (unused: polling driver, see SURVEY_m5stamp_uwb_port.md).
+    //!< optional IRQ pin. IRQ対応済み(docs/IRQ_POLICY.md): 配線されており
+    //!< かつ use_irq==true のときだけ uwb_port_irq_enable() で「起床信号」
+    //!< として使われる。UWB_PORT_PIN_UNUSEDのまま(未配線)でも問題なく動作し、
+    //!< その場合は use_irq の値に関わらずポーリングへ自動フォールバックする。
+    int pin_irq                 = UWB_PORT_PIN_UNUSED;
     int pin_wakeup               = UWB_PORT_PIN_UNUSED; //!< optional WAKEUP pin.
     int pin_gp7                  = UWB_PORT_PIN_UNUSED; //!< optional DW_GP7 input pin.
     uint32_t spi_slow_hz         = 2000000;             //!< SPI speed used before/during probe (M5Stamp_UWBConfig.spi_slow_hz).
@@ -91,6 +96,26 @@ struct Config {
      * initialized once for a whole board rather than per Qm33120 instance.
      */
     bool port_already_initialized = false;
+
+    /**
+     * @brief IRQ を「起床信号」として使うか（docs/IRQ_POLICY.md）。
+     * true でも pin_irq が未配線 or ISR 登録に失敗したら**自動的にポーリングへ
+     * フォールバックする**（docs/IRQ_POLICY.md 実装要件1、docs/TIMING_PRESETS.md §4(a)）。
+     * 既定 false: 実機未検証のため（Phase 1〜2 が通ってから既定を上げる）。
+     */
+    bool use_irq = false;
+
+    /**
+     * @brief 本機が使う遅延プリセット（docs/TIMING_PRESETS.md）。
+     * **タグとアンカーで一致していなければ測距が成立しない。**
+     * begin() が呼んだ requestRange()/respondRange()/requestDSRange()/
+     * respondDSRange() は、この値（_impl->config.timing_profile）を
+     * Poll/Response フレームの末尾に載せて相手へ伝え、受信側は自分の値と
+     * 比較して不一致なら警告する（uwb_qm33120_twr.cpp、タスクC）。
+     * 既定 PollingBoth: 現在の RangeConfig/DSRangeConfig の既定値と完全に
+     * 一致するため、既定のままなら挙動は変わらない。
+     */
+    TimingProfile timing_profile = TimingProfile::PollingBoth;
 };
 
 /**
@@ -271,6 +296,7 @@ struct RxResult {
  * default values.
  *
  * --- 単位について（docs/REIMPL_PLAN.md R1） ---
+ * 詳細は docs/UNITS.md。
  * `*Uus` フィールドの単位は UUS (UWB microsecond)。
  * 1 UUS = 512/499.2 us = 1.02564... us
  * (`deca_device_api.h:2681` dwt_setrxaftertxdelay() 「The delay is in UWB
@@ -336,6 +362,7 @@ struct RangeConfig {
  * default values.
  *
  * --- 単位について（docs/REIMPL_PLAN.md R1。RangeConfig と同じ規則） ---
+ * 詳細は docs/UNITS.md。
  * `*Uus` フィールドの単位は UUS。1 UUS = 512/499.2 us = 1.02564... us。
  * `responseTxDelayUus` / `finalTxDelayUus` の2つだけが
  * `uwb::detail::kUusToDwtTime`(=65536) 倍されて DTU に変換され
@@ -421,6 +448,40 @@ struct DSRangeConfig {
     //!< 既定構成では未使用）。
     uint32_t resultRepeatGapMs              = 3;
 };
+
+/**
+ * @brief RangeConfig（SS-TWR）へ遅延プリセットを適用する（docs/TIMING_PRESETS.md、
+ * タスクB）。responseTxDelayUus/responseRxAfterTxDelayUus/rxTimeoutUus の
+ * 3フィールドだけを書き換える。panId/initiatorAddress/responderAddress/
+ * hostTimeoutMs/enableClockOffsetCorrection には一切触れない
+ * （呼び出し側がこれらを設定した後に呼ぶこと。RangeConfig単体にはプリセット
+ * 適用の有無を記録するフィールドは無いため、呼び出す順序は呼び出し側の責務）。
+ */
+inline void applyTimingProfile(RangeConfig& cfg, TimingProfile p)
+{
+    const TimingPresetSs preset  = timingPresetSs(p);
+    cfg.responseTxDelayUus        = preset.responseTxDelayUus;
+    cfg.responseRxAfterTxDelayUus = preset.responseRxAfterTxDelayUus;
+    cfg.rxTimeoutUus              = preset.rxTimeoutUus;
+}
+
+/**
+ * @brief DSRangeConfig（DS-TWR）へ遅延プリセットを適用する（docs/TIMING_PRESETS.md、
+ * タスクB）。responseTxDelayUus/responseRxAfterTxDelayUus/finalTxDelayUus/
+ * finalRxAfterResponseTxDelayUus/resultRxAfterFinalTxDelayUus/rxTimeoutUus の
+ * 6フィールドだけを書き換える。panId/initiatorAddress/responderAddress/
+ * hostTimeoutMs/resultRepeatCount/resultRepeatGapMs には一切触れない。
+ */
+inline void applyTimingProfile(DSRangeConfig& cfg, TimingProfile p)
+{
+    const TimingPresetDs preset          = timingPresetDs(p);
+    cfg.responseTxDelayUus                = preset.responseTxDelayUus;
+    cfg.responseRxAfterTxDelayUus         = preset.responseRxAfterTxDelayUus;
+    cfg.finalTxDelayUus                   = preset.finalTxDelayUus;
+    cfg.finalRxAfterResponseTxDelayUus    = preset.finalRxAfterResponseTxDelayUus;
+    cfg.resultRxAfterFinalTxDelayUus      = preset.resultRxAfterFinalTxDelayUus;
+    cfg.rxTimeoutUus                      = preset.rxTimeoutUus;
+}
 
 /**
  * @brief Result returned by Qm33120::requestRange() (SS-TWR initiator). 1:1

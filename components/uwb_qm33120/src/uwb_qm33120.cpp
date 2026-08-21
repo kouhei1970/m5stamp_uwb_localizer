@@ -451,6 +451,15 @@ void Qm33120::end()
     if (hadDriver) {
         uwb_port_set_wakeup(false);
     }
+    // IRQ（起床信号）の無効化は、uwb_portそのものの所有権(port_owned)とは
+    // 別に、このクラス(Qm33120)が責任を持つ。init()でuwb_port_irq_enable()
+    // を呼ったのはこのクラス自身なので、port_already_initialized==true
+    // （port_owned==false、uwb_port自体は他の所有者のもの）の場合でも
+    // ここで必ず無効化する。port_owned==trueの場合は後続の
+    // uwb_port_deinit()内でも呼ばれるが(uwb_port.c 要件5)、
+    // uwb_port_irq_disable()は冪等なので二重呼び出しは無害。
+    uwb_port_irq_disable();
+    _impl->irq_active = false;
     // 原本に対応物は無い: begin()でuwb_port_init()を自分で呼んでいた場合のみ、
     // ここでuwb_port_deinit()して解放する(port_already_initialized==trueで
     // 始めた場合は他の所有者のリソースなので触らない)。
@@ -503,6 +512,30 @@ bool Qm33120::init(const PhyConfig& phy)
     _impl->tx_antenna_delay = resolvedPHY.txAntennaDelay;
     if (resolvedPHY.enableLnaPa) {
         dwt_setlnapamode(DWT_LNA_ENABLE | DWT_PA_ENABLE);
+    }
+
+    // --- IRQ（起床信号）の有効化 (docs/IRQ_POLICY.md) ---
+    // PHY設定が終わった後に行う。dwt_setcallbacks()/dwt_isr()は意図的に
+    // 使わない（復号経路をポーリングと1本に保つため。docs/IRQ_POLICY.md
+    // 「ポーリング経路は劣化版ではなく正規の動作モードとして保守する」）。
+    // 有効化に失敗してもinit()自体は失敗させず、ポーリングのまま続行する
+    // （タスクB要件どおり）。use_irqがfalseならここは何もせず、
+    // _impl->irq_activeはfalseのまま = 従来(IRQ導入前)と完全に同じ経路になる。
+    _impl->irq_active = false;
+    if (_impl->config.use_irq) {
+        const esp_err_t irqErr = uwb_port_irq_enable();
+        if (irqErr == ESP_OK) {
+            // RX完了(RXFCG)・RXタイムアウト・RXエラーで起床する。
+            // ビットマスクの出典は各待ちループ(uwb_qm33120_twr.cpp)が
+            // dwt_readsysstatuslo()で判定している条件と同一
+            // (DWT_INT_RXFCG_BIT_MASK / SYS_STATUS_ALL_RX_TO /
+            // SYS_STATUS_ALL_RX_ERR、いずれもlo側32bitに収まる)。
+            dwt_setinterrupt(DWT_INT_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR, 0,
+                              DWT_ENABLE_INT);
+            _impl->irq_active = true;
+        } else {
+            ESP_LOGW(TAG, "uwb_port_irq_enable failed (%s); falling back to polling", esp_err_to_name(irqErr));
+        }
     }
 
     _impl->initialized = true;
@@ -678,6 +711,10 @@ RxResult Qm33120::receiveFrame(uint8_t* payload, size_t payloadSize, uint32_t ti
         setError(result.error);
         return result;
     }
+    // 受信待ちループへ入る直前に、取りこぼした通知を捨てる
+    // (docs/IRQ_POLICY.md、uwb_qm33120_twr.cpp 冒頭コメント参照)。IRQが
+    // 無効なら何もしない。
+    uwb_port_irq_clear_pending();
 
     const uint32_t startMs = detail::nowMs();
     while ((detail::nowMs() - startMs) < timeoutMs) {
@@ -726,7 +763,9 @@ RxResult Qm33120::receiveFrame(uint8_t* payload, size_t payloadSize, uint32_t ti
             setError(result.error);
             return result;
         }
-        vTaskDelay(pdMS_TO_TICKS(1));
+        // IRQが来るか1ms経つまで待つ。IRQ無効時はvTaskDelay(pdMS_TO_TICKS(1))
+        // と完全に等価（uwb_port_irq_wait()のnote参照。docs/IRQ_POLICY.md）。
+        (void)uwb_port_irq_wait(1);
     }
 
     detail::stopRadioAndClearRxStatus();
@@ -744,6 +783,11 @@ bool Qm33120::isConnected() const
 bool Qm33120::isInitialized() const
 {
     return _impl->initialized;
+}
+
+bool Qm33120::irqActive() const
+{
+    return _impl->irq_active;
 }
 
 Error Qm33120::lastError() const

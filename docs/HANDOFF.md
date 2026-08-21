@@ -12,8 +12,8 @@
 
 | # | 仕様 | 実装状況 | やること |
 |---|---|---|---|
-| **1** | **`docs/IRQ_POLICY.md`**（IRQ 方針） | **未実装** | アンカー側に IRQ 経路を追加。**ポーリングは残す**。`pin_irq` 未接続なら自動フォールバック |
-| **2** | 同上（遅延値の扱い） | **未実装** | 遅延値を**役割 × IRQ有無のプリセット**に。**バージョン不一致の検出**（タグ/アンカーで食い違うと測距が壊れる） |
+| **1** | **`docs/IRQ_POLICY.md`**（IRQ 方針） | **実装済み** | アンカー側に IRQ 経路を追加。**ポーリングは残す**。`pin_irq` 未接続なら自動フォールバック |
+| **2** | 同上（遅延値の扱い） | **実装済み** | 遅延値を**役割 × IRQ有無のプリセット**に。**バージョン不一致の検出**（タグ/アンカーで食い違うと測距が壊れる） |
 | **3** | 役割の確定（タグ=StampFly） | **`boards/stampfly.h` が存在しない** | 新規作成。GROVE 4本=SPI、`pin_irq` 既定 UNUSED、別配線候補 G6/G8/G11 をコメントに |
 | **4** | アンカーのピン構成A/B | 未実装 | `boards/atoms3.h` に Kconfig 切替（ToF を Grove に挿すか底面に手配線するか） |
 | 5 | `docs/SURVEY_SPEC.md` の訂正 | 計算部分のみ実装 | `survey chirality` / 冗長度表示 は S3-S5（ESP-NOW）と同時 |
@@ -70,6 +70,7 @@ tools/            test_pipeline / test_survey / test_uwb_loc
 | # | 決定 | 文書 |
 |---|---|---|
 | 対象 | **ESP32-S3 + M5Stamp UWB Module 専用**。プラットフォーム最適化してよい。ただし StampFly には非依存 | `docs/PLAN.md` |
+| **ハード方針** | **StampFly 非依存。ただしタグの配線だけは StampFly 互換を維持する**（GROVE 2系統4本で成立 ＝ IRQ/RST 不要）。想定利用者は本リポジトリを単体で試す人 | `docs/PLAN.md` §1 |
 | 役割 | **タグ = M5StampS3A ×1 / アンカー = AtomS3(R) ×5** | `PROGRESS.md` |
 | 接続 | **FPC ではなく半田パッド**（1.27mm キャステレーション） | `docs/SOLDER_PADS.md` |
 | **IRQ** | **アンカーは積極使用。タグは不使用。StampFly の別配線可能性は残す** | **`docs/IRQ_POLICY.md`** |
@@ -82,8 +83,11 @@ tools/            test_pipeline / test_survey / test_uwb_loc
 README.md                    購入者の入口
 docs/GETTING_STARTED.md      BOM から測位まで11章
 docs/HANDOFF.md              ← このファイル
+docs/GLOSSARY.md             用語集（略語の正式名称と意味）。分からない略語はここ
 docs/SOURCE_POLICY.md        資料の格付けと、過去の誤りの記録
 docs/IRQ_POLICY.md           IRQ 方針（確定版）
+docs/UNITS.md                UUS/DTU/実µs の単位リファレンス（遅延値を触る前に必読）
+docs/TIMING_PRESETS.md       遅延プリセットとバージョン不一致検出（設計）
 docs/CRITICAL_REVIEW.md      M5Stack ラッパの批判的レビュー
 docs/REIMPL_PLAN.md          R1-R12。R1/R2/R3-1/R4/R7/R8/R9 は実装済み
 docs/SURVEY_SPEC.md          自動測量の仕様（訂正4件入り）
@@ -169,6 +173,7 @@ Web 取得は `WebFetch` / `curl` に限定し、サブエージェントにも�
 1. **Qorvo 公式サンプルの `.c` は latin-1。`grep -a` を使うこと**
 2. **`UUS_TO_DWT_TIME` は DW1000=65536 / DW3000公式=63898。**
    Qorvo の `*_UUS` 定数は実は実マイクロ秒。そのまま流用すると2.5%ずれる
+   → **`docs/UNITS.md`**
 3. **ESP-IDF ビルドとホスト `make strict` は警告設定が違う。**
    `uwb_survey.c` が `-Werror=maybe-uninitialized` で落ちた実例あり。
    **新規コンポーネントは必ず `idf.py build` も通すこと**

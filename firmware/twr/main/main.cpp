@@ -47,7 +47,11 @@
 #if CONFIG_UWB_TWR_BOARD_ATOMS3
 #include "boards/atoms3.h"
 #define BOARD_UWB_PORT_CONFIG BOARD_ATOMS3_UWB_PORT_CONFIG
-#define BOARD_NAME            "AtomS3"
+#define BOARD_NAME            "AtomS3(pinout " BOARD_ATOMS3_PINOUT_NAME ")"
+#elif CONFIG_UWB_TWR_BOARD_STAMPFLY
+#include "boards/stampfly.h"
+#define BOARD_UWB_PORT_CONFIG BOARD_STAMPFLY_UWB_PORT_CONFIG
+#define BOARD_NAME            "StampFly"
 #else
 #include "boards/stamps3.h"
 #define BOARD_UWB_PORT_CONFIG BOARD_STAMPS3_UWB_PORT_CONFIG
@@ -69,6 +73,17 @@
 static const char* TAG = "uwb_twr";
 
 #define UWB_DEV_ID_EXPECTED 0xDECA0314UL
+
+/* --- Timing preset (docs/TIMING_PRESETS.md, task D) ---
+ * Derived from the Kconfig choice UWB_TIMING_PROFILE. Both boards under
+ * test (TAG and ANCHOR role) must select the same preset. */
+#if CONFIG_UWB_TIMING_PROFILE_ANCHOR_IRQ
+static constexpr uwb::TimingProfile TIMING_PROFILE = uwb::TimingProfile::AnchorIrq;
+#elif CONFIG_UWB_TIMING_PROFILE_BOTH_IRQ
+static constexpr uwb::TimingProfile TIMING_PROFILE = uwb::TimingProfile::BothIrq;
+#else
+static constexpr uwb::TimingProfile TIMING_PROFILE = uwb::TimingProfile::PollingBoth;
+#endif
 
 /* --- ネットワーク共通パラメータ（4組み合わせ共通。examples 配下の各 .ino と同じ値） --- */
 static constexpr uint16_t PAN_ID           = 0xDECA;
@@ -129,6 +144,20 @@ static uwb::Config makeConfigFromBoard()
     cfg.spi_slow_hz  = port.spi_slow_hz;
     cfg.spi_fast_hz  = port.spi_fast_hz;
     cfg.init_spi_bus = port.init_spi_bus;
+    // CONFIG_UWB_ENABLE_IRQ is undefined (not just 0) by ESP-IDF's Kconfig
+    // when set to n, so #if defined(...) && ... is used instead of #ifdef
+    // (docs/IRQ_POLICY.md, main/Kconfig.projbuild). An unwired pin_irq or a
+    // failed ISR registration makes Qm33120::init() fall back to polling
+    // automatically.
+#if defined(CONFIG_UWB_ENABLE_IRQ) && CONFIG_UWB_ENABLE_IRQ
+    cfg.use_irq = true;
+#else
+    cfg.use_irq = false;
+#endif
+    // Timing preset (docs/TIMING_PRESETS.md, task D). Carried to the peer in
+    // the Poll/Response frames and used for mismatch detection
+    // (uwb_qm33120_twr.cpp checkTimingTagAndWarn()).
+    cfg.timing_profile = TIMING_PROFILE;
     return cfg;
 }
 
@@ -158,6 +187,22 @@ static uwb::RangeConfig makeRangeConfig()
     range.responseTxDelayUus        = RESPONSE_TX_DLY_UUS;
     range.rxTimeoutUus              = RX_TIMEOUT_UUS;
     range.hostTimeoutMs             = RANGE_HOST_TIMEOUT_MS;
+    // Apply the timing preset last so it wins over the individual assignments
+    // above (*Uus fields only; panId/addresses/hostTimeoutMs are untouched).
+    // The RESPONSE_* / RX_TIMEOUT_UUS constants above are therefore NOT the
+    // effective values: docs/TIMING_PRESETS.md section 2 is the single source.
+    //
+    // [Behaviour change] RESPONSE_RX_AFTER_TX_DLY_UUS (1500) and RX_TIMEOUT_UUS
+    // (3000) above do not match RangeConfig's real default (500 / 4500 =
+    // the PollingBoth preset; uwb_qm33120_types.hpp). They look like values
+    // copied from the DS-TWR block by mistake. requestRange() DOES use both
+    // (dwt_setrxaftertxdelay / dwt_setrxtimeout, uwb_qm33120_twr.cpp), so the
+    // preset really does change this path: (1500, 4500) -> (500, 4500) even
+    // under the default Kconfig (PollingBoth). This is safe - the new values
+    // open the RX window earlier and keep it open longer, and they satisfy the
+    // deadline inequality in docs/TIMING_PRESETS.md section 1.2 with more
+    // margin than the old ones.
+    uwb::applyTimingProfile(range, TIMING_PROFILE);
     return range;
 }
 
@@ -237,6 +282,13 @@ static uwb::DSRangeConfig makeRangeConfig()
     range.hostTimeoutMs                  = RANGE_HOST_TIMEOUT_MS;
     range.resultRepeatCount              = RESULT_REPEAT_COUNT;
     range.resultRepeatGapMs              = RESULT_REPEAT_GAP_MS;
+    // Apply the timing preset last so it wins over the individual
+    // assignments above (*Uus fields only; panId/addresses/hostTimeoutMs/
+    // resultRepeatCount/resultRepeatGapMs are untouched). This DS-TWR
+    // block's individual values already match the PollingBoth row of
+    // docs/TIMING_PRESETS.md SS2.2 exactly, so under the default Kconfig
+    // (PollingBoth) this call is effectively a no-op.
+    uwb::applyTimingProfile(range, TIMING_PROFILE);
     return range;
 }
 
@@ -306,6 +358,20 @@ static uwb::RangeConfig makeRangeConfig()
     range.responseTxDelayUus        = RESPONSE_TX_DLY_UUS;
     range.rxTimeoutUus              = RX_TIMEOUT_UUS;
     range.hostTimeoutMs             = RANGE_HOST_TIMEOUT_MS;
+    // Apply the timing preset last so it wins over the individual assignments
+    // above (*Uus fields only; panId/addresses/hostTimeoutMs are untouched).
+    // The RESPONSE_* / RX_TIMEOUT_UUS constants above are therefore NOT the
+    // effective values: docs/TIMING_PRESETS.md section 2 is the single source.
+    //
+    // [No behaviour change here] RESPONSE_RX_AFTER_TX_DLY_UUS (1500) and
+    // RX_TIMEOUT_UUS (3000) above do not match RangeConfig's real default
+    // (500 / 4500 = the PollingBoth preset; uwb_qm33120_types.hpp) - they look
+    // like values copied from the DS-TWR block by mistake. But respondRange(),
+    // which is what the ANCHOR role calls, never reads these two fields: it
+    // hardcodes dwt_setrxaftertxdelay(0) / dwt_setrxtimeout(0)
+    // (components/uwb_qm33120/src/uwb_qm33120_twr.cpp, respondRange()).
+    // They were already dead here, so overriding them changes nothing on air.
+    uwb::applyTimingProfile(range, TIMING_PROFILE);
     return range;
 }
 
@@ -369,6 +435,13 @@ static uwb::DSRangeConfig makeRangeConfig()
     range.hostTimeoutMs                  = RANGE_HOST_TIMEOUT_MS;
     range.resultRepeatCount              = RESULT_REPEAT_COUNT;
     range.resultRepeatGapMs              = RESULT_REPEAT_GAP_MS;
+    // Apply the timing preset last so it wins over the individual
+    // assignments above (*Uus fields only; panId/addresses/hostTimeoutMs/
+    // resultRepeatCount/resultRepeatGapMs are untouched). This DS-TWR
+    // block's individual values already match the PollingBoth row of
+    // docs/TIMING_PRESETS.md SS2.2 exactly, so under the default Kconfig
+    // (PollingBoth) this call is effectively a no-op.
+    uwb::applyTimingProfile(range, TIMING_PROFILE);
     return range;
 }
 
@@ -437,6 +510,50 @@ extern "C" void app_main(void)
         return;
     }
     ESP_LOGI(TAG, "begin() + PHY config OK, starting %s/%s loop", ROLE_NAME, METHOD_NAME);
+
+    // --- Log whether IRQ actually ended up active (docs/IRQ_POLICY.md) ---
+    // Reports Qm33120::irqActive() (what actually happened), not the
+    // Kconfig setting (CONFIG_UWB_ENABLE_IRQ), so a silent fallback to
+    // polling is visible from the boot log alone.
+    if (uwbDevice.irqActive()) {
+        ESP_LOGI(TAG, "irq=active (pin=%d)", cfg.pin_irq);
+    } else if (cfg.pin_irq == UWB_PORT_PIN_UNUSED) {
+        ESP_LOGI(TAG, "irq=polling (pin_irq unwired)");
+    } else if (!cfg.use_irq) {
+        ESP_LOGI(TAG, "irq=polling (disabled by Kconfig)");
+    } else {
+        ESP_LOGW(TAG, "irq=polling (enable failed)");
+    }
+
+    // --- Timing preset (docs/TIMING_PRESETS.md, task D-2) ---
+    ESP_LOGI(TAG, "timing profile=%s (version=%u)", uwb::timingProfileName(TIMING_PROFILE),
+             (unsigned)uwb::kTimingPresetVersion);
+    // Boot-time check (docs/TIMING_PRESETS.md SS4(b)): warn loudly if the
+    // selected preset needs IRQ on this device's role but it did not
+    // actually come up active. **Never change the preset value
+    // automatically** - it must match the peer, so a one-sided silent
+    // change would defeat the whole point.
+#if CONFIG_UWB_TWR_ROLE_ANCHOR
+    if (uwb::timingProfileNeedsAnchorIrq(TIMING_PROFILE) && !uwbDevice.irqActive()) {
+        ESP_LOGW(TAG,
+                 "timing profile=%s requires IRQ on the ANCHOR, but irqActive()==false "
+                 "(pin_irq unwired, disabled by Kconfig, or ISR registration failed). The wait fell back to "
+                 "polling, whose ~1.2ms turnaround is likely to miss this preset's deadline. The preset value "
+                 "is NOT changed automatically - reflash both TAG and ANCHOR with PollingBoth if IRQ cannot "
+                 "be wired (docs/TIMING_PRESETS.md).",
+                 uwb::timingProfileName(TIMING_PROFILE));
+    }
+#else
+    if (uwb::timingProfileNeedsTagIrq(TIMING_PROFILE) && !uwbDevice.irqActive()) {
+        ESP_LOGW(TAG,
+                 "timing profile=%s also requires IRQ on the TAG, but irqActive()==false "
+                 "(pin_irq unwired, disabled by Kconfig, or ISR registration failed). The wait fell back to "
+                 "polling, whose ~1.2ms turnaround is likely to miss this preset's deadline. The preset value "
+                 "is NOT changed automatically - reflash both TAG and ANCHOR with PollingBoth if IRQ cannot "
+                 "be wired (docs/TIMING_PRESETS.md).",
+                 uwb::timingProfileName(TIMING_PROFILE));
+    }
+#endif
 
     runRole(uwbDevice);
 }

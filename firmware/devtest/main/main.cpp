@@ -25,7 +25,11 @@
 #if CONFIG_UWB_DEVTEST_BOARD_ATOMS3
 #include "boards/atoms3.h"
 #define BOARD_UWB_PORT_CONFIG BOARD_ATOMS3_UWB_PORT_CONFIG
-#define BOARD_NAME            "AtomS3"
+#define BOARD_NAME            "AtomS3(pinout " BOARD_ATOMS3_PINOUT_NAME ")"
+#elif CONFIG_UWB_DEVTEST_BOARD_STAMPFLY
+#include "boards/stampfly.h"
+#define BOARD_UWB_PORT_CONFIG BOARD_STAMPFLY_UWB_PORT_CONFIG
+#define BOARD_NAME            "StampFly"
 #else
 #include "boards/stamps3.h"
 #define BOARD_UWB_PORT_CONFIG BOARD_STAMPS3_UWB_PORT_CONFIG

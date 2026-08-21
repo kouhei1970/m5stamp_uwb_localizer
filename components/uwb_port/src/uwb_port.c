@@ -17,6 +17,7 @@
 #include "esp_log.h"
 #include "esp_rom_sys.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 
 /* Only uwb_port.c needs the real qm33120w_sdk struct/API definitions
@@ -49,6 +50,10 @@ static uint8_t *s_tx_scratch = NULL;
 static uint8_t *s_rx_scratch = NULL;
 
 static portMUX_TYPE g_deca_mutex = portMUX_INITIALIZER_UNLOCKED;
+
+/* --- IRQ ("wakeup signal") state (docs/IRQ_POLICY.md) --- */
+static SemaphoreHandle_t s_irq_sem    = NULL;
+static bool s_irq_active              = false; /* uwb_port_irq_enable() に成功しているか */
 
 /* ------------------------------------------------------------------------
  * Platform hooks required by the Qorvo SDK (declared in deca_device_api.h).
@@ -323,6 +328,139 @@ void uwb_port_wakeup_device_with_io(void)
 }
 
 /* ------------------------------------------------------------------------
+ * IRQ ("wakeup signal") support (docs/IRQ_POLICY.md)
+ *
+ * IRQ は「起床信号」としてのみ使う。ステータスレジスタの判読は行わない
+ * （それは呼び出し側 uwb_qm33120 が従来のポーリング経路と共通のコードで
+ * 行う）。ISR は xSemaphoreGiveFromISR() だけを行い、SPI やログは一切
+ * 呼ばない（ISR内でSPI転送やESP_LOGxを呼ぶとブロッキングや再入の危険が
+ * あるため）。
+ * ------------------------------------------------------------------------ */
+
+static void IRAM_ATTR uwb_irq_isr_handler(void *arg)
+{
+    (void)arg;
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    if (s_irq_sem != NULL) {
+        xSemaphoreGiveFromISR(s_irq_sem, &xHigherPriorityTaskWoken);
+    }
+    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+}
+
+esp_err_t uwb_port_irq_enable(void)
+{
+    if (!s_initialized || (s_cfg.pin_irq == UWB_PORT_PIN_UNUSED)) {
+        /* uwb_port_init() 未実行時は s_cfg が既定(0クリア)のままで
+         * pin_irq==0 (有効なGPIO番号) に化けてしまうため、s_initialized も
+         * 併せて見る。UWB_PORT_PIN_UNUSED(-1)の判定だけでは防げない。 */
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+    if (s_irq_active) {
+        /* 既に有効化済み。冪等に成功を返す。 */
+        return ESP_OK;
+    }
+
+    if (s_irq_sem == NULL) {
+        s_irq_sem = xSemaphoreCreateBinary();
+        if (s_irq_sem == NULL) {
+            ESP_LOGE(TAG, "irq_enable: xSemaphoreCreateBinary failed");
+            return ESP_ERR_NO_MEM;
+        }
+    }
+
+    /* --- GPIO割り込み設定ここから ---
+     * intr_type = GPIO_INTR_POSEDGE (立ち上がりエッジ = アクティブHIGH前提):
+     * DW3720のIRQはアクティブHIGHという記述が一次資料にある
+     * (components/qm33120w_sdk/deca_device_api.h:2454 "The IRQ line has to
+     * be low/inactive (i.e., no pending events) otherwise device will not
+     * enter sleep" -- sleep可能条件としてIRQ=low=inactiveと明記されており、
+     * これはactive=highを意味する)。
+     * 【注意】この極性は実機でまだ検証していない。誤っていた場合の帰結は
+     * 「常にタイムアウト待ちになる」または「即座にIRQで起床し続ける」
+     * （後者は各待ちループの通常のステータス判定が不一致フレームとして
+     * 処理し続けるだけで、実害はvTaskDelay(1)相当に留まる想定）。
+     * pull_down_en = GPIO_PULLDOWN_ENABLE: 未配線・ハイインピーダンス状態
+     * でピンがフロートし外来ノイズで誤起床しないよう、明示的にプルダウン
+     * する（Lowをデフォルトにしてアクティブ判定に倒す）。 */
+    gpio_config_t io_conf = {
+        .pin_bit_mask = (1ULL << (unsigned int)s_cfg.pin_irq),
+        .mode         = GPIO_MODE_INPUT,
+        .pull_up_en   = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_ENABLE,
+        .intr_type    = GPIO_INTR_POSEDGE,
+    };
+    esp_err_t err = gpio_config(&io_conf);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "irq_enable: gpio_config failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    /* アプリ側が既に gpio_install_isr_service() を呼んでいる場合がある。
+     * ESP_ERR_INVALID_STATE は「既にインストール済み」を意味するので
+     * 成功として扱う。 */
+    err = gpio_install_isr_service(0);
+    if ((err != ESP_OK) && (err != ESP_ERR_INVALID_STATE)) {
+        ESP_LOGE(TAG, "irq_enable: gpio_install_isr_service failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    err = gpio_isr_handler_add(s_cfg.pin_irq, uwb_irq_isr_handler, NULL);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "irq_enable: gpio_isr_handler_add failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    s_irq_active = true;
+    return ESP_OK;
+}
+
+esp_err_t uwb_port_irq_disable(void)
+{
+    if (!s_irq_active) {
+        return ESP_OK;
+    }
+
+    gpio_isr_handler_remove(s_cfg.pin_irq);
+    /* gpio_uninstall_isr_service() はここでは呼ばない: ISRサービスは
+     * プロセス全体で共有されるリソースであり、アプリ側や他コンポーネントが
+     * 同じサービスに別のハンドラを登録している可能性がある
+     * （uwb_port_irq_enable() のコメント参照）。個別ハンドラの登録解除
+     * (gpio_isr_handler_remove、上の呼び出し)だけを行い、サービス自体の
+     * 生死には関与しない。 */
+    s_irq_active = false;
+
+    if (s_irq_sem != NULL) {
+        vSemaphoreDelete(s_irq_sem);
+        s_irq_sem = NULL;
+    }
+    return ESP_OK;
+}
+
+bool uwb_port_irq_available(void)
+{
+    return s_irq_active;
+}
+
+void uwb_port_irq_clear_pending(void)
+{
+    if (!s_irq_active || (s_irq_sem == NULL)) {
+        return;
+    }
+    (void)xSemaphoreTake(s_irq_sem, 0);
+}
+
+bool uwb_port_irq_wait(uint32_t timeout_ms)
+{
+    if (!s_irq_active || (s_irq_sem == NULL)) {
+        /* IRQが使えない: vTaskDelay(pdMS_TO_TICKS(timeout_ms))と完全に
+         * 等価に振る舞う(docs/IRQ_POLICY.md 実装要件1)。 */
+        vTaskDelay(pdMS_TO_TICKS(timeout_ms));
+        return false;
+    }
+    return xSemaphoreTake(s_irq_sem, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
+}
+
+/* ------------------------------------------------------------------------
  * init / deinit
  * ------------------------------------------------------------------------ */
 
@@ -443,6 +581,11 @@ esp_err_t uwb_port_deinit(void)
     if (!s_initialized) {
         return ESP_OK;
     }
+
+    /* IRQが有効化されたままdeinitされることのないよう、必ず先に無効化する
+     * (要件5)。s_cfg.pin_irqを使い終わる前(s_initializedをfalseにする前)に
+     * 呼ぶ必要がある。 */
+    uwb_port_irq_disable();
 
     s_spi_active = NULL;
 
