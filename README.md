@@ -1,7 +1,20 @@
-# m5stack_uwb
+# m5stamp_uwb_localizer
 
-**M5Stamp UWB Module (QM33120W)**（FPC コネクタ実装済みの **M5Stamp UWB Module with FPC (QM33120W)** でも可。Qorvo QM33120W = DW3720 系を搭載）を
+![m5stamp_uwb_localizer](assets/social_card.png)
+
+**M5Stamp UWB Module (QM33120W)**（通称 **M5Stamp UWB**。FPC コネクタ実装済みの
+**M5Stamp UWB Module with FPC (QM33120W)** でも可。Qorvo QM33120W = DW3720 系を搭載）を
 **ESP32-S3 ホストボード**から ESP-IDF で使うための、**測距 + 測位スタック**です。
+
+> **⚠️ これは M5Stack 公式のリポジトリではありません。** 個人（[@kouhei1970](https://github.com/kouhei1970)）が
+> 作っている非公式の実装です。公式の Arduino ライブラリは
+> [`m5stack/M5Stamp-UWB`](https://github.com/m5stack/M5Stamp-UWB) です。
+>
+> | | 公式 `m5stack/M5Stamp-UWB` | 本リポジトリ |
+> |---|---|---|
+> | フレームワーク | Arduino | **ESP-IDF** |
+> | 範囲 | 1 対 1 の測距まで | **測距 + 屋内3次元測位 + 自動測量** |
+> | 位置づけ | — | 公式ライブラリを**移植元の一つ**として参照（`third_party/M5Stamp-UWB`） |
 
 タグ 1 台とアンカー 4 台以上で、**屋内の 3 次元位置**を求めて JSON Lines で吐きます。
 StampFly（マルチコプター機体）には依存しない汎用のスタックで、StampFly への統合は
@@ -105,8 +118,8 @@ cd ~/esp/esp-idf && ./install.sh esp32s3
 . ~/esp/esp-idf/export.sh
 
 # 3) このリポジトリ
-git clone <このリポジトリの URL> m5stack_uwb
-cd m5stack_uwb
+git clone <このリポジトリの URL> m5stamp_uwb_localizer
+cd m5stamp_uwb_localizer
 
 # 4) 測位計算が正しく動くことを PC 上で確認（ESP-IDF 不要）
 cd tools/test_pipeline && make test
@@ -151,7 +164,7 @@ I (xxx) uwb_probe: === L1: PASS / L2: PASS ===
 ## ディレクトリ構成
 
 ```
-m5stack_uwb/
+m5stamp_uwb_localizer/
 ├── README.md                このファイル
 ├── LICENSE                  リポジトリ既定のライセンス（MIT）
 ├── THIRD_PARTY_LICENSES.md  ライセンス構成の詳細
@@ -257,6 +270,9 @@ firmware/tag ──┬─ uwb_ranging ─┬─ uwb_loc          （ハード非
 ## 開発計画・進捗
 
 - **用語集（略語の意味）**: [`docs/GLOSSARY.md`](docs/GLOSSARY.md)
+- **UWB 入門（原理から）**: [`docs/UWB_PRIMER.md`](docs/UWB_PRIMER.md)
+- 測位アルゴリズムの導出: [`docs/UWB_ALGORITHMS.md`](docs/UWB_ALGORITHMS.md)
+- **実機が届いたら**: [`docs/EXPERIMENT_PLAN.md`](docs/EXPERIMENT_PLAN.md)
 - **手順書**: [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md)
 - 設計方針・フェーズ計画: [`docs/PLAN.md`](docs/PLAN.md)
 - 単位（UUS / DTU）のリファレンス: [`docs/UNITS.md`](docs/UNITS.md)

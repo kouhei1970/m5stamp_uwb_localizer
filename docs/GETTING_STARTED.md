@@ -119,8 +119,8 @@ idf.py --version      # → ESP-IDF v5.5.2
 ### 2.2 リポジトリの取得
 
 ```sh
-git clone <このリポジトリの URL> m5stack_uwb
-cd m5stack_uwb
+git clone <このリポジトリの URL> m5stamp_uwb_localizer
+cd m5stamp_uwb_localizer
 ```
 
 > `third_party/` と `docs/refs/` は `.gitignore` されています（上流リポジトリの

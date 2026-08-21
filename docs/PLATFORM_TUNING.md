@@ -82,7 +82,7 @@ ESP32-S3 は 240MHz 対応。**そのまま 1.5倍。**
 `uwb_loc` は**依存ゼロの移植性重視 C99**（malloc も OS 依存も無い）。
 esp-dsp を本体に入れるとその設計が壊れる。取るなら:
 - マクロで切り替える optional backend にする、または
-- `uwb_loc` は純粋なまま保ち、`m5stack_uwb` 側のラッパで置き換える
+- `uwb_loc` は純粋なまま保ち、`m5stamp_uwb_localizer` 側のラッパで置き換える
 
 ## 5. ベクタ命令 (PIE) は測位計算に使えない
 

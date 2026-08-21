@@ -183,7 +183,7 @@ README のスタック上限 6.6KB に対して半分近く。組込みでは速
 絶対値では Beck が最大の削減余地になった。
 → **段階ごとに測り直さないと優先順位を誤る**という教訓。
 
-## 本リポジトリ (m5stack_uwb) への影響
+## 本リポジトリ (m5stamp_uwb_localizer) への影響
 **`components/uwb_loc/` は現在 vendoring 時点の上流と byte 一致だが、
 上流にこの最適化が入ると差分が生じる。**
 上流がマージされたら **`components/uwb_loc/` を再 vendoring すること**

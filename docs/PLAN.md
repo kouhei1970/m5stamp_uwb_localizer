@@ -1,4 +1,4 @@
-# m5stack_uwb 開発計画 (2026-08-19 策定)
+# m5stamp_uwb_localizer 開発計画 (2026-08-19 策定)
 
 ## 0. Phase 0 調査の結論
 
@@ -128,7 +128,7 @@ StampFly への統合はその成果物を利用する下流作業。
 
 | 対象 | 方針 |
 |---|---|
-| `m5stack_uwb`（本リポジトリ） | **ESP32-S3 専用に最適化してよい**。-O2 / 240MHz / float / IRAM / esp-dsp など |
+| `m5stamp_uwb_localizer`（本リポジトリ） | **ESP32-S3 専用に最適化してよい**。-O2 / 240MHz / float / IRAM / esp-dsp など |
 | `uwb_localizer`（上流） | **移植性を維持**。他プロジェクトでも使うライブラリなので ESP32 依存を持ち込まない |
 | StampFly | 引き続き**非依存**。StampFly はあくまで本成果物の利用者の一つ |
 
@@ -171,7 +171,7 @@ StampFly への統合はその成果物を利用する下流作業。
 
 ### ディレクトリ構成（予定）
 ```
-m5stack_uwb/
+m5stamp_uwb_localizer/
 ├── README.md  PROGRESS.md
 ├── docs/       SURVEY_*.md  PLAN.md  WIRING.md  CALIBRATION.md  BRINGUP.md
 ├── components/
