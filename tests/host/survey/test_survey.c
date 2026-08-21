@@ -777,30 +777,179 @@ static void scenario8_node_counts(void)
 }
 
 /* ==================================================================== *
- * 9. 外れ値リンクの棄却
+ * 9. 外れ値リンクの棄却（leave-one-out、レビュー A-2）
+ *
+ * 旧実装（残差の MAD）は、冗長度の低い 6 台構成で外れ値が座標と δ に吸収され
+ * （マスキング）、(2,5) に +2m を入れても残差 −0.16 でしきい値 0.30 に届かず、
+ * 座標 1.33m・δ −0.17m の誤りを ok=1 で返していた。新実装は各リンクを 1 本
+ * 外して解き直したときのコスト減 Δ_k で判定する。
+ *
+ * 検出できる大きさには限界がある: Δ_k ≈ (1−h_k)·ε²（h_k はてこ比）が
+ * (4σ)² = 0.04 m²（σ=5cm）を超える必要があり、平均 1−h は冗長度/リンク数
+ * （n=6 で 0.13、n=8 で 0.32）。てこ比の高いリンクでは ±0.5m は落とせない
+ * （n=6 では 15 本中 7 本。落とせない = 座標誤差 0.1〜0.4m が残る）。下の
+ * 位置はすべての大きさで落とせるものを選んである。
  * ==================================================================== */
+static int popcount_ul(unsigned long v) { int c = 0; while (v) { c += (int)(v & 1UL); v >>= 1; } return c; }
+
+static void outlier_case(int n, int i, int j, double eps)
+{
+    uwb_survey_input  in;
+    uwb_survey_result out;
+    unsigned long     bit = 1UL << uwb_survey_link_index(i, j);
+    double            err, de;
+    int               full = n * (n - 1) / 2;
+
+    make_input(&in, n, 0.10);
+    in.dist[i][j] = in.dist[j][i] = (uwb_real)((double)in.dist[i][j] + eps);
+    CHECK(uwb_survey_solve(&in, &out) == 1 && out.ok, "n=%d (%d,%d)%+.1f: 解けなかった", n, i, j, eps);
+    CHECK(out.excluded == bit, "n=%d (%d,%d)%+.1f: 棄却が違う (excluded=0x%lX, 期待 0x%lX)", n, i, j,
+          eps, out.excluded, bit);
+    err = max_pos_err(&out, n);
+    de  = fabs((double)out.common_delay_m - 0.10);
+    CHECK(err < 0.05, "n=%d (%d,%d)%+.1f: 棄却後の座標誤差 %.3f m", n, i, j, eps, err);
+    CHECK(de < 0.02, "n=%d (%d,%d)%+.1f: 棄却後の δ 誤差 %.3f m", n, i, j, eps, de);
+    CHECK(out.redundancy == full - 1 - (3 * n - 6 + 1),
+          "n=%d (%d,%d)%+.1f: 棄却後の冗長度 %d", n, i, j, eps, out.redundancy);
+}
+
 static void scenario9_outlier(void)
 {
     uwb_survey_input  in;
     uwb_survey_result out;
     unsigned long     bit;
     double            err;
+    static const int  pos6[3][2] = {{0, 4}, {1, 5}, {3, 5}};
+    static const int  pos7[3][2] = {{0, 1}, {2, 4}, {3, 6}};
+    static const int  pos8[3][2] = {{2, 5}, {0, 7}, {1, 3}};
+    static const double epss[3]  = {2.0, -2.0, 0.5};
+    int n, q, e;
 
-    printf("--- 9. 外れ値リンクの棄却 ---\n");
+    printf("--- 9. 外れ値リンクの棄却（leave-one-out） ---\n");
 
-    /* 8ノード（28本、冗長度9）で 1本だけ +2.0 m ずれた測距を混ぜる。 */
+    /* (a) n=6/7/8 × {+2.0, −2.0, +0.5} m × 位置 3 通り、無雑音、δ=0.10。 */
+    for (n = 6; n <= 8; ++n)
+        for (e = 0; e < 3; ++e)
+            for (q = 0; q < 3; ++q) {
+                const int *pp = (n == 6) ? pos6[q] : (n == 7) ? pos7[q] : pos8[q];
+                outlier_case(n, pp[0], pp[1], epss[e]);
+            }
+    printf("    n=6/7/8 × {+2,−2,+0.5}m × 3 位置: 上に NG が無ければ全部正しく棄却\n");
+
+    /* (b) レビュー A-2 の再現: n=6、(2,5) に +2.0m、δ=0.10。旧実装は落とせず
+     *     座標 1.33m・δ −0.07（真値 +0.10）で ok=1 を返していた。
+     *     冗長度 2 の配置では 1 本外すと拘束が 1 本しか残らず、無関係なリンクを
+     *     外しても外れ値がほぼ吸収される（無雑音でこそ 0 と 1.8e-4 を区別できるが
+     *     ノイズ下では隣の候補と取り違える）ので outlier_ambiguous が立つ。 */
+    {
+        make_input(&in, 6, 0.10);
+        in.dist[2][5] += (uwb_real)2.0;
+        in.dist[5][2] += (uwb_real)2.0;
+        bit = 1UL << uwb_survey_link_index(2, 5);
+        CHECK(uwb_survey_solve(&in, &out) == 1 && out.ok, "A-2: 解けなかった");
+        CHECK(out.excluded == bit, "A-2: (2,5) が棄却されなかった (excluded=0x%lX)", out.excluded);
+        err = max_pos_err(&out, 6);
+        printf("    A-2 再現 n=6 (2,5)+2.0: excluded=0x%lX / 座標誤差 %.2e m / δ誤差 %.2e / "
+               "ambiguous=%d / 冗長度 %d\n",
+               out.excluded, err, fabs((double)out.common_delay_m - 0.10), out.outlier_ambiguous,
+               out.redundancy);
+        CHECK(err < 0.05, "A-2: 座標誤差 %.3f m", err);
+        CHECK(fabs((double)out.common_delay_m - 0.10) < 0.02, "A-2: δ が %.3f にずれた",
+              (double)out.common_delay_m);
+        CHECK(out.outlier_ambiguous == 1, "A-2: 冗長度 2 での棄却は ambiguous のはず");
+        CHECK(out.redundancy == 1, "A-2: 棄却後の冗長度は 1 のはず (%d)", out.redundancy);
+
+        /* 同じ位置に +0.5m: Δ ≈ 0.0078 < 0.04 で検出限界の下（てこ比 0.97）。
+         * 落とさない（σ=5cm のノイズ χ²(2) と区別がつかない量）が、誤った
+         * リンクを落とすこともない。 */
+        make_input(&in, 6, 0.10);
+        in.dist[2][5] += (uwb_real)0.5;
+        in.dist[5][2] += (uwb_real)0.5;
+        CHECK(uwb_survey_solve(&in, &out) == 1 && out.ok, "(2,5)+0.5 が解けなかった");
+        CHECK(out.excluded == 0UL || out.excluded == bit,
+              "(2,5)+0.5: 無関係なリンクを落とした (excluded=0x%lX)", out.excluded);
+        printf("    検出限界の例 n=6 (2,5)+0.5: excluded=0x%lX / 座標誤差 %.3f m（てこ比が高く落とせない）\n",
+               out.excluded, max_pos_err(&out, 6));
+    }
+
+    /* (c) 2 本の外れ値。冗長度が 2 本の棄却を許す n=7（5→3）と n=8（9→7）。
+     *     同じノードに 2 本乗るペアは 1 本ずつの greedy では捕まらない
+     *     （そのノードを動かす方が安い）ので、ノードを共有しないペアで見る。 */
+    {
+        static const int pairs[3][5] = {{8, 0, 1, 3, 4}, {8, 0, 1, 2, 5}, {7, 1, 2, 3, 4}};
+        for (q = 0; q < 3; ++q) {
+            unsigned long want;
+            int nn = pairs[q][0], full = nn * (nn - 1) / 2;
+            make_input(&in, nn, 0.10);
+            in.dist[pairs[q][1]][pairs[q][2]] += (uwb_real)2.0;
+            in.dist[pairs[q][2]][pairs[q][1]] += (uwb_real)2.0;
+            in.dist[pairs[q][3]][pairs[q][4]] += (uwb_real)1.5;
+            in.dist[pairs[q][4]][pairs[q][3]] += (uwb_real)1.5;
+            want = (1UL << uwb_survey_link_index(pairs[q][1], pairs[q][2])) |
+                   (1UL << uwb_survey_link_index(pairs[q][3], pairs[q][4]));
+            CHECK(uwb_survey_solve(&in, &out) == 1 && out.ok, "2本外れ値 n=%d が解けなかった", nn);
+            CHECK(out.excluded == want, "2本外れ値 n=%d: excluded=0x%lX (期待 0x%lX)", nn,
+                  out.excluded, want);
+            err = max_pos_err(&out, nn);
+            CHECK(err < 0.05, "2本外れ値 n=%d: 座標誤差 %.3f m", nn, err);
+            CHECK(out.redundancy == full - 2 - (3 * nn - 6 + 1), "2本外れ値 n=%d: 冗長度 %d", nn,
+                  out.redundancy);
+            printf("    2本外れ値 n=%d (%d,%d)+2.0 (%d,%d)+1.5: excluded=0x%lX / 座標誤差 %.2e m / 冗長度 %d\n",
+                   nn, pairs[q][1], pairs[q][2], pairs[q][3], pairs[q][4], out.excluded, err,
+                   out.redundancy);
+        }
+
+        /* 既知の限界（検証はしない、記録のため）: 同じノードに 2 本。 */
+        make_input(&in, 8, 0.10);
+        in.dist[0][1] += (uwb_real)2.0; in.dist[1][0] += (uwb_real)2.0;
+        in.dist[1][5] += (uwb_real)1.5; in.dist[5][1] += (uwb_real)1.5;
+        uwb_survey_solve(&in, &out);
+        printf("    【既知の限界】n=8 (0,1)+2.0 (1,5)+1.5（ノード 1 を共有）: excluded=0x%lX / "
+               "座標誤差 %.2f m / 残差RMS %.3f（greedy では捕まらない）\n",
+               out.excluded, max_pos_err(&out, 8), (double)out.residual_rms);
+
+        /* n=6 は冗長度 2 なので 2 本は落とせない（落とすと冗長度 0 = 識別不能）。
+         * 1 本までで止まり、冗長度は必ず 1 以上。 */
+        make_input(&in, 6, 0.10);
+        in.dist[0][4] += (uwb_real)2.0; in.dist[4][0] += (uwb_real)2.0;
+        in.dist[1][5] += (uwb_real)1.5; in.dist[5][1] += (uwb_real)1.5;
+        uwb_survey_solve(&in, &out);
+        CHECK(popcount_ul(out.excluded) <= 1, "n=6 で 2 本落とした (excluded=0x%lX)", out.excluded);
+        CHECK(!out.ok || out.redundancy >= 1, "n=6 の棄却で冗長度が 0 になった");
+    }
+
+    /* (d) σ=5cm のノイズだけ（外れ値なし）で誤棄却しないこと。Δ_k ~ σ²χ²(1) の
+     *     最大値が (4σ)² を超える確率は n=8（28 本）で ≈0.2%、n=6 では
+     *     Δ ≤ cost_full ~ σ²χ²(2) なので ≈0.03%（2000 試行の実測: 1 / 2 / 7 回）。
+     *     200 試行で 2 回までを許容。 */
+    for (n = 6; n <= 8; ++n) {
+        rng_t rng;
+        int   t, nrej = 0, trials = 200;
+        rng_seed(&rng, 31000u + (unsigned int)n);
+        for (t = 0; t < trials; ++t) {
+            make_input(&in, n, 0.10);
+            add_dist_noise(&in, n, 0.05, &rng);
+            uwb_survey_solve(&in, &out);
+            if (out.excluded != 0UL) ++nrej;
+        }
+        printf("    σ=5cm ノイズのみ n=%d x%d回: 誤棄却 %d 回\n", n, trials, nrej);
+        CHECK(nrej <= 2, "n=%d: 5cm のばらつきで %d/%d 回リンクを落とした", n, nrej, trials);
+    }
+
+    /* (e) 旧テスト: 8 ノード（冗長度 9）で +2.0m。誤差は数値誤差レベルまで戻る。 */
     make_input(&in, 8, 0.10);
     in.dist[2][5] += (uwb_real)2.0;
     in.dist[5][2] += (uwb_real)2.0;
-
     CHECK(uwb_survey_solve(&in, &out) == 1 && out.ok, "外れ値入りで解けなかった");
     bit = 1UL << uwb_survey_link_index(2, 5);
     CHECK((out.excluded & bit) != 0UL, "リンク(2,5)が棄却されなかった (excluded=0x%lX)",
           out.excluded);
     err = max_pos_err(&out, 8);
-    printf("    +2.0m の外れ値1本: excluded=0x%lX / 座標誤差 %.3e m / δ誤差 %.3e\n",
-           out.excluded, err, fabs((double)out.common_delay_m - 0.10));
+    printf("    n=8 +2.0m の外れ値1本: excluded=0x%lX / 座標誤差 %.3e m / δ誤差 %.3e / ambiguous=%d / 反復 %d\n",
+           out.excluded, err, fabs((double)out.common_delay_m - 0.10), out.outlier_ambiguous,
+           out.iterations);
     CHECK(err < (double)TOL_EXACT, "外れ値を除いた後の復元誤差: %.3e m", err);
+    CHECK(out.outlier_ambiguous == 0, "冗長度 9 での棄却が ambiguous になった");
 
     /* リンク添字のマッピングが一意で 32bit に収まること。 */
     {
@@ -998,6 +1147,11 @@ static void scenario12_diagnostics(void)
     CHECK(out.n_heights == 6, "n_heights=%d", out.n_heights);
     CHECK(out.frame_determined == 1, "高さ 6 点で frame_determined=0");
     CHECK(out.delay_suspect == 0, "δ=0.05 で delay_suspect=1");
+    CHECK(out.outlier_ambiguous == 0, "外れ値なしで outlier_ambiguous=1");
+    CHECK(in.chirality == 0, "uwb_survey_input_init が chirality を 0 にしていない");
+    /* 未指定時の chirality_margin = |y| の 1 位と 2 位の差（ノード3 4.9 − ノード2 4.6） */
+    CHECK(fabs((double)out.chirality_margin - 0.3) < 1e-3, "chirality_margin=%.4f (期待 0.3)",
+          (double)out.chirality_margin);
 
     make_input(&in, 8, 0.05);
     CHECK(uwb_survey_solve(&in, &out) == 1 && out.ok, "n=8 が解けなかった");
@@ -1038,8 +1192,139 @@ static void scenario12_diagnostics(void)
     /* 失敗時はすべてゼロ。 */
     make_input(&in, 6, 0.0);
     in.n = 3;
-    CHECK(uwb_survey_solve(&in, &out) == 0 && out.redundancy == 0 && out.frame_determined == 0,
+    CHECK(uwb_survey_solve(&in, &out) == 0 && out.redundancy == 0 && out.frame_determined == 0 &&
+              out.outlier_ambiguous == 0 && out.chirality_margin == (uwb_real)0 &&
+              out.mirror_resolved == 0,
           "失敗時に診断フィールドが残っている");
+}
+
+/* ==================================================================== *
+ * 13. キラリティの 1 ビット入力（レビュー A-4）
+ *
+ * 従来の規約「|y| 最大のノードの y を正にする」は、|y| 最大の 2 ノードが
+ * 対称な配置（ノード 0,1 を長方形の対角に置くと 2,3 が y=±w/2 で必ずそうなる）
+ * で測距ばらつきにより毎回裏返る（レビューの実測 98:102）。
+ * `in.chirality` = ±1（上から見て 0→1→2 が反時計回り / 時計回り）を与えれば
+ * (p1−p0)×(p2−p0) の z 符号で決め、裏返らない。
+ * ==================================================================== */
+static const double SYM6[6][3] = {{0.0, 0.0, 0.30}, {6.0, 0.0, 2.40}, {3.0, 4.0, 0.50},
+                                  {3.0, -4.0, 2.20}, {1.5, 1.0, 2.45}, {4.5, -1.2, 0.90}};
+
+static double max_err_vs(const uwb_survey_result *o, int n, const double ref[][3], int flip_y)
+{
+    double worst = 0.0;
+    int i, k;
+    for (i = 0; i < n; ++i)
+        for (k = 0; k < 3; ++k) {
+            double r = ref[i][k];
+            if (k == 1 && flip_y) r = -r;
+            if (fabs((double)o->pos[i][k] - r) > worst) worst = fabs((double)o->pos[i][k] - r);
+        }
+    return worst;
+}
+
+static void scenario13_chirality(void)
+{
+    uwb_survey_input  in;
+    uwb_survey_result out;
+    double            e;
+
+    printf("--- 13. キラリティの 1 ビット入力（A-4） ---\n");
+
+    /* (a) 対称配置・無雑音。SYM6 はノード 2 が y=+4（0→1→2 が反時計回り）。
+     *     +1 なら SYM6 そのもの、−1 なら y を反転したもの。どちらも
+     *     mirror_resolved=1、margin = |y2| = 4.0。 */
+    set_flat_input(&in, 6, SYM6);
+    in.chirality = +1;
+    CHECK(uwb_survey_solve(&in, &out) == 1 && out.ok, "chirality=+1 で解けなかった");
+    e = max_err_vs(&out, 6, SYM6, 0);
+    CHECK(e < (double)TOL_EXACT, "chirality=+1: 座標誤差 %.3e m", e);
+    CHECK(out.mirror_resolved == 1, "chirality=+1 なのに mirror_resolved=0");
+    CHECK(fabs((double)out.chirality_margin - 4.0) < 1e-3, "chirality=+1: margin=%.4f (期待 4.0)",
+          (double)out.chirality_margin);
+    check_convention(&out, "ccw");
+
+    set_flat_input(&in, 6, SYM6);
+    in.chirality = -1;
+    CHECK(uwb_survey_solve(&in, &out) == 1 && out.ok, "chirality=−1 で解けなかった");
+    e = max_err_vs(&out, 6, SYM6, 1);
+    CHECK(e < (double)TOL_EXACT, "chirality=−1: 鏡像の座標誤差 %.3e m", e);
+    CHECK(out.mirror_resolved == 1, "chirality=−1 なのに mirror_resolved=0");
+    check_convention(&out, "cw");
+
+    /* 未指定: 規約で一意化、mirror_resolved=0、margin は |y| 1 位と 2 位の差 = 0。 */
+    set_flat_input(&in, 6, SYM6);
+    CHECK(uwb_survey_solve(&in, &out) == 1 && out.ok, "chirality=0 で解けなかった");
+    CHECK(out.mirror_resolved == 0, "chirality=0 で mirror_resolved=1");
+    CHECK((double)out.chirality_margin < 1e-6, "対称配置の規約マージンが 0 でない (%.3e)",
+          (double)out.chirality_margin);
+
+    /* (b) 対称配置 + σ=5cm × 200 試行。同じ入力を chirality 0 / +1 / −1 で解く。 */
+    {
+        rng_t rng;
+        int   t, trials = 200, pos0 = 0, neg0 = 0, bad_p = 0, bad_n = 0, nfail = 0, unres = 0;
+        double min_margin = 1e9;
+        rng_seed(&rng, 8080u);
+        for (t = 0; t < trials; ++t) {
+            uwb_survey_input base;
+            set_flat_input(&base, 6, SYM6);
+            add_dist_noise(&base, 6, 0.05, &rng);
+
+            in = base; in.chirality = 0;
+            if (!uwb_survey_solve(&in, &out) || !out.ok) { ++nfail; continue; }
+            if ((double)out.pos[2][1] > 0.0) ++pos0; else ++neg0;
+            if (out.mirror_resolved) ++unres;
+
+            in = base; in.chirality = +1;
+            if (!uwb_survey_solve(&in, &out) || !out.ok) { ++nfail; continue; }
+            if (!((double)out.pos[2][1] > 0.0) || !out.mirror_resolved) ++bad_p;
+            if ((double)out.chirality_margin < min_margin) min_margin = (double)out.chirality_margin;
+
+            in = base; in.chirality = -1;
+            if (!uwb_survey_solve(&in, &out) || !out.ok) { ++nfail; continue; }
+            if (!((double)out.pos[2][1] < 0.0) || !out.mirror_resolved) ++bad_n;
+        }
+        printf("    対称配置 + 5cm ノイズ x%d回: 未指定 → y2>0 %d / y2<0 %d（コイントス）、"
+               "+1 → 違反 %d、−1 → 違反 %d、margin 最小 %.2f m、解けず %d\n",
+               trials, pos0, neg0, bad_p, bad_n, min_margin, nfail);
+        CHECK(nfail == 0, "対称配置 + ノイズで %d 回解けなかった", nfail);
+        CHECK(bad_p == 0, "chirality=+1 で %d/%d 回向きが違う", bad_p, trials);
+        CHECK(bad_n == 0, "chirality=−1 で %d/%d 回向きが違う", bad_n, trials);
+        CHECK(unres == 0, "chirality=0 で mirror_resolved=1 が %d 回", unres);
+        /* 従来規約はここでは決められない（両方の向きが出る）ことの記録 */
+        CHECK(pos0 > 0 && neg0 > 0, "対称配置で従来規約が裏返らなかった (%d:%d)。"
+              "裏返らないなら規約が変わっている", pos0, neg0);
+        CHECK(min_margin > 3.0, "対称配置の chirality margin が小さすぎる (%.2f)", min_margin);
+    }
+
+    /* (c) 真値配置（ノード 2 が y=+4.6 → 反時計回り）でも同じ。−1 なら鏡像。 */
+    make_input(&in, 6, 0.07);
+    in.chirality = +1;
+    CHECK(uwb_survey_solve(&in, &out) == 1 && out.ok, "TRUTH chirality=+1 で解けなかった");
+    CHECK(max_pos_err(&out, 6) < (double)TOL_EXACT, "TRUTH chirality=+1: 座標誤差 %.3e",
+          max_pos_err(&out, 6));
+    CHECK(fabs((double)out.chirality_margin - 4.6) < 1e-3, "TRUTH: margin=%.4f (期待 4.6)",
+          (double)out.chirality_margin);
+    make_input(&in, 6, 0.07);
+    in.chirality = -1;
+    CHECK(uwb_survey_solve(&in, &out) == 1 && out.ok, "TRUTH chirality=−1 で解けなかった");
+    e = max_err_vs(&out, 6, TRUTH, 1);
+    CHECK(e < (double)TOL_EXACT, "TRUTH chirality=−1: 鏡像の座標誤差 %.3e m", e);
+    check_convention(&out, "truth-cw");
+
+    /* (d) 0,1,2 が上から見てほぼ一直線（ノード 2 が 0–1 直線から 2cm）。判定は
+     *     できるが margin が測距ばらつき以下 → 呼び出し側は信用してはいけない。 */
+    {
+        static const double line3[6][3] = {{0.0, 0.0, 0.30}, {5.0, 0.0, 2.40}, {2.5, 0.02, 0.50},
+                                           {1.0, 3.5, 2.20}, {4.0, 3.0, 0.90}, {2.0, 1.5, 2.45}};
+        set_flat_input(&in, 6, line3);
+        in.chirality = +1;
+        CHECK(uwb_survey_solve(&in, &out) == 1 && out.ok, "ほぼ一直線で解けなかった");
+        printf("    0,1,2 がほぼ一直線: chirality_margin = %.4f m（0.02 期待）\n",
+               (double)out.chirality_margin);
+        CHECK((double)out.chirality_margin < 0.05 && (double)out.chirality_margin > 0.01,
+              "ほぼ一直線の margin が %.4f", (double)out.chirality_margin);
+    }
 }
 
 /* ==================================================================== */
@@ -1064,6 +1349,7 @@ int main(void)
     scenario10_flat_delay();
     scenario11_misc_defects();
     scenario12_diagnostics();
+    scenario13_chirality();
 
     printf("\n=== %d 件中 %d 件失敗 ===\n", g_run, g_fail);
     return (g_fail == 0) ? 0 : 1;

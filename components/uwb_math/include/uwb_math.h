@@ -290,6 +290,71 @@ int uwb_sym3_rank(const uwb_real *lam, uwb_real rel_tol, uwb_real abs_tol);
  *  共分散を鏡映面の反対側へ移すときに使う。乗算 ≈ 30、除算 0。 */
 void uwb_sym3_reflect(uwb_real *s, const uwb_real *n);
 
+/** 余因子行列 adj(S) (対称なので転置不要 = 随伴行列) をパックで adj に書き、
+ *  det(S) を返す。S⁻¹ = adj/det。det の大きさで特異判定を自前でしたいとき、
+ *  rank 2 の S から値域の射影 (adj ∝ n nᵀ、n はヌルベクトル) を取りたいとき用。
+ *  adj と s は別配列。乗算 15、除算 0。 */
+uwb_real uwb_sym3_adjugate(const uwb_real *s, uwb_real *adj);
+
+/** uwb_sym3_solve の特異判定しきい値を引数で渡せる版。
+ *  失敗条件: |det| ≤ rel_tol · max|s_ij|³、または det が NaN / ±inf。
+ *  rel_tol = UWB_MATH_SING_TOL で uwb_sym3_solve と同じ。rel_tol = 0 は
+ *  「det が厳密に 0 のときだけ失敗」(部分ピボット LU と同じ意味論。退化した
+ *  幾何でも解を返してほしいとき用。ほぼ特異なら解は κ·eps の精度しかなく、
+ *  巨大な値になりうる)。b と x は同じ配列でもよい。乗算 ≈ 30、除算 1。 */
+int uwb_sym3_solve_tol(const uwb_real *s, const uwb_real *b, uwb_real *x, uwb_real rel_tol);
+
+/** rank 2 の対称 3x3 のヌルベクトル (単位。S n = 0)。3 行のうち 2 行の外積
+ *  3 通りのうち最大ノルムのものを採る (2 行が平行だと 0 になるため)。行は
+ *  max|s_ij| で正規化してから外積を取るので、S のスケール (1e-6〜1e6) に
+ *  依存しない。符号は「絶対値最大の成分が正」。
+ *  失敗条件 (0 を返し n に触らない): 外積がすべて 0 (rank ≤ 1)、NaN。
+ *  rank 3 の S では「2 行に直交する向き」でしかなくヌルベクトルではないので、
+ *  rank は uwb_sym3_eigvals + uwb_sym3_rank で先に確かめること (rank 2 と
+ *  判定できる範囲なら n の誤差は eps·λ0/λ1 程度)。
+ *  最小固有値の固有ベクトル (uwb_sym3_min_eigvec) と同じ向きだが、固有値を
+ *  求めず sqrt 1、除算 2 (1/max, 1/‖n‖)、乗算 ≈ 30 で済む。 */
+int uwb_sym3_null_vector(const uwb_real *s, uwb_real *n);
+
+/** rank 1 近似 S ≈ λ v vᵀ の主方向 v (単位)。S の行はすべて v に比例する
+ *  ので、最大ノルムの行を正規化する。rank 2 以上の S では「最大ノルム行の向き」
+ *  であって固有ベクトルではない。符号は「絶対値最大の成分が正」。
+ *  失敗条件 (0 を返し v に触らない): 行ノルム ≤ UWB_MATH_TINY (S ≈ 0)、NaN。
+ *  sqrt 1、除算 1。 */
+int uwb_sym3_principal_axis(const uwb_real *s, uwb_real *v);
+
+/** 球面拘束付き最小二乗   min  uᵀ M u − 2 bᵀ u   s.t.  ‖u‖ = 1   の厳密解
+ *  (M は正定値、lam_min = λ_min(M) > 0 を呼び出し側が uwb_sym3_eigvals で
+ *  渡す)。Lagrange 条件は (M + νI) u = b で、大域最小は M + νI ≻ 0 すなわち
+ *  ν > −λ_min の側にある (信頼領域部分問題と同じ構造)。
+ *      φ(ν) = 1/‖u(ν)‖ − 1,   u(ν) = (M + νI)⁻¹ b
+ *  の根を Newton 法で求める (Moré–Sorensen。1/‖u‖ は ν についてほぼ線形で
+ *  凹・単調増加なので、左側から始めれば単調に収束し、右側から始めても
+ *  1 歩で左側に移る)。
+ *      φ'(ν) = uᵀ w / ‖u‖³,   w = (M + νI)⁻¹ u
+ *      Δν = −φ/φ' = ‖u‖² (‖u‖ − 1) / (uᵀ w)
+ *  ν = 0 から始める。無拘束解 ‖M⁻¹b‖ がすでに 1 なら 1 回目で収束する。
+ *  極 (ν ≤ −λ_min) へ飛びそうな Newton 歩は二分 (ν ← (ν + (−λ_min))/2) で抑える。
+ *  「hard case」(b が λ_min の固有ベクトルに直交し、ν → −λ_min でも ‖u‖ が
+ *  1 に届かない) は反復上限 (30)、または二分が極に達して LDLᵀ が正定値で
+ *  なくなった時点 (float では ν が丸めで −λ_min ちょうどになる) で打ち切り、
+ *  最後に解けた u を正規化して返す (厳密な最小ではない。高さが形状と矛盾した
+ *  異常データでしか起きない)。
+ *
+ *  Beck の λ 探索 (uwb_loc/uwb_closed_form.c の uwb_beck_gtrs) と同型:
+ *  あちらは (Sc + λI) q = r0 の割線方程式 φ(λ) = ‖q‖² − (b̄ + λ/2W) を
+ *  λ > −σ_min(Sc) で解く。線形部分 (LDLᵀ で shift 付き solve を 2 回 =
+ *  u と w) は同じで、φ の形 (‖q‖² の 2 次形か 1/‖u‖ の凹形か) と安全策
+ *  (Beck は区間を括って rtsafe、こちらは極の手前で二分) だけが違う。
+ *  将来 Beck をこれに寄せるなら φ に線形項を足した版を同じ骨格で書ける。
+ *
+ *  失敗条件 (0 を返し u に触らない): ν = 0 で LDLᵀ が正定値でない (M が
+ *  正定値でない、NaN)、b = 0、最後の u が正規化できない。
+ *  成功時 out_nu (NULL 可) に u を解いた ν を書く (hard case では打ち切り時点の値)。
+ *  1 反復: LDLᵀ 1 回 (除算 3) + solve 2 回 + sqrt 1 + 除算 1。通常 1〜3 反復。 */
+int uwb_sym3_solve_sphere(const uwb_real *m, const uwb_real *b, uwb_real lam_min,
+                          uwb_real *u, uwb_real *out_nu);
+
 /* ------------------------------------------------------------- sym2 */
 
 /** s = 0。 */
@@ -333,6 +398,131 @@ int uwb_sym2_eigvals(const uwb_real *s, uwb_real *lam);
  *  残差 ‖Sv − λv‖ は eps·‖S‖ で収まる。符号は「絶対値最大の成分が正」。
  *  sqrt 1、除算 1。 */
 int uwb_sym2_eigvec(const uwb_real *s, uwb_real lam, uwb_real *v);
+
+/** y = S x。乗算 4。y は x と別配列であること。 */
+void uwb_sym2_mv(const uwb_real *s, const uwb_real *x, uwb_real *y);
+
+/** (S + shift·I) x = b。s は書き換えない。失敗条件・コストは solve と同じ。 */
+int uwb_sym2_solve_shifted(const uwb_real *s, uwb_real shift, const uwb_real *b, uwb_real *x);
+
+/** (S + shift·I)⁻¹。失敗条件・コストは inverse と同じ。 */
+int uwb_sym2_inverse_shifted(const uwb_real *s, uwb_real shift, uwb_real *inv);
+
+/** uwb_sym2_solve の特異判定しきい値を引数で渡せる版 (sym3_solve_tol の 2x2)。
+ *  失敗条件: |det| ≤ rel_tol · max|s_ij|²、または det が NaN / ±inf。 */
+int uwb_sym2_solve_tol(const uwb_real *s, const uwb_real *b, uwb_real *x, uwb_real rel_tol);
+
+/* ------------------------------------------ sym3 / sym2 の LDLᵀ 分解 */
+/* 正規方程式・Beck の (Sc + λI)・LLS の AᵀA・球面拘束の (M + νI) を解くための、
+ * ピボット無し LDLᵀ (パック対称入力。sqrt 無し、除算は対角の逆数 3 回
+ * (2x2 は 2 回) だけ)。
+ *
+ * なぜ余因子 (uwb_sym3_solve、除算 1) と別に持つか:
+ * 余因子展開の行列式は誤差 eps·σ_max³ を持ち、条件数 κ = σ_max/σ_min が
+ * 大きいと解の相対誤差が eps·κ·(σ_max/σ_2) まで膨らむ (後退安定でない)。
+ * float では κ ≈ 200 の Beck で 2e-4 m、κ ≈ 1e5 の 4 台 LLS で数 m 狂った。
+ * LDLᵀ は正定値行列に対して後退安定で、誤差は eps·κ に収まる
+ * (同じ条件で 4e-6 m)。GDOP / CRLB のように精度要求が低く条件も良い
+ * (単位ベクトルの和) 所だけ余因子 (uwb_sym3_trace_inverse) を使う。
+ *
+ * 失敗条件 (factor が 0 を返す。f の中身は不定):
+ *   require_pd = 1: ピボット d_k が正でない (正定値でない。Beck の極、LLS の
+ *                   階数落ち)。NaN も弾く。+inf は通る (呼び出し側で x の
+ *                   NaN を見ること)。
+ *   require_pd = 0: ピボット d_k が 0 / NaN / ±inf のときだけ失敗。不定値行列
+ *                   でも通す (部分ピボット LU と同じ「厳密に特異なときだけ
+ *                   失敗」の意味論。NLS の共分散で退化した幾何でも ok=1 と
+ *                   巨大な cov を返すため)。
+ * ピボット無しなので、正定値でない行列では (require_pd = 0 でも) 途中の
+ * 小さなピボットで誤差が膨らみうる。また s[0] = 0 の非特異行列
+ * (例: [[0,1],[1,0]]) は d_0 = 0 で失敗する (正規方程式 AᵀA では起きない)。 */
+
+/* factor / solve は static inline で置く: Beck の φ 評価 (1 fix に ≈ 11 回、
+ * 各 factor 1 + solve 2) と NLS の Gauss-Newton 反復ごとに呼ばれ、関数呼び出し
+ * にすると Beck +18%、Lv1/Lv2 +10% (M3 Ultra、clang -O2、tools/bench_loc) と
+ * 演算量に対して呼び出しコストが見えるため (vec3 と同じ扱い)。inverse は
+ * 共分散 1 回ぶんなので通常の関数。 */
+
+typedef struct {
+    uwb_real l10, l20, l21;          /**< 単位下三角 L の非対角 */
+    uwb_real inv_d0, inv_d1, inv_d2; /**< D の逆数 */
+} uwb_sym3_ldl;
+
+/** ピボットの合否。require_pd = 0 は 0 / NaN / ±inf だけを弾く。 */
+static inline int uwb_ldl_pivot_ok(uwb_real d, int require_pd)
+{
+    if (require_pd) return d > (uwb_real)0;
+    return d != (uwb_real)0 && d == d && d - d == (uwb_real)0;
+}
+
+/** (S + shift·I) = L D Lᵀ。s はパック [xx,xy,xz,yy,yz,zz]。除算 3、乗算 8。 */
+static inline int uwb_sym3_ldl_factor(const uwb_real *s, uwb_real shift, int require_pd,
+                                      uwb_sym3_ldl *f)
+{
+    uwb_real d0 = s[0] + shift, d1, d2, t;
+    if (!uwb_ldl_pivot_ok(d0, require_pd)) return 0;
+    f->inv_d0 = (uwb_real)1 / d0;
+    f->l10 = s[1] * f->inv_d0;
+    f->l20 = s[2] * f->inv_d0;
+    d1 = (s[3] + shift) - f->l10 * s[1];             /* a11 − l10² d0 */
+    if (!uwb_ldl_pivot_ok(d1, require_pd)) return 0;
+    f->inv_d1 = (uwb_real)1 / d1;
+    t = s[4] - f->l20 * s[1];                         /* a21 − l20 l10 d0 */
+    f->l21 = t * f->inv_d1;
+    d2 = (s[5] + shift) - f->l20 * s[2] - f->l21 * t; /* a22 − l20² d0 − l21² d1 */
+    if (!uwb_ldl_pivot_ok(d2, require_pd)) return 0;
+    f->inv_d2 = (uwb_real)1 / d2;
+    return 1;
+}
+
+/** L D Lᵀ x = b (前進代入 → D⁻¹ → 後退代入)。b と x は同じ配列でもよい。
+ *  除算 0、乗算 9。 */
+static inline void uwb_sym3_ldl_solve(const uwb_sym3_ldl *f, const uwb_real *b, uwb_real *x)
+{
+    uwb_real y0 = b[0];
+    uwb_real y1 = b[1] - f->l10 * y0;
+    uwb_real y2 = b[2] - f->l20 * y0 - f->l21 * y1;
+    uwb_real x2 = y2 * f->inv_d2;
+    uwb_real x1 = y1 * f->inv_d1 - f->l21 * x2;
+    uwb_real x0 = y0 * f->inv_d0 - f->l10 * x1 - f->l20 * x2;
+    x[0] = x0; x[1] = x1; x[2] = x2;
+}
+
+/** (S + shift·I)⁻¹ をパックで (factor 1 回 + 単位ベクトル 3 本を解く)。
+ *  因子を作り終えてから書くので inv と s は同じ配列でもよい。失敗条件は
+ *  factor と同じ (失敗時 inv に触らない)。除算 3、乗算 ≈ 35。 */
+int uwb_sym3_ldl_inverse(const uwb_real *s, uwb_real shift, int require_pd, uwb_real *inv);
+
+typedef struct {
+    uwb_real l10;            /**< 単位下三角 L の非対角 */
+    uwb_real inv_d0, inv_d1; /**< D の逆数 */
+} uwb_sym2_ldl;
+
+/** (S + shift·I) = L D Lᵀ。s はパック [xx,xy,yy]。除算 2、乗算 2。 */
+static inline int uwb_sym2_ldl_factor(const uwb_real *s, uwb_real shift, int require_pd,
+                                      uwb_sym2_ldl *f)
+{
+    uwb_real d0 = s[0] + shift, d1;
+    if (!uwb_ldl_pivot_ok(d0, require_pd)) return 0;
+    f->inv_d0 = (uwb_real)1 / d0;
+    f->l10 = s[1] * f->inv_d0;
+    d1 = (s[2] + shift) - f->l10 * s[1];
+    if (!uwb_ldl_pivot_ok(d1, require_pd)) return 0;
+    f->inv_d1 = (uwb_real)1 / d1;
+    return 1;
+}
+
+/** L D Lᵀ x = b。b と x は同じ配列でもよい。除算 0、乗算 3。 */
+static inline void uwb_sym2_ldl_solve(const uwb_sym2_ldl *f, const uwb_real *b, uwb_real *x)
+{
+    uwb_real y1 = b[1] - f->l10 * b[0];
+    uwb_real x1 = y1 * f->inv_d1;
+    uwb_real x0 = b[0] * f->inv_d0 - f->l10 * x1;
+    x[0] = x0; x[1] = x1;
+}
+
+/** (S + shift·I)⁻¹ (パック)。失敗条件は factor と同じ。除算 2。 */
+int uwb_sym2_ldl_inverse(const uwb_real *s, uwb_real shift, int require_pd, uwb_real *inv);
 
 /* ------------------------------------------- 対称 n×n の rank-1 更新 */
 

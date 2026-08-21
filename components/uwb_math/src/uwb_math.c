@@ -508,6 +508,120 @@ void uwb_sym3_reflect(uwb_real *s, const uwb_real *n)
     s[5] += -R(4) * n[2] * w[2]              + t2 * n[2];
 }
 
+uwb_real uwb_sym3_adjugate(const uwb_real *s, uwb_real *adj)
+{
+    return sym3_cofactors(s, adj);
+}
+
+int uwb_sym3_solve_tol(const uwb_real *s, const uwb_real *b, uwb_real *x, uwb_real rel_tol)
+{
+    uwb_real c[6], inv, x0, x1, x2;
+    uwb_real det = sym3_cofactors(s, c);
+    uwb_real m = sym3_maxabs(s);
+    /* NaN は比較が偽で落ちる。±inf は det − det が NaN になるので別に弾く
+     * (rel_tol = 0 のとき |inf| > 0 が真になってしまうため)。 */
+    if (!(uwb_math_abs(det) > rel_tol * m * m * m) || !(det - det == R(0))) return 0;
+    inv = R(1) / det;
+    x0 = (c[0] * b[0] + c[1] * b[1] + c[2] * b[2]) * inv;
+    x1 = (c[1] * b[0] + c[3] * b[1] + c[4] * b[2]) * inv;
+    x2 = (c[2] * b[0] + c[4] * b[1] + c[5] * b[2]) * inv;
+    x[0] = x0; x[1] = x1; x[2] = x2;
+    return 1;
+}
+
+int uwb_sym3_null_vector(const uwb_real *s, uwb_real *n)
+{
+    uwb_real m = sym3_maxabs(s), inv_m;
+    uwb_real r0[3], r1[3], r2[3];
+    uwb_real c01[3], c12[3], c20[3], n01, n12, n20, v[3];
+    const uwb_real *best;
+
+    /* max3_abs は NaN を「大きくない」扱いで読み飛ばすので和で別に見る。 */
+    if (uwb_math_isnan(s[0] + s[1] + s[2] + s[3] + s[4] + s[5])) return 0;
+    if (!(m > R(0))) return 0;                /* S = 0 */
+    inv_m = R(1) / m;
+
+    /* 行を max|s_ij| で正規化: 外積は s² のオーダーなので、1e-6 スケールの S
+     * をそのまま使うと ‖外積‖ ≈ 1e-12 が UWB_MATH_TINY に掛かってしまう。 */
+    r0[0] = s[0] * inv_m; r0[1] = s[1] * inv_m; r0[2] = s[2] * inv_m;
+    r1[0] = r0[1];        r1[1] = s[3] * inv_m; r1[2] = s[4] * inv_m;
+    r2[0] = r0[2];        r2[1] = r1[2];        r2[2] = s[5] * inv_m;
+
+    uwb_v3_cross(r0, r1, c01);
+    uwb_v3_cross(r1, r2, c12);
+    uwb_v3_cross(r2, r0, c20);
+    n01 = uwb_v3_norm2(c01); n12 = uwb_v3_norm2(c12); n20 = uwb_v3_norm2(c20);
+    best = c01;
+    if (n12 > n01 && n12 >= n20) best = c12;
+    else if (n20 > n01)          best = c20;
+
+    uwb_v3_copy(best, v);
+    if (!(uwb_v3_normalize(v) > R(0))) return 0;   /* 3 行が平行 (rank ≤ 1) */
+    v3_canonical_sign(v);
+    uwb_v3_copy(v, n);
+    return 1;
+}
+
+int uwb_sym3_principal_axis(const uwb_real *s, uwb_real *v)
+{
+    const uwb_real r0[3] = { s[0], s[1], s[2] };
+    const uwb_real r1[3] = { s[1], s[3], s[4] };
+    const uwb_real r2[3] = { s[2], s[4], s[5] };
+    uwb_real m0, m1, m2, t[3];
+
+    if (uwb_math_isnan(s[0] + s[1] + s[2] + s[3] + s[4] + s[5])) return 0;
+    m0 = uwb_v3_norm2(r0); m1 = uwb_v3_norm2(r1); m2 = uwb_v3_norm2(r2);
+    if (m1 >= m0 && m1 >= m2) uwb_v3_copy(r1, t);
+    else if (m2 >= m0)        uwb_v3_copy(r2, t);
+    else                      uwb_v3_copy(r0, t);
+    if (!(uwb_v3_normalize(t) > R(0))) return 0;   /* S ≈ 0 */
+    v3_canonical_sign(t);
+    uwb_v3_copy(t, v);
+    return 1;
+}
+
+int uwb_sym3_solve_sphere(const uwb_real *m, const uwb_real *b, uwb_real lam_min,
+                          uwb_real *u, uwb_real *out_nu)
+{
+    uwb_real nu = R(0), nu_x = R(0), lo = -lam_min, x[3], w[3];
+    uwb_sym3_ldl f;
+    int it;
+
+    for (it = 0; it < 30; ++it) {
+        uwb_real n2, nrm, uw, dnu, nu_new;
+
+        /* u(ν) = (M + νI)⁻¹ b。因子は w = (M + νI)⁻¹ u にも使い回す。
+         * 正定値でなければ極 (ν ≤ −λ_min) か M 自体が不定で、解の側にいない。
+         * 最初の ν = 0 で失敗したら M が正定値でない。2 回目以降の失敗は二分で
+         * 極に達した hard case (float では ν が丸めで −λ_min ちょうどになる) で、
+         * 直前の x を使う。 */
+        if (!uwb_sym3_ldl_factor(m, nu, 1, &f)) {
+            if (it == 0) return 0;
+            break;
+        }
+        uwb_sym3_ldl_solve(&f, b, x);
+        nu_x = nu;
+        n2  = uwb_v3_norm2(x);
+        nrm = uwb_math_sqrt(n2);
+        if (!(nrm > R(0))) return 0;                      /* b = 0 or NaN */
+        if (uwb_math_abs(nrm - R(1)) <= R(16) * UWB_MATH_EPS) break;
+
+        uwb_sym3_ldl_solve(&f, x, w);
+        uw = uwb_v3_dot(x, w);                            /* = ‖u‖³ φ'(ν) > 0 */
+        if (!(uw > R(0))) break;
+        dnu    = n2 * (nrm - R(1)) / uw;
+        nu_new = nu + dnu;
+        if (!(nu_new > lo)) nu_new = R(0.5) * (nu + lo);  /* 極の手前で止める */
+        if (nu_new == nu) break;
+        nu = nu_new;
+    }
+    /* 打ち切り時 (hard case) も含め、最後に長さを 1 に揃える */
+    if (!(uwb_v3_normalize(x) > R(0))) return 0;
+    uwb_v3_copy(x, u);
+    if (out_nu) *out_nu = nu_x;
+    return 1;
+}
+
 /* ================================================================ sym2 */
 
 void uwb_sym2_zero(uwb_real *s) { s[0] = s[1] = s[2] = R(0); }
@@ -596,6 +710,69 @@ int uwb_sym2_eigvec(const uwb_real *s, uwb_real lam, uwb_real *v)
     if ((uwb_math_abs(v[0]) >= uwb_math_abs(v[1]) ? v[0] : v[1]) < R(0)) {
         v[0] = -v[0]; v[1] = -v[1];
     }
+    return 1;
+}
+
+void uwb_sym2_mv(const uwb_real *s, const uwb_real *x, uwb_real *y)
+{
+    y[0] = s[0] * x[0] + s[1] * x[1];
+    y[1] = s[1] * x[0] + s[2] * x[1];
+}
+
+int uwb_sym2_solve_shifted(const uwb_real *s, uwb_real shift, const uwb_real *b, uwb_real *x)
+{
+    uwb_real t[3];
+    t[0] = s[0] + shift; t[1] = s[1]; t[2] = s[2] + shift;
+    return uwb_sym2_solve(t, b, x);
+}
+
+int uwb_sym2_inverse_shifted(const uwb_real *s, uwb_real shift, uwb_real *inv)
+{
+    uwb_real t[3];
+    t[0] = s[0] + shift; t[1] = s[1]; t[2] = s[2] + shift;
+    return uwb_sym2_inverse(t, inv);
+}
+
+int uwb_sym2_solve_tol(const uwb_real *s, const uwb_real *b, uwb_real *x, uwb_real rel_tol)
+{
+    uwb_real det = uwb_sym2_det(s), inv, x0, x1;
+    uwb_real m = max3_abs(s[0], s[1], s[2]);
+    if (!(uwb_math_abs(det) > rel_tol * m * m) || !(det - det == R(0))) return 0;
+    inv = R(1) / det;
+    x0 = (s[2] * b[0] - s[1] * b[1]) * inv;
+    x1 = (s[0] * b[1] - s[1] * b[0]) * inv;
+    x[0] = x0; x[1] = x1;
+    return 1;
+}
+
+/* ======================================================= LDLᵀ (sym3 / sym2) */
+/* factor / solve は uwb_math.h の static inline (式は uwb_loc の旧 uwb_internal.h
+ * から演算順序を変えずに移したもの。uwb_loc の回帰テストが数値の同一性を
+ * 前提にしている)。ここには inverse だけを置く。 */
+
+int uwb_sym3_ldl_inverse(const uwb_real *s, uwb_real shift, int require_pd, uwb_real *inv)
+{
+    uwb_sym3_ldl f;
+    uwb_real e[3], c[3];
+    if (!uwb_sym3_ldl_factor(s, shift, require_pd, &f)) return 0;
+    e[0] = R(1); e[1] = R(0); e[2] = R(0);
+    uwb_sym3_ldl_solve(&f, e, c); inv[0] = c[0]; inv[1] = c[1]; inv[2] = c[2];
+    e[0] = R(0); e[1] = R(1);
+    uwb_sym3_ldl_solve(&f, e, c); inv[3] = c[1]; inv[4] = c[2];
+    e[1] = R(0); e[2] = R(1);
+    uwb_sym3_ldl_solve(&f, e, c); inv[5] = c[2];
+    return 1;
+}
+
+int uwb_sym2_ldl_inverse(const uwb_real *s, uwb_real shift, int require_pd, uwb_real *inv)
+{
+    uwb_sym2_ldl f;
+    uwb_real e[2], c[2];
+    if (!uwb_sym2_ldl_factor(s, shift, require_pd, &f)) return 0;
+    e[0] = R(1); e[1] = R(0);
+    uwb_sym2_ldl_solve(&f, e, c); inv[0] = c[0]; inv[1] = c[1];
+    e[0] = R(0); e[1] = R(1);
+    uwb_sym2_ldl_solve(&f, e, c); inv[2] = c[1];
     return 1;
 }
 

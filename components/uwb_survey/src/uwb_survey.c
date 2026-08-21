@@ -7,12 +7,12 @@
  *   trilat_init()        逐次三辺測量（ピボット付きコレスキー 3 段）で初期配置
  *   lm_run()             Levenberg-Marquardt で距離残差を最小化
  *   escape_local_minima() ノードを隣接平面で鏡映して局所解から抜ける
- *   drop_worst_link()    外れ値リンクを1本ずつ落として解き直す
+ *   loo_drop_link()      外れ値リンクを leave-one-out で1本ずつ落として解き直す
  *   shape_degenerate()   収束した最終形状を PCA して同一平面・直線を検出
  *   fit_up()             実測高さに合う「上」方向 u と z オフセット c を求める
  *   apply_frame()        u を +z に持ってくる回転と z 並進を掛ける
  *   apply_xy_convention() ノード0 を XY 原点、ノード1 を +X 軸上へ
- *   fix_chirality()      鏡像を規約で一意化する
+ *   fix_chirality()      鏡像を chirality 入力（無ければ |y| 規約）で一意化する
  *
  * 線形代数はすべて components/uwb_math（スカラー展開した 3x3 / 3x3 ブロック）
  * で済ませる。一般の固有分解・一般のコレスキーは使わない。ESP32-S3 は
@@ -111,13 +111,50 @@
 #define UWB_SURVEY_DEGEN_PLANAR_K ((uwb_real)3.0)
 #endif
 
-/** 外れ値リンクの判定: |残差| > max(K*1.4826*MAD, FLOOR) で棄却。
- *  FLOOR は「測距の当たり外れ（数 cm）では絶対に落とさない」ための下限。 */
-#ifndef UWB_SURVEY_OUTLIER_K
-#define UWB_SURVEY_OUTLIER_K ((uwb_real)3.0)
+/** 外れ値リンクの判定（leave-one-out）。リンク k を 1 本外して解き直した
+ *  ときのコスト（残差二乗和）の減少量 Δ_k = cost_full − cost_{−k} が
+ *
+ *      Δ_k > (OUTLIER_Z · OUTLIER_SIGMA)²        （既定 (4 × 0.05m)² = 0.04 m²）
+ *
+ *  を超える最大の k を落とす。線形近似では Δ_k = e_k² / (1 − h_k)（e_k は
+ *  全リンク解の残差、h_k はてこ比）で、外れ値が無ければ Δ_k ~ σ²·χ²(1)。
+ *  n=8（28 本）で Z=4 なら誤棄却は 28 × P(χ²(1) > 16) ≈ 0.2%、n=6（冗長度 2）
+ *  では Δ_k ≤ cost_full ~ σ²·χ²(2) なので P(χ²(2) > 16) ≈ 0.03%。
+ *  逆に大きさ ε の外れ値は Δ_k ≈ (1 − h_k)·ε² なので、|ε| > Z·σ/sqrt(1−h_k)
+ *  なら落とせる（平均 1−h = 冗長度/リンク数: n=6 で 0.13、n=8 で 0.32。
+ *  てこ比の高いリンクほど外れ値が解に吸収されて見えにくい）。
+ *
+ *  σ はデータから推定せず **仮定値（UWB の測距ばらつき 5cm）** を使う。
+ *  データから推定しようとすると、(a) 冗長度 2 では残差に 2 自由度しか無く
+ *  「無雑音 + 小さい外れ値」と「5cm ノイズ」を区別できない、(b) 残差の
+ *  MAD や「他のリンクの Δ の中央値」は外れ値が部分的に吸収されると膨らみ
+ *  （マスキング）、冗長度の低い 6 台構成で外れ値を見逃す（レビュー A-2:
+ *  (2,5) に +2m で残差 −0.16、MAD しきい値 0.30 に届かず 1.33m 誤る）、
+ *  (c) 外したあとの残差から推定すると 2 本目の外れ値で膨らむ、ため。
+ *  測距ばらつきは機器の性質でほぼ一定、環境に依る誤差はバイアス（= 落とし
+ *  たい外れ値）として現れる、という判断。
+ *  Δ_k ≤ cost_full なので、cost_full がしきい値以下なら leave-one-out は
+ *  走らせない（外れ値の無い入力では通常ここで終わり、追加コストは無い）。 */
+#ifndef UWB_SURVEY_OUTLIER_SIGMA
+#define UWB_SURVEY_OUTLIER_SIGMA ((uwb_real)0.05)
 #endif
-#ifndef UWB_SURVEY_OUTLIER_FLOOR
-#define UWB_SURVEY_OUTLIER_FLOOR ((uwb_real)0.30)
+#ifndef UWB_SURVEY_OUTLIER_Z
+#define UWB_SURVEY_OUTLIER_Z ((uwb_real)4.0)
+#endif
+#define UWB_SURVEY_OUTLIER_DELTA_MIN \
+    (UWB_SURVEY_OUTLIER_Z * UWB_SURVEY_OUTLIER_Z * UWB_SURVEY_OUTLIER_SIGMA * UWB_SURVEY_OUTLIER_SIGMA)
+
+/** leave-one-out の LM（全リンク解からのウォームスタート、および鏡映後）の
+ *  反復上限と収束判定。Δ_k の比較にしか使わないので本解きほど詰めない。
+ *  打ち切られた場合は cost_{−k} が大きめに出る（= Δ_k が小さめ）ので、
+ *  誤棄却の側には倒れない。上限 30 → 20 → 12 で判定結果（無雑音 1 本 ×
+ *  全位置、2 本 × 全ペア、ノイズ下の正答率・誤棄却率）は 1 件も変わらず、
+ *  コレスキー呼出は n=8 の外れ値入りで 8650 → 5190 回/solve に減った。 */
+#ifndef UWB_SURVEY_LOO_MAX_ITER
+#define UWB_SURVEY_LOO_MAX_ITER 12
+#endif
+#ifndef UWB_SURVEY_LOO_TOL
+#define UWB_SURVEY_LOO_TOL ((uwb_real)1e-6)
 #endif
 
 /** 落とすリンクの最大本数。 */
@@ -472,8 +509,11 @@ static void build_normal(const survey_ctx *c, const uwb_real p[NMAX][3],
  * 安いうえ、減衰前の行列を退避するコピー（double で 3KB）をスタックに
  * 置かずに済む）。
  * 1 試行あたり: build_normal（除算 m、sqrt m）+ factor（除算 3n+1、sqrt 3n+1）
- * + solve（除算 0）+ cost_at（sqrt m）。 */
-static int lm_run(survey_ctx *c, uwb_real *f, int *iters, uwb_real *cost_out)
+ * + solve（除算 0）+ cost_at（sqrt m）。
+ * max_iter / tol は反復上限と収束判定（更新量ノルム [m]）。本解きは
+ * UWB_SURVEY_MAX_ITER / UWB_SURVEY_TOL、leave-one-out は緩い値で呼ぶ。 */
+static int lm_run(survey_ctx *c, uwb_real *f, int *iters, uwb_real *cost_out,
+                  int max_iter, uwb_real tol)
 {
     uwb_bchol A;
     uwb_real  g[XMAX], dx[XMAX];
@@ -487,7 +527,7 @@ static int lm_run(survey_ctx *c, uwb_real *f, int *iters, uwb_real *cost_out)
     cost   = cost_at(c, UWB_SURVEY_CP3(c->p), c->delay, f);
     if (uwb_math_isnan(cost)) return 0;
 
-    for (it = 0; it < UWB_SURVEY_MAX_ITER; ++it) {
+    for (it = 0; it < max_iter; ++it) {
         int      accepted = 0;
         uwb_real step = (uwb_real)0;
 
@@ -524,7 +564,7 @@ static int lm_run(survey_ctx *c, uwb_real *f, int *iters, uwb_real *cost_out)
         /* 減衰をいくら上げても下がらない = 局所最小に着いた（または破綻）。
          * どちらにせよ残差で採否を判断してもらう。 */
         if (!accepted) break;
-        if (step < UWB_SURVEY_TOL) break;
+        if (step < tol) break;
     }
 
     /* f を最終座標のものに戻しておく（外れ値判定と残差 RMS が使う） */
@@ -586,8 +626,10 @@ static int neighbor_plane(const survey_ctx *c, int i, uwb_real *cen, uwb_real *n
  * コストが下がったら採用する、というスイープを回す。ノード数が 8 以下なので
  * 全ノード×数スイープでも一瞬で終わる（測量は設置時に1回だけの処理）。
  *
- * 真の最小に着いていれば、どの鏡映もコストを下げられないので何も起きない。 */
-static int escape_local_minima(survey_ctx *c, uwb_real *f, int *iters, uwb_real *cost)
+ * 真の最小に着いていれば、どの鏡映もコストを下げられないので何も起きない。
+ * max_iter / tol は鏡映後に回す LM のもの（lm_run と同じ意味）。 */
+static int escape_local_minima(survey_ctx *c, uwb_real *f, int *iters, uwb_real *cost,
+                               int max_iter, uwb_real tol)
 {
     uwb_real bp[NMAX][3], bf[LMAX], bd;
     int      sweep, i, k, it;
@@ -609,7 +651,7 @@ static int escape_local_minima(survey_ctx *c, uwb_real *f, int *iters, uwb_real 
 
             it    = 0;
             trial = *cost;
-            if (lm_run(c, f, &it, &trial) &&
+            if (lm_run(c, f, &it, &trial, max_iter, tol) &&
                 trial < *cost - (uwb_real)1e-12 * ((uwb_real)1 + *cost)) {
                 *cost = trial;
                 *iters += it;
@@ -628,57 +670,126 @@ static int escape_local_minima(survey_ctx *c, uwb_real *f, int *iters, uwb_real 
 
 /* --------------------------------------------------------- 外れ値リンク */
 
-/* 残差の MAD からロバストなばらつきを作り、突出した 1 本を落とす。
+/* leave-one-out による外れ値リンクの棄却（レビュー A-2）。
  *
- * 冗長度（式の本数 - 未知数）を 1 以上残す・どのノードも次数 3 以上を
- * 保つ、という 2 条件を満たせるときだけ落とす。UWB の測距ばらつき
- * （数 cm）では絶対に落とさないよう、しきい値に 30cm の下限を置く。
- * 落としたら 1、落とさなかったら 0。 */
-static int drop_worst_link(survey_ctx *c, const uwb_real *f, unsigned long *excluded)
+ * 以前は全リンク解の残差の MAD で判定していたが、残差は外れ値込みの最小二乗
+ * の後の値なので、冗長度が低いと外れ値が座標と δ に吸収されて残差が小さく
+ * なり（マスキング）、公称 6 台構成（15 本 vs 未知数 13）で +2m の外れ値を
+ * 落とせなかった。ここでは採用中の各リンク k について
+ *
+ *   1. k を外し、収束済みの全リンク解（座標と δ）からウォームスタートで LM を
+ *      回し、さらに escape_local_minima（各ノードを隣接平面で鏡映して解き直す）
+ *      を掛けて cost_{−k}（k 抜きで到達できる最小コスト）を求める。
+ *      鏡映が要るのは、大きな外れ値（2m）が全リンク解そのものを **別の局所解**
+ *      （あるノードが隣接平面の反対側へ落ちた形。コストは 0.03〜0.25 と小さく、
+ *      外れ値がほぼ吸収されている）へ連れて行くことがあるため。そこから k を
+ *      外して LM を回すだけでは元の形に戻れず（n=8 の +2m で 1/28、n=6 で
+ *      4/15 の位置: 真の外れ値を外しても cost 0.01〜0.12 で止まる）、無関係な
+ *      リンクと見分けがつかない。鏡映を掛ければ 0 まで落ちる。k を欠測にした
+ *      最短経路補完からのコールドスタートも試したが、全リンク解と同じ局所解に
+ *      落ちるだけで（全ケースでウォームスタートと同値）効かなかった
+ *   2. Δ_k = cost_full − cost_{−k}（k を外すことで説明できるようになる量）
+ *
+ * を作り、Δ_k が最大のリンクが UWB_SURVEY_OUTLIER_DELTA_MIN を超えていれば
+ * 落とす。外れ値そのものを外せば残りは整合するので cost_{−k} ≈ ノイズ分、
+ * 無関係なリンクを外しても外れ値は残るので cost_{−k} は大きいまま、という
+ * 差で見分ける（残差の大小ではなく「外すと説明できるか」を直接試すので、
+ * 吸収されていても捕まる）。「外れ値がちょうど 1 本」の仮説の下では
+ * argmin_k cost_{−k} がその添字の最尤推定なので、これが最も筋の良い選び方。
+ *
+ * 限界:
+ *   - **冗長度 2（6 台全リンク）では同定の余裕が薄い**: 1 本外すと冗長度 1
+ *     になり、残る拘束は 1 本だけなので、無関係なリンクを外しても外れ値が
+ *     数 mm の残差まで吸収される（cost_{−j} ≈ 0.0001〜0.004）。無雑音なら
+ *     真の外れ値の cost_{−k} = 0 と区別できるが、5cm のばらつきの下では隣の
+ *     候補と取り違える（実測: +2m を 200 試行で正答 94 / 取り違え 100）。
+ *     次点の候補も測距ばらつきの範囲（DELTA_MIN）で説明できてしまうときは
+ *     *ambiguous に 1 を立てる（= 冗長度を上げないと誰が外れ値か決まらない）
+ *   - 同じノードに外れ値が 2 本乗ると（例: (0,1) と (1,5)）、そのノードを
+ *     動かして両方を妥協させる方が 1 本ずつ外すより安く、無関係なリンクを
+ *     外す方が Δ が大きく出ることがある。1 本ずつの greedy では捕まらない
+ *     （総当たりの leave-two-out は 378 組 × 鏡映付き LM で高すぎる）
+ *
+ * 落とさない条件:
+ *   - 落とすと冗長度が 0 になる（識別不能。残差 0 の別解に落ちるので、
+ *     外れ値が混ざっていても落とさず、呼び出し側の冗長度警告に委ねる）
+ *   - 落とすとどちらかの端点の次数が 3 未満になる
+ *   - cost_full がしきい値以下（Δ_k ≤ cost_full なので調べるまでもない。
+ *     外れ値の無い入力はほぼここで終わる）
+ * 落としたら 1 を返し、c の座標・δ は最良候補の解（k 抜きで収束済み）に、
+ * f はその残差にしてある（続く本解きはそこから始めればよい。元の全リンク解が
+ * 別の局所解だった場合にそこへ戻らないため）。落とさなければ 0 を返し、
+ * c の座標・δ・f は呼出前の状態に戻す。
+ * コスト: 採用リンク本数 × （LM 1 本 + 鏡映 n 回 × LM）。n=8 で 1 掃引
+ * ≈ 3000〜4000 回のコレスキー（設置時 1 回の処理。外れ値の無い入力では
+ * cost_full のしきい値で飛ばされ、ほぼ 0）。 */
+static int loo_drop_link(survey_ctx *c, uwb_real *f, uwb_real cost_full,
+                         unsigned long *excluded, int *ambiguous, int *iters)
 {
-    /* ar は下のループで m 個だけ埋めてから ar[0..m-1] しか読まないが、
-     * GCC はそれを証明できず -Werror=maybe-uninitialized で落ちる
-     * (ESP-IDF のビルド設定。ホストの make strict では出ない)。
-     * 設置時に1回だけ走る関数なので、素直にゼロ初期化する。 */
-    uwb_real ar[LMAX] = {(uwb_real)0}, med, thr, worst = (uwb_real)-1;
+    uwb_real bp[NMAX][3], bd;                /* 全リンク解（ウォームスタートの起点） */
+    uwb_real sp[NMAX][3], sd = (uwb_real)0;  /* これまでの最良候補の解 */
+    uwb_real best_cost = UWB_SURVEY_INF, second_cost = UWB_SURVEY_INF;
     int      deg[NMAX];
-    int      k, i, j, m = 0, wk = -1, need;
+    int      k, i, m = 0, best_k = -1, need;
 
     for (i = 0; i < c->n; ++i) deg[i] = 0;
     for (k = 0; k < c->nlink; ++k) {
         if (!c->use[k]) continue;
-        ar[m++] = uwb_math_abs(f[k]);
+        ++m;
         ++deg[c->li[k]];
         ++deg[c->lj[k]];
     }
 
     need = 3 * c->n - 6 + (c->est_delay ? 1 : 0);
-    if (m - 1 < need + 1) return 0;      /* 落とすと冗長度が無くなる */
+    if (m - 1 < need + 1) return 0;                     /* 落とすと冗長度が無くなる */
+    if (!(cost_full > UWB_SURVEY_OUTLIER_DELTA_MIN)) return 0;
 
-    /* 中央値（挿入ソート。m <= 28） */
-    for (i = 1; i < m; ++i) {
-        uwb_real v = ar[i];
-        for (j = i - 1; j >= 0 && ar[j] > v; --j) ar[j + 1] = ar[j];
-        ar[j + 1] = v;
-    }
-    med = (m & 1) ? ar[m / 2] : (uwb_real)0.5 * (ar[m / 2 - 1] + ar[m / 2]);
-
-    thr = UWB_SURVEY_OUTLIER_K * (uwb_real)1.4826 * med;
-    if (thr < UWB_SURVEY_OUTLIER_FLOOR) thr = UWB_SURVEY_OUTLIER_FLOOR;
+    for (i = 0; i < c->n; ++i) uwb_v3_copy(c->p[i], bp[i]);
+    bd = c->delay;
 
     for (k = 0; k < c->nlink; ++k) {
-        uwb_real af;
-        if (!c->use[k]) continue;
-        if (deg[c->li[k]] <= 3 || deg[c->lj[k]] <= 3) continue;  /* 次数を割る */
-        af = uwb_math_abs(f[k]);
-        if (af > thr && af > worst) { worst = af; wk = k; }
-    }
-    if (wk < 0) return 0;
+        uwb_real cost_k;
+        int      it = 0, ok;
 
-    c->use[wk] = 0;
-    if (c->lbit[wk] >= 0 && c->lbit[wk] < 32)
-        *excluded |= (1UL << c->lbit[wk]);
-    return 1;
+        if (!c->use[k]) continue;
+        if (deg[c->li[k]] <= 3 || deg[c->lj[k]] <= 3) continue;   /* 次数を割る */
+
+        c->use[k] = 0;
+        for (i = 0; i < c->n; ++i) uwb_v3_copy(bp[i], c->p[i]);
+        c->delay = bd;
+        ok = lm_run(c, f, &it, &cost_k, UWB_SURVEY_LOO_MAX_ITER, UWB_SURVEY_LOO_TOL) &&
+             escape_local_minima(c, f, &it, &cost_k, UWB_SURVEY_LOO_MAX_ITER, UWB_SURVEY_LOO_TOL);
+        c->use[k] = 1;
+        *iters += it;
+        if (!ok) continue;
+
+        if (cost_k < best_cost) {
+            second_cost = best_cost;
+            best_cost   = cost_k;
+            best_k      = k;
+            for (i = 0; i < c->n; ++i) uwb_v3_copy(c->p[i], sp[i]);
+            sd = c->delay;
+        } else if (cost_k < second_cost) {
+            second_cost = cost_k;
+        }
+    }
+
+    if (best_k >= 0 && cost_full - best_cost > UWB_SURVEY_OUTLIER_DELTA_MIN) {
+        c->use[best_k] = 0;
+        if (c->lbit[best_k] >= 0 && c->lbit[best_k] < 32)
+            *excluded |= (1UL << c->lbit[best_k]);
+        if (second_cost <= UWB_SURVEY_OUTLIER_DELTA_MIN) *ambiguous = 1;
+        for (i = 0; i < c->n; ++i) uwb_v3_copy(sp[i], c->p[i]);
+        c->delay = sd;
+        (void)cost_at(c, UWB_SURVEY_CP3(c->p), c->delay, f);
+        return 1;
+    }
+
+    /* 落とさない: 全リンク解に戻す */
+    for (i = 0; i < c->n; ++i) uwb_v3_copy(bp[i], c->p[i]);
+    c->delay = bd;
+    (void)cost_at(c, UWB_SURVEY_CP3(c->p), c->delay, f);
+    return 0;
 }
 
 /* ------------------------------------------------- 最終形状の縮退判定 */
@@ -774,7 +885,7 @@ static int shape_degenerate(survey_ctx *c, const uwb_real d[NMAX][NMAX], uwb_rea
         c->planar = 1;
         it = 0;
         cost2 = (uwb_real)0;
-        ok = lm_run(c, f, &it, &cost2);
+        ok = lm_run(c, f, &it, &cost2, UWB_SURVEY_MAX_ITER, UWB_SURVEY_TOL);
         c->planar = 0;
         if (ok && cost2 < best) best = cost2;
 
@@ -796,85 +907,25 @@ static int shape_degenerate(survey_ctx *c, const uwb_real d[NMAX][NMAX], uwb_rea
  * [4] 実測高さによるゲージ固定
  * ===================================================================== */
 
-/* 球面拘束付き最小二乗   min  uᵀ M u − 2 bᵀ u   s.t.  |u| = 1   の厳密解。
+/* 球面拘束付き最小二乗 min uᵀMu − 2bᵀu s.t. |u|=1（Moré–Sorensen の厳密解）、
+ * ランク 2 のヌルベクトル（実測点が作る平面の法線）、ランク 1 の主方向
+ * （最大ノルム行の正規化）は、いずれも uwb_math（uwb_sym3_solve_sphere /
+ * uwb_sym3_null_vector / uwb_sym3_principal_axis）に委譲する。
  *
- * Lagrange 条件は (M + νI) u = b で、大域最小は M + νI ⪰ 0 すなわち
- * ν > −λ_min(M) の側にある（信頼領域部分問題と同じ構造）。そこで
- *     φ(ν) = 1/|u(ν)| − 1,   u(ν) = (M + νI)⁻¹ b
- * の根を Newton 法で求める（Moré–Sorensen。1/|u| は ν についてほぼ線形で
- * 凹・単調増加なので、左側から始めれば単調に収束し、右側から始めても
- * 1 歩で左側に移る）。
- *     φ'(ν) = uᵀ w / |u|³,   w = (M + νI)⁻¹ u
- *     Δν = −φ/φ' = |u|² (|u| − 1) / (uᵀ w)
- * ν = 0 から始める。無拘束解 |M⁻¹b| がすでに 1 なら 1 回目で収束する
- * （データが剛体変換で厳密に説明できるとき）。
+ * 以前ここにあった「u = M⁻¹b を正規化する」近似は厳密解でなく、高さに
+ * 1cm のノイズが乗ると傾きが平均 0.14°・最大 0.55°（5m 先で ≈ 5cm）
+ * ずれていた（A-6）。uwb_sym3_solve_sphere の線形部分は余因子ではなく
+ * LDLᵀ（float で後退安定）。「hard case」（b が λ_min の固有ベクトルと
+ * 直交し、ν → −λ_min でも |u| が 1 に届かない）で反復上限、または二分が
+ * 極に達して LDLᵀ が正定値でなくなった時点に達したときは、直前に解けた
+ * u を正規化して返す（0 は返さない。旧実装はこの場合に 0 を返して
+ * 呼び出し側の u = ẑ 初期値に落ちていた）。
  *
- * 以前の「u = M⁻¹b を正規化する」は厳密解でなく、高さに 1cm のノイズが
- * 乗ると傾きが平均 0.14°・最大 0.55°（5m 先で ≈ 5cm）ずれていた（A-6）。
- *
- * 「hard case」（b が λ_min の固有ベクトルと直交し、ν → −λ_min でも |u| が
- * 1 に届かない）は高さが形状と矛盾した異常データでしか起きないので、
- * 反復上限で打ち切って u を正規化するだけにとどめる（極へ近づきすぎた
- * Newton 歩は二分で抑える）。
- *
- * 1 反復: solve_shifted 2 回（除算 2）+ sqrt 1 + 除算 1。通常 1〜3 反復。
- * 解が出なければ 0 を返し u は触らない。 */
-static int solve_sphere(const uwb_real *M, const uwb_real *b, uwb_real lam_min, uwb_real *u)
-{
-    uwb_real nu = (uwb_real)0, lo = -lam_min, x[3], w[3];
-    int it;
-
-    for (it = 0; it < 30; ++it) {
-        uwb_real n2, nrm, uw, dnu, nu_new;
-
-        if (!uwb_sym3_solve_shifted(M, nu, b, x)) return 0;
-        n2  = uwb_v3_norm2(x);
-        nrm = uwb_math_sqrt(n2);
-        if (!(nrm > (uwb_real)0)) return 0;
-        if (uwb_math_abs(nrm - (uwb_real)1) <= (uwb_real)16 * UWB_MATH_EPS) break;
-
-        if (!uwb_sym3_solve_shifted(M, nu, x, w)) break;
-        uw = uwb_v3_dot(x, w);
-        if (!(uw > (uwb_real)0)) break;
-        dnu    = n2 * (nrm - (uwb_real)1) / uw;
-        nu_new = nu + dnu;
-        if (!(nu_new > lo)) nu_new = (uwb_real)0.5 * (nu + lo);   /* 極の手前で止める */
-        if (nu_new == nu) break;
-        nu = nu_new;
-    }
-    /* 打ち切り時（hard case）も含め、最後に長さを 1 に揃える */
-    if (!(uwb_v3_normalize(x) > (uwb_real)0)) return 0;
-    uwb_v3_copy(x, u);
-    return 1;
-}
-
-/* 対称 3x3 の 3 行のうち 2 行の外積で、ランク 2 の行列のヌルベクトル
- * （単位）を作る。3 通りの外積のうち最大ノルムのものを採る（2 行が
- * 平行だと 0 になるため）。符号は「絶対値最大の成分が正」。
- * sqrt 1、除算 1。ノルムが 0 なら 0 を返す。 */
-static int sym3_null_vector(const uwb_real *s, uwb_real *nvec)
-{
-    const uwb_real r0[3] = {s[0], s[1], s[2]};
-    const uwb_real r1[3] = {s[1], s[3], s[4]};
-    const uwb_real r2[3] = {s[2], s[4], s[5]};
-    uwb_real c01[3], c12[3], c20[3], n01, n12, n20;
-    const uwb_real *best;
-    int k, big;
-
-    uwb_v3_cross(r0, r1, c01);
-    uwb_v3_cross(r1, r2, c12);
-    uwb_v3_cross(r2, r0, c20);
-    n01 = uwb_v3_norm2(c01); n12 = uwb_v3_norm2(c12); n20 = uwb_v3_norm2(c20);
-    best = c01;
-    if (n12 > n01 && n12 >= n20) best = c12;
-    else if (n20 > n01)          best = c20;
-    uwb_v3_copy(best, nvec);
-    if (!(uwb_v3_normalize(nvec) > (uwb_real)0)) return 0;
-    big = 0;
-    for (k = 1; k < 3; ++k) if (uwb_math_abs(nvec[k]) > uwb_math_abs(nvec[big])) big = k;
-    if (nvec[big] < (uwb_real)0) uwb_v3_scale((uwb_real)-1, nvec);
-    return 1;
-}
+ * uwb_sym3_null_vector は行を max|s| で正規化してから外積を取る点だけ
+ * 旧実装（生の行）と違うが、選択規則・符号規約は同じ。
+ * uwb_sym3_principal_axis は符号を「絶対値最大の成分が正」に正準化する
+ * 点だけ違うが、fit_up() の使い方（coef = e0·b/λ0、w の e0 依存項が
+ * すべて e0 の 2 次式）はどちらも符号不変なので u は変わらない。 */
 
 /* 実測高さ h_k に最もよく合う「上」方向 u（単位ベクトル）と z オフセット c を
  * 求める。求めたい関係は
@@ -889,7 +940,7 @@ static int sym3_null_vector(const uwb_real *s, uwb_real *nvec)
  * これを |u|=1 の下で解く。M のランク（閉形式の固有値から判定）で分岐する:
  *
  *   rank 3（高さ 4 点以上で同一平面でない）
- *     solve_sphere() の厳密解。データが剛体変換で厳密に説明できるなら
+ *     uwb_sym3_solve_sphere() の厳密解。データが剛体変換で厳密に説明できるなら
  *     無拘束解 M⁻¹b がそのまま |u|=1 を満たし 1 反復で終わる。
  *
  *   rank 2（**高さの実測が 3 点だけだと M は必ずランク 2**。中心化した
@@ -904,7 +955,7 @@ static int sym3_null_vector(const uwb_real *s, uwb_real *nvec)
  *     高さ残差はどちらでも同じになる（uwb_survey.h 冒頭の説明を参照）。
  *     ここでは決定論的に「現フレームの +z に近い側」を選び、最終的な
  *     キラリティは [5] のあとの規約で潰す。|u_par| ≥ 1（高さがノイズで
- *     矛盾）なら M' 上で solve_sphere（n̂ 成分は 0 のまま）。
+ *     矛盾）なら M' 上で uwb_sym3_solve_sphere（n̂ 成分は 0 のまま）。
  *
  *   rank 1（高さ 2 点、または実測点が一直線）
  *     q の方向 e0（M の最大ノルム行）だけが決まる: u_par = (e0·b/λ0) e0。
@@ -915,7 +966,7 @@ static int sym3_null_vector(const uwb_real *s, uwb_real *nvec)
  *
  * つまり「高さが 3 点未満なら Lv1 相当へフォールバック」を同じ式で実現する。
  * rank_out には M のランク（0..3）を返す。3 なら傾きが一意に決まっている。
- * 除算: 1（1/nh）+ eigvals 1 + 分岐ごとに 1〜3（+ solve_sphere の反復）。 */
+ * 除算: 1（1/nh）+ eigvals 1 + 分岐ごとに 1〜3（+ uwb_sym3_solve_sphere の反復）。 */
 static void fit_up(const uwb_real p[NMAX][3], const uwb_real *h, const int *hm, int n,
                    uwb_real *u, uwb_real *c, uwb_real *hrms, int *rank_out)
 {
@@ -957,11 +1008,11 @@ static void fit_up(const uwb_real p[NMAX][3], const uwb_real *h, const int *hm, 
         rank = uwb_sym3_rank(lam, UWB_MATH_RANK_TOL, (uwb_real)0);
 
     if (rank == 3) {
-        solve_sphere(M, b, lam[2], u);            /* 失敗時は u = ẑ のまま */
+        uwb_sym3_solve_sphere(M, b, lam[2], u, NULL);   /* 失敗時は u = ẑ のまま */
     } else if (rank == 2) {
         uwb_real nvec[3], Mr[6], upar[3], n2;
         int k;
-        if (sym3_null_vector(M, nvec)) {
+        if (uwb_sym3_null_vector(M, nvec)) {
             for (k = 0; k < 6; ++k) Mr[k] = M[k];
             uwb_sym3_add_scaled_outer(Mr, lam[0], nvec);
             if (uwb_sym3_solve(Mr, b, upar)) {
@@ -972,21 +1023,14 @@ static void fit_up(const uwb_real p[NMAX][3], const uwb_real *h, const int *hm, 
                     uwb_v3_copy(upar, u);
                     uwb_v3_axpy(rem, nvec, u);
                 } else {
-                    solve_sphere(Mr, b, lam[1], u);   /* λ_min(M') = λ1 (λ0 ≥ λ1) */
+                    uwb_sym3_solve_sphere(Mr, b, lam[1], u, NULL);   /* λ_min(M') = λ1 (λ0 ≥ λ1) */
                 }
             }
         }
     } else if (rank == 1) {
-        /* M ≈ λ0 e0 e0ᵀ: 最大ノルムの行が e0 の向き */
-        const uwb_real r0[3] = {M[0], M[1], M[2]};
-        const uwb_real r1[3] = {M[1], M[3], M[4]};
-        const uwb_real r2[3] = {M[2], M[4], M[5]};
+        /* M ≈ λ0 e0 e0ᵀ: uwb_sym3_principal_axis が最大ノルム行を正規化して返す */
         uwb_real e0[3], w[3], coef, n2;
-        uwb_real m0 = uwb_v3_norm2(r0), m1 = uwb_v3_norm2(r1), m2 = uwb_v3_norm2(r2);
-        if (m1 >= m0 && m1 >= m2)      uwb_v3_copy(r1, e0);
-        else if (m2 >= m0)             uwb_v3_copy(r2, e0);
-        else                           uwb_v3_copy(r0, e0);
-        if (uwb_v3_normalize(e0) > (uwb_real)0) {
+        if (uwb_sym3_principal_axis(M, e0)) {
             coef = uwb_v3_dot(e0, b) / lam[0];
             n2   = coef * coef;
             if (n2 < (uwb_real)1) {
@@ -1087,20 +1131,45 @@ static void apply_xy_convention(uwb_real p[NMAX][3], int n)
  *   - ノード0 の XY 原点、ノード1 の +X 上
  * が保たれるので、[4][5] の結果を壊さずにキラリティだけ選び直せる。
  *
- * 「|y| が最大のノード（同点なら添字が小さい方）の y を正にする」を規約と
- * する。最大値で決めるので、わずかなノイズで判定が裏返らない。 */
-static void fix_chirality(uwb_real p[NMAX][3], int n)
+ * chirality != 0 のとき（レビュー A-4）: 呼び出し側の事前知識「上から見て
+ * ノード 0→1→2 が反時計回り (+1) / 時計回り (−1)」に合わせる。判定量は
+ * (p1−p0)×(p2−p0) の z 成分で、[5] の正規化後は p0 = 0、p1 = (x1, 0) なので
+ * z = x1·y2、符号は y2 の符号そのもの。margin にはこれを |p1−p0| で割った
+ * |y2|（= 上から見た 0–1 直線からノード 2 までの距離 [m]）を返す。測距
+ * ばらつきと同程度以下なら 0,1,2 がほぼ一直線で、判定は信用できない。
+ * 判定できた（y2 ≠ 0）ら 1 を返す。
+ *
+ * chirality == 0 のとき: 「|y| が最大のノード（同点なら添字が小さい方）の
+ * y を正にする」規約。margin は |y| の 1 位と 2 位の差 [m]（これが測距
+ * ばらつき以下 — ノード 0,1 を長方形の対角に置くと 2,3 が y=±w/2 で
+ * 厳密に同点になる — だと試行ごとに裏返る）。常に 0 を返す（規約で潰した
+ * だけで、左右が決まったわけではない）。 */
+static int fix_chirality(uwb_real p[NMAX][3], int n, int chirality, uwb_real *margin)
 {
     int i, big = -1;
-    uwb_real bv = (uwb_real)0;
+    uwb_real bv = (uwb_real)0, sv = (uwb_real)0;   /* |y| の 1 位と 2 位 */
+
+    *margin = (uwb_real)0;
+
+    if (chirality != 0) {
+        uwb_real y2 = p[2][1];
+        *margin = uwb_math_abs(y2);
+        if (!(*margin > (uwb_real)0) || !(p[1][0] > (uwb_real)0)) return 0;  /* 一直線 / ヨー未定義 */
+        if ((chirality > 0) != (y2 > (uwb_real)0))
+            for (i = 0; i < n; ++i) p[i][1] = -p[i][1];
+        return 1;
+    }
 
     for (i = 2; i < n; ++i) {
         uwb_real v = uwb_math_abs(p[i][1]);
-        if (v > bv) { bv = v; big = i; }
+        if (v > bv)      { sv = bv; bv = v; big = i; }
+        else if (v > sv) { sv = v; }
     }
-    if (big < 0 || bv < UWB_MATH_TINY) return;    /* XY で一直線。決めようがない */
-    if (p[big][1] >= (uwb_real)0) return;
+    if (big < 0 || bv < UWB_MATH_TINY) return 0;    /* XY で一直線。決めようがない */
+    *margin = bv - sv;
+    if (p[big][1] >= (uwb_real)0) return 0;
     for (i = 0; i < n; ++i) p[i][1] = -p[i][1];
+    return 0;
 }
 
 /* =====================================================================
@@ -1139,14 +1208,14 @@ int uwb_survey_solve(const uwb_survey_input *in, uwb_survey_result *out)
         return 0;
     }
 
-    /* [3] LM + 外れ値リンクの棄却 */
+    /* [3] LM + 外れ値リンクの棄却（leave-one-out。落としたら解き直す） */
     for (drops = 0; drops <= UWB_SURVEY_MAX_DROP; ++drops) {
         int it = 0;
-        if (!lm_run(&c, f, &it, &cost)) return 0;
+        if (!lm_run(&c, f, &it, &cost, UWB_SURVEY_MAX_ITER, UWB_SURVEY_TOL)) return 0;
         iters += it;
-        if (!escape_local_minima(&c, f, &iters, &cost)) return 0;
+        if (!escape_local_minima(&c, f, &iters, &cost, UWB_SURVEY_MAX_ITER, UWB_SURVEY_TOL)) return 0;
         if (drops == UWB_SURVEY_MAX_DROP) break;
-        if (!drop_worst_link(&c, f, &out->excluded)) break;
+        if (!loo_drop_link(&c, f, cost, &out->excluded, &out->outlier_ambiguous, &iters)) break;
     }
 
     nused = 0;
@@ -1209,9 +1278,10 @@ int uwb_survey_solve(const uwb_survey_input *in, uwb_survey_result *out)
 
     apply_frame(c.p, c.n, u, gz);
 
-    /* [5] XY 規約 → 鏡像の一意化 */
+    /* [5] XY 規約 → 鏡像の一意化（chirality 入力があればそれで、無ければ規約で） */
     apply_xy_convention(c.p, c.n);
-    fix_chirality(c.p, c.n);
+    if (fix_chirality(c.p, c.n, in->chirality, &out->chirality_margin))
+        out->mirror_resolved = 1;
 
     for (i = 0; i < c.n; ++i)
         for (t = 0; t < 3; ++t) {

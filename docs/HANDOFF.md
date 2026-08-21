@@ -6,43 +6,35 @@
 
 ## 0. 次セッションの任務
 
-> **実機検証の前に [`docs/REVIEW_2026-08-21.md`](REVIEW_2026-08-21.md) §0 の表を読むこと。**
-> #5（測量の同一平面検出 × アンテナ遅延）は同日夕方のリファクタで対応済み。**#6（外れ値リンク棄却）と #7（Release のライセンス同梱）は未対応。**
->
-> **2026-08-21 夕方: 上流 `uwb_localizer` を凍結して独立し、線形代数を `components/uwb_math/`（スカラー展開）に一本化した。** `uwb_loc` / `uwb_survey` から一般 LU / Jacobi / 汎用コレスキーは消えている。設計根拠と実施状況は `docs/MATH_AUDIT_2026-08-21.md`。ホストテストは `make -C tests test strict float`（loc 77 + 新旧回帰 59 万 / math 3439 / pipeline 188 / survey 365）。float は clang だけでなく **gcc-16 と `-ffp-contract=off` でも**通すこと（FMA 縮約に助けられて clang だけ通る事故があった）。次は float 既定化（`CONFIG_UWB_LOC_USE_FLOAT`）の判断と実機 `soltest`。
+> **実機検証の前に追加で読む文書は無い。** `docs/REVIEW_2026-08-21.md` の Critical 1・High 6 は
+> 本日中に**全件対応済み**（§0 の表参照。#6 外れ値棄却・#7 ライセンス同梱も本セッションで解消した）。
+> 残っているのは実機でしか確認できない項目だけである。
 
-> 前セッション（2026-08-21）で、**§5 の「すぐ着手できる」項目 A〜F はすべて完了した。**
-> 残っているのは**実機を要する検証**と、下の 5 / 6 である。
+**実機が届いたらこの順で進める**（詳細・判断基準は
+**[`docs/EXPERIMENT_PLAN.md`](EXPERIMENT_PLAN.md)**）:
 
-**公式回路図（`assets/SCH_UWB_MODULE_SCH_main_V0.2_...pdf`）を確認した。** 電源系統は
-VDD1/VDD2 が VCC_3V3 直結で確定（`docs/SOLDER_PADS.md` §5.4・§5.5）。J1（FPC コネクタ用
-ピン番号）と PINMAP（パッド用ピン番号）は**別の番号体系**であり、どちらも正しい（教訓11 の
-再確認。§4 参照）。RSTn / IRQ にはそれぞれ 10kΩ の外付けプルアップがあり、IRQ 側は
-SLEEP 中に H へ張り付く点に注意（`docs/IRQ_POLICY.md`）。
+1. `firmware/probe` — Device ID `0xDECA0314` が読めるか（最初の関門）
+2. `firmware/twr` — **SS-TWR から**。DS-TWR は Critical バグ（PRETOC 誤設定）を修正済みだが
+   実機では未検証なので後回しにする
+3. `firmware/anchor` × 5 + `firmware/tag` × 1 — フル測位
 
-外部の実機報告（GOROman 氏、<https://gist.github.com/GOROman/76c222768b042d35599d26192a25e829>）でパッド配線・向き・6 本結線が本書と整合していることを確認した（本リポジトリのコードの実機確認ではない）。
-温間リセット問題（RST 未配線で `begin()` が `CONFIG_FAILED` になる件）は `begin()` のソフトリセットで対処済み。
-電源の根拠をデータシートと実物確認で裏付け直した（3V3 はチップ直結、最大 3.6V / 絶対最大 4.0V、StampFly GROVE の 4.35V は不可。`docs/SOLDER_PADS.md` §5.4）。
+**起動直後に必ず確認するログ3行**（`docs/EXPERIMENT_PLAN.md` §10 #12 にも記載。
+出なければ即座に切り分けへ）:
 
-### 2026-08-21 に完了した仕様と実装
+1. `... spi: slow=... fast=... active=16000000` — SPI が 2MHz に張り付いていないか
+   （レビュー H-2 の修正確認）
+2. `... main task stack high-water mark: ... bytes` — メインタスクを 12288B に
+   引き上げた効果の確認（レビュー H-1。残量が小さければ専用タスクへの分離を検討）
+3. `INIT_FAILED` が **出ないこと**（`dwt_checkidlerc()` 待ちタイムアウト。レビュー M-2 の対策確認）
 
-| # | 仕様 | 実装状況 |
-|---|---|---|
-| **1** | `docs/IRQ_POLICY.md`（IRQ 方針） | **実装済み**。IRQ は起床信号としてのみ使い、判読はポーリングと共通。`pin_irq` 未配線なら自動フォールバック。**極性は実機未検証** |
-| **2** | 同上（遅延値の扱い） | **実装済み**。`docs/TIMING_PRESETS.md` に3プリセット。版番号と種別をフレームに載せ、不一致を警告 |
-| **3** | 役割の確定（タグ=StampFly） | **実装済み**。`boards/stampfly.h` 作成。GROVE 2系統4本=SPI、SPI3_HOST、`pin_irq` 既定 UNUSED。**HANDOFF が挙げていた「別配線候補 G6/G8/G11」は誤りだった**（ToF INT ×2 と BMI270 INT1 に配線済みでコネクタに出ていない） |
-| **4** | アンカーのピン構成A/B | **実装済み**。`boards/atoms3.h` に `UWB_BOARD_ATOMS3_PINOUT` の Kconfig 切替 |
+**実機到着前にできることは実質もう無い。** 旧版の「すぐ着手できる」項目 A〜F は前回セッションで
+すべて完了しており、本セッションでレビュー #6（外れ値棄却）・#7（ライセンス同梱）も解消した。
+強いてやるなら以下の任意項目のみ:
 
-### 残っている仕様
-
-| # | 仕様 | 実装状況 | やること |
-|---|---|---|---|
-| 5 | `docs/SURVEY_SPEC.md` の訂正 | 計算部分のみ実装 | `survey chirality` / 冗長度表示 は S3-S5（ESP-NOW）と同時 |
-| 6 | `docs/STAMPFLY_INTEGRATION.md` 案B-2 | 未着手 | 実機で測位が出てから |
-
-**次にやるべきことは実機での検証である。** 手順と順序は
-**[`docs/EXPERIMENT_PLAN.md`](EXPERIMENT_PLAN.md)** にまとめてある
-（何をどの順で確かめ、どのフラグをいつ有効にするか、実機でしか潰せない前提10件）。
+- `uwb_math` の `uwb_sym3_solve_sphere` と Beck のλ探索の共通化（反復の形が同型。任意）
+- **本セッションの未コミット変更（§1）をレビューしてコミットする。**
+  本セッションは指示によりコミットしていない。ホスト側4種と ESP-IDF 側（soltest / tag / anchor）は
+  本セッション中にビルド・テストとも確認済み
 
 ---
 
@@ -51,32 +43,77 @@ SLEEP 中に H へ張り付く点に注意（`docs/IRQ_POLICY.md`）。
 **実機未着。すべてビルド通過とホスト検証まで。実機で Device ID すら読めていない。**
 製品自体が新しく、コミュニティの実績も無い（ユーザ談）。
 
-| リポジトリ | 場所 | 状態 |
-|---|---|---|
-| **m5stamp_uwb_localizer**（本体） | `/Users/kouhei/tmp/github/m5stamp_uwb_localizer` | **GitHub 公開済み** `kouhei1970/m5stamp_uwb_localizer` (public)。全コミット push 済み |
-| **uwb_localizer**（上流） | `/Users/kouhei/tmp/github/uwb_localizer` | **解決済 (2026-08-21)**: `perf/exploit-structure` を `main` にマージして凍結。最終状態（`ab23b33`）を `components/uwb_loc/` に取り込み済み。以後 `components/uwb_loc/` は本リポジトリで独立して開発する（上流は見ない） |
-| stampfly_ecosystem | `third_party/stampfly_ecosystem` | 2026-08-19 の読み取り専用クローン。**書き込み禁止** |
-| M5Stamp-UWB / uwb_localizer 参照用 | `third_party/` | 読み取り専用 |
-| 一次資料（PDF/公式API） | `docs/refs/` | **`.gitignore` 済み**（再配布禁止文書を含む） |
+| リポジトリ | 状態 |
+|---|---|
+| **m5stamp_uwb_localizer**（本体） | GitHub 公開済み `kouhei1970/m5stamp_uwb_localizer`（public）。HEAD は `4ab98e2`。未コミットの変更あり（下記） |
+| **uwb_localizer**（上流） | **2026-08-21 に凍結・独立**（`42daea9`。上流 `667551e` を取り込み）。以後 `components/uwb_loc/` は本リポジトリで独立して開発する。**上流は見ない** |
+| stampfly_ecosystem | `third_party/stampfly_ecosystem` に読み取り専用クローンあり。**書き込み禁止** |
+| 一次資料（PDF/公式API） | `docs/refs/`。**`.gitignore` 済み**（再配布禁止文書を含む） |
 
-### ビルド・テストの現況（すべて通る）
-```
-firmware/{probe,devtest,twr,tag,anchor,soltest}   全て警告0・エラー0
-tests/host/pipeline    188件    tests/host/survey  281件    tests/host/loc  77件
-```
-**GitHub Actions でも同じものが回っている**（`.github/workflows/build.yml`）。
-ホストテスト3種 + strict、ファーム14通り、タグ `v*` で Release 添付。
-**Release `v0.1.0` 公開済み**（14個の zip。`docs/PREBUILT_BINARIES.md`）。
+### 前回 HANDOFF（`d9a7dbc`）以降のコミット（HEAD `4ab98e2`、すべて CI 緑）
 
-### 最終セッション（2026-08-21 午後）の終了時点での宿題
-| # | 内容 | 誰が |
-|---|---|---|
-| 1 | **GitHub の Social preview が壊れている。** 3回アップロードしたが画像本体が配信されない（`og:image` の URL が 404）。DevTools で送信は 204 成功、読み戻しだけ失敗 → **GitHub 側の不具合**。クライアント側（拡張/ブラウザ/ネットワーク）は調査済みで無実 | ユーザ。**数日後に再試行。それまで Settings で Remove image しておく**（壊れた画像より自動生成カードの方がまし） |
-| 2 | `assets/social_card.{png,jpg}` は 1280x640 で作り直し済み・コミット済み | — |
-| 3 | 上流 `uwb_localizer` へ報告: `uwb_nls.c:342` の `wsum` が GCC `-Werror=unused-but-set-variable` で落ちる（clang は通す） | **解決済 (2026-08-21)**: 上流ブランチ側で `wsum` は削除済み。マージ・取り込み後は本リポジトリ側でも再発しない |
-| 4 | 上流 `perf/exploit-structure` をマージするか | **解決済 (2026-08-21)**: マージ・凍結し、最終状態を本リポジトリへ取り込んだ。以後独立開発 |
-| 5 | エディタの clangd が旧ディレクトリ名のパスを見ている | どれか1つで `idf.py fullclean && idf.py build` |
-| 6 | **最終レビュー**（ユーザが「最終レビューの前に一度セッションを閉じる」と言って終了） | **完了 (2026-08-21)**。結果は `docs/REVIEW_2026-08-21.md`。§0 の表 #1〜#4（DS-TWR の PRETOC、SPI 16MHz 切替、タグのメインタスクスタック、decamutex）は同日に修正済み。残りの指摘は同報告書 §7 の着手順に従う |
+| コミット | 内容 |
+|---|---|
+| `bce1096` | 実機投入前の最終レビューと Critical 1・High 3 修正（DS-TWR の PRETOC、SPI 16MHz 切替、タグのメインタスクスタック、`decamutexon`） |
+| `42daea9` | 上流 `uwb_localizer` を凍結（上流 `667551e`）・最終状態に同期・独立宣言 |
+| `4298c08` | `tests/host/` へホストテストを統合、`docs/archive/` を新設、線形代数コンポーネント `uwb_math` を新設 |
+| `98385fe` | `uwb_loc` / `uwb_survey` を `uwb_math` ベースのスカラー展開に書き換え、一般 LU / Jacobi を全廃 |
+| `4de9c68` | 外部の実機報告（GOROman 氏 gist）を反映、`begin()` にソフトリセットを追加 |
+| `4ab98e2` | 公式回路図で電源系統・FPC/パッド対応を確定、電源電圧の記述を裏付け直す |
+
+### 未コミット（ワークツリーに現存。本セッションでビルド・テストとも確認済み）
+
+1. **Release zip へのライセンス同梱**（レビュー #7 対応）
+   `.github/workflows/build.yml` / `README.md` / `THIRD_PARTY_LICENSES.md` / `docs/PREBUILT_BINARIES.md`。
+   各 zip に `LICENSE` / `THIRD_PARTY_LICENSES.md` / `LICENSES/LicenseRef-QORVO-2.txt` を同梱し、
+   Release 本文と `PREBUILT_BINARIES.md` に `LicenseRef-QORVO-2` 条件3（Qorvo 製 IC 限定）を明記した。
+2. **測量の外れ値 leave-one-out 棄却（A-2）とキラリティ入力（A-4）**（レビュー #6 対応）
+   `components/uwb_survey/{include,src}` / `docs/SURVEY_SPEC.md` / `tests/host/survey/test_survey.c`。
+   `uwb_survey_input.chirality`、`uwb_survey_result.outlier_ambiguous` / `chirality_margin` を追加。
+3. **`uwb_math` へ LDLᵀ・`solve_sphere`・`null_vector` 等を統合**
+   `components/uwb_math/{include,src}` / `components/uwb_loc/src/{uwb_closed_form.c,uwb_internal.h,uwb_nls.c}` /
+   `docs/MATH_AUDIT_2026-08-21.md` / `tests/host/math/test_math.c`。
+   `uwb_loc` 側・`uwb_survey` 側とも新 API への差し替えが完了している
+   （セッション序盤に一時的にビルドが壊れる瞬間があったが、これは並行して動いている別セッションが
+   `uwb_survey.c` を編集中だったため。現在は解消し、全スイート green）。
+
+### ホストテスト（本セッションで `make -C tests test` を再実行して確認）
+
+| スイート | 件数 | 失敗 |
+|---|---:|---:|
+| loc（`test_uwb.c`） | 77 | 0 |
+| loc（`test_regress.c`、新旧比較回帰） | 591,418 | 0 |
+| math | 10,781 | 0 |
+| pipeline | 188 | 0 |
+| survey | 561 | 0 |
+
+（math は前回の 3,423〜3,439 件から `uwb_math` への LDLᵀ / `solve_sphere` / `null_vector` 追加で
+10,781 件に増えた。survey は前回の 365 件から A-2 / A-4 のケース追加で 561 件に増えた。）
+
+### ファームウェア（6種）
+
+`firmware/{probe,devtest,twr,soltest,tag,anchor}`。
+
+- `probe` / `devtest` / `twr` は今回の未コミット差分（`uwb_math` 系）の影響を受けない。
+  直近 CI（`4ab98e2`, 3m5s, green）でカバー済み。
+- `soltest` / `tag` / `anchor` は `uwb_loc` 経由で `uwb_math` を使うため、本セッションで
+  `idf.py fullclean && idf.py build` により再確認した。**3種とも警告 0・エラー 0**
+  （`soltest` は `uwb_survey` も直接リンクしており、A-2/A-4 込みで確認できている）。
+
+### CI
+
+直近 push（`4ab98e2`）は green。未コミットの差分（上記）はまだ push していないので
+CI はまだ流れていない。ホスト4種と ESP-IDF 側（soltest/tag/anchor）は本セッションで
+ローカル確認済み。
+
+### Release
+
+`v0.1.0`（タグは `9be9000`、2026-08-21 13:17 作成）は**古い**。以後 9 コミット
+（レビューの Critical/High 修正、上流凍結、`uwb_math` 化、GOROman 報告反映、回路図確認、
+未コミットのライセンス同梱を含む）が乗っていない。**特に DS-TWR の Critical バグ修正
+（`bce1096`）より前なので、`v0.1.0` の DS-TWR ビルドは実機で確実に失敗する。**
+`v0.2.0` を切るなら（未コミット分をコミットしたうえで）`git tag` するだけで CI が
+14 通りの zip をライセンス同梱込みで作る。
 
 ---
 
@@ -84,20 +121,24 @@ tests/host/pipeline    188件    tests/host/survey  281件    tests/host/loc  77
 
 ```
 components/
-  qm33120w_sdk/   Qorvo ドライバ (vendoring, SPDX 保持)     ← 一次資料。信頼してよい
-  uwb_port/       dwt_spi_s / deca_sleep / mutex / GPIO     ← 自作
-  uwb_qm33120/    デバイス層 + SS/DS-TWR                     ← M5Stack 由来を大幅に修正
-  uwb_loc/        測位ソルバ Lv0-Lv3 (uwb_localizer 凍結時点を取り込み)  ← 以後は本リポジトリで独立開発
+  qm33120w_sdk/   Qorvo ドライバ (vendoring, SPDX 保持)              ← 一次資料。信頼してよい
+  uwb_port/       dwt_spi_s / deca_sleep / mutex / GPIO              ← 自作
+  uwb_qm33120/    デバイス層 + SS/DS-TWR                              ← M5Stack 由来を大幅に修正
+  uwb_math/       対称3x3/2x2の閉形式・LDLᵀ・ブロックコレスキー      ← 新設。一般LU/Jacobiは置かない
+  uwb_loc/        測位ソルバ Lv0-Lv3（uwb_math ベースに書き換え済み） ← 上流凍結後は本リポジトリで独立開発
   uwb_ranging/    アンカーテーブル + スケジューラ + パイプライン
   uwb_cfgstore/   NVS 永続化 + シリアルコンソール
-  uwb_survey/     MDS + Gauss-Newton + ゲージ固定（自動測量の計算部分）
+  uwb_survey/     MDS(逐次三辺測量) + Gauss-Newton + ゲージ固定       ← uwb_math ベース。leave-one-out棄却・キラリティ入力を追加
 firmware/         probe / devtest / twr / soltest / tag / anchor
-tests/host/       loc (uwb_loc のホスト検証)
-tools/            test_pipeline / test_survey / bench_loc
+tests/host/       loc（77+回帰59万） / math（10781） / pipeline（188） / survey（561）
+tools/            bench_loc（測位ソルバのマイクロベンチ）
+docs/archive/     経緯文書（PROGRESS / REIMPL_PLAN / CRITICAL_REVIEW / SURVEY_* など計8本）
 ```
 
-**ハード依存は `uwb_port` と `uwb_ranging_scheduler` の2箇所だけ**に隔離。
-測位パイプラインと測量計算はホストで検証できる。
+**ハード依存は `uwb_port` と `uwb_ranging` のスケジューラ部分の2箇所だけ**に隔離。
+測位パイプラインと測量計算はホストで検証できる。**線形代数はすべて `uwb_math` に集約**
+されており、一般次元の LU 分解・Jacobi 法などは存在しない（設計根拠:
+`docs/MATH_AUDIT_2026-08-21.md`）。
 
 ---
 
@@ -108,36 +149,16 @@ tools/            test_pipeline / test_survey / bench_loc
 | 対象 | **ESP32-S3 + M5Stamp UWB Module 専用**。プラットフォーム最適化してよい。ただし StampFly には非依存 | `docs/PLAN.md` |
 | **ハード方針** | **StampFly 非依存。ただしタグの配線だけは StampFly 互換を維持する**（GROVE 2系統4本で成立 ＝ IRQ/RST 不要）。想定利用者は本リポジトリを単体で試す人 | `docs/PLAN.md` §1 |
 | 役割 | **タグ = M5StampS3A ×1 / アンカー = AtomS3(R) ×5** | `docs/archive/PROGRESS.md` |
-| 接続 | **FPC ではなく半田パッド**（1.27mm キャステレーション） | `docs/SOLDER_PADS.md` |
+| 接続 | **FPC ではなく半田パッド**（1.27mm キャステレーション）。J1（FPC 用番号）と PINMAP（パッド用番号）は**別の番号体系**で両方正しい | `docs/SOLDER_PADS.md` §5.5 |
+| 電源 | パッド2（VCC_3V3）は QM33120W の VDD1/VDD2 に直結。動作上限 3.6V・絶対最大 4.0V。5V や StampFly GROVE（満充電 ~4.35V）は不可 | `docs/SOLDER_PADS.md` §5.4 |
 | **IRQ** | **アンカーは積極使用。タグは不使用。StampFly の別配線可能性は残す** | **`docs/IRQ_POLICY.md`** |
 | 資料 | **一次資料 = Qorvo SDK/UM/APS。M5Stack ラッパは二次資料で信頼しない** | **`docs/SOURCE_POLICY.md`** |
-| 測量 | 高さのみ実測(4点以上) + キラリティ1ビット。タグも6台目として参加。計算は実機上 | `docs/SURVEY_SPEC.md` |
+| 測量 | 高さのみ実測(4点以上) + キラリティ1ビット入力（`uwb_survey_input.chirality`）。タグも6台目として参加。外れ値リンクは leave-one-out で棄却。計算は実機上（呼び出し元はまだ無い） | `docs/SURVEY_SPEC.md` |
 | StampFly統合 | **案B-2 疎結合**: Lv2 で位置を出し `EskfCore::vectorUpdate3()` で POS_X/Y 観測 | `docs/STAMPFLY_INTEGRATION.md` |
-
-### 文書の地図
-```
-README.md                    購入者の入口
-docs/GETTING_STARTED.md      BOM から測位まで11章
-docs/HANDOFF.md              ← このファイル
-docs/GLOSSARY.md             用語集（略語の正式名称と意味）。分からない略語はここ
-docs/UWB_PRIMER.md           UWB 入門。なぜ電波で cm が測れるのか（最初に読む）
-docs/UWB_ALGORITHMS.md       測位アルゴリズムの導出（上流からの移植・改訂版）
-docs/EXPERIMENT_PLAN.md      実機到着後の実験計画とフラグ有効化の順序
-docs/SOURCE_POLICY.md        資料の格付けと、過去の誤りの記録
-docs/IRQ_POLICY.md           IRQ 方針（確定版）
-docs/UNITS.md                UUS/DTU/実µs の単位リファレンス（遅延値を触る前に必読）
-docs/TIMING_PRESETS.md       遅延プリセットとバージョン不一致検出（設計）
-docs/archive/CRITICAL_REVIEW.md      M5Stack ラッパの批判的レビュー
-docs/archive/REIMPL_PLAN.md          R1-R12。R1/R2/R3-1/R4/R7/R8/R9 は実装済み
-docs/SURVEY_SPEC.md          自動測量の仕様（訂正4件入り）
-docs/STAMPFLY_INTEGRATION.md StampFly 位置制御への統合（1127行）
-docs/PERF_ANALYSIS.md        測位計算の性能分析と上流最適化の結果
-docs/PLATFORM_TUNING.md      ESP32-S3 の浮動小数点・コンパイル設定
-docs/ANCHOR_PLACEMENT.md     アンカー配置ルール
-docs/SOLDER_PADS.md          パッド仕様と配線
-docs/BRINGUP.md              Phase 1 受入確認
-docs/refs/README.md          一次資料の索引
-```
+| **数値計算方針** | **一般次元の行列計算（LU/Jacobi/一般コレスキー）は置かない。** 対称3x3/2x2の閉形式と nb≤8 のブロックコレスキーに集約し `uwb_math` に一本化する。ESP32-S3 特化（スカラー展開・単精度FPU前提の最適化）は OK | `docs/MATH_AUDIT_2026-08-21.md` |
+| **上流の扱い** | `uwb_localizer` は 2026-08-21 に凍結・独立（`42daea9`）。以後 `components/uwb_loc/` は本リポジトリで独立開発する。**上流は見ない**（孵化器は役目を終えた） | — |
+| **float の検証** | clang に加え **gcc-16 と `-ffp-contract=off` でも**通すこと（FMA 縮約に助けられて clang だけ通っていた事故があった） | `tests/Makefile` |
+| **ブラウザ自動化** | 使わない（§4 参照） | — |
 
 ---
 
@@ -159,6 +180,8 @@ docs/refs/README.md          一次資料の索引
 | 9 | 高さ3点で傾きが決まる | **4点以上必要** | 同上 |
 | 10 | 単位を `Uus`→`Us` にリネームすべき | **M5Stack の単位系は正しかった。誤称は Qorvo 側** | SDK の記述を読む前に計画を書いた |
 | 11 | 公式ピンマップと文書が8箇所違う | **パッドと FPC で並びが違うだけ。両方正しい** | 番号付きの帯をパッド番号と決めつけた |
+| 12 | **5V を入れると壊れる、と根拠なく断定していた** | **結論（5V不可）自体は正しかったが、当初は公式の「DC 3.3V」記載（消費電流の測定条件）を絶対定格と読み違えただけで、回路構成やデータシートの裏付けが無かった** | 二次的な指標（それらしい数字）を検証せず、直接証拠（回路図・データシート）より優先した |
+| 13 | 公式回路図の `J1` シンボルがピン番号として誤りだと判断しかけた | **`J1`（FPC 用番号）と `PINMAP`（パッド用番号）は別の番号体系で、どちらも正しい**（教訓11 の再確認） | パッド番号と FPC 番号が食い違う事実だけを見て、回路図側が誤りだと決めつけかけた |
 
 ### 運用ルール（`docs/SOURCE_POLICY.md` に詳細）
 1. **フラグ・メタデータより直接観測できる事実を優先する**
@@ -175,17 +198,45 @@ Web 取得は `WebFetch` / `curl` に限定し、サブエージェントにも�
 
 ---
 
-## 5. 次にやること
+## 5. 文書の地図
 
-### すぐ着手できる（実機不要）
-| # | 内容 | 備考 |
-|---|---|---|
-| ~~**A**~~ | ~~**`boards/stampfly.h` の作成**~~ | **完了 (2026-08-21)**。GROVE 4本(G13/G15/G1/G2)=SPI、`pin_irq` は既定 UNUSED。**当初挙げていた「別配線候補 G6/G8/G11」は誤りだったので採用していない**（§0 参照）。代わりに現実的な経路（HW-2）をコメントに書いた |
-| ~~B~~ | ~~`boards/atoms3.h` に構成A/B の Kconfig 切替~~ | **完了 (2026-08-21)**。ToF を Grove に挿すか底面に手配線するか |
-| ~~C~~ | ~~遅延プリセット化 + バージョン不一致検出~~ | **完了 (2026-08-21)**。タグとアンカーで遅延値が食い違うと測距が壊れる。実運用で必ず踏む |
-| ~~D~~ | ~~`firmware/twr` の `spi_fast_hz` / アンカーアドレスを Kconfig 化~~ | **完了 (2026-08-21)**。`UWB_TWR_TAG_ADDR`/`UWB_TWR_ANCHOR_ADDR`（既定は元の固定値のまま）と `UWB_SPI_FAST_HZ`（既定0=`boards/*.h`のまま。`firmware/probe`にも同じ形で追加）。切り分けの最頻出項目 |
-| ~~E~~ | ~~`RangingScheduler::stats()` を tag の JSON に接続~~ | **完了 (2026-08-21)**。毎周期の`fix`行とは別に`"type":"stats"`行を`UWB_TAG_STATS_INTERVAL_MS`（既定1000ms、0で無出力）ごとに出す。「どのアンカーが悪いか」は最初に知りたい情報 |
-| ~~F~~ | ~~`RangingSample` に絶対タイムスタンプ追加~~ | **完了 (2026-08-21)**。`t_us`（測距開始直前に`esp_timer_get_time()`で記録）を追加し、`fix`行`anchors[]`各要素にも`t`（`fix`の`t`と同じ基準の相対秒）として出力。周内スミア対策（1周32ms → ±16ms、1m/s で 16mm） |
+現役 21 本（+ 経緯を記録した archive 8 本）。索引は **[`docs/README.md`](README.md)**。
+
+```
+README.md                    購入者の入口（リポジトリ直下）
+docs/README.md                ★ ドキュメント索引（ここから探す）
+docs/HANDOFF.md               ← このファイル
+docs/GLOSSARY.md              用語集（略語の正式名称と意味）。分からない略語はここ
+docs/UWB_PRIMER.md            UWB 入門。なぜ電波で cm が測れるのか（最初に読む）
+docs/UWB_ALGORITHMS.md        測位アルゴリズムの導出（上流からの移植・改訂版）
+docs/EXPERIMENT_PLAN.md       実機到着後の実験計画とフラグ有効化の順序。実機でしか潰せない前提12件
+docs/SOURCE_POLICY.md         資料の格付けと、過去の誤りの記録
+docs/IRQ_POLICY.md            IRQ 方針（確定版）
+docs/UNITS.md                 UUS/DTU/実µs の単位リファレンス（遅延値を触る前に必読）
+docs/TIMING_PRESETS.md        遅延プリセットとバージョン不一致検出（設計）
+docs/SURVEY_SPEC.md           自動測量の仕様（外れ値 leave-one-out・キラリティ入力を追記）
+docs/STAMPFLY_INTEGRATION.md  StampFly 位置制御への統合（1127行）
+docs/PERF_ANALYSIS.md         測位計算の性能分析と上流最適化の結果
+docs/PLATFORM_TUNING.md       ESP32-S3 の浮動小数点・コンパイル設定
+docs/MATH_AUDIT_2026-08-21.md 行列計算の残存箇所の監査とスカラー化の設計根拠。uwb_math の仕様の元
+docs/ANCHOR_PLACEMENT.md      アンカー配置ルール
+docs/SOLDER_PADS.md           パッド仕様と配線（公式回路図でのネットリスト確認込み）
+docs/BRINGUP.md               Phase 1 受入確認
+docs/PLAN.md                  全体設計・フェーズ計画
+docs/GETTING_STARTED.md       BOM から測位まで11章
+docs/PREBUILT_BINARIES.md     ビルド済みバイナリの入手と書き込み。ライセンス条件込み
+docs/REVIEW_2026-08-21.md     実機投入前の最終レビュー。Critical 1・High 6、全件対応済み
+docs/refs/README.md           一次資料の索引
+docs/archive/                 経緯文書（現役8本 + archive自身のREADME.md）
+  CRITICAL_REVIEW.md            M5Stack ラッパの批判的レビュー
+  REIMPL_PLAN.md                R1-R12。R1/R2/R3-1/R4/R7/R8/R9 は実装済み
+  PROGRESS.md                   開発進捗ログ
+  SURVEY_*.md（5本）            設計当時の事前調査資料
+```
+
+---
+
+## 6. 次にやること
 
 ### 実機が要る
 | # | 内容 |
@@ -196,27 +247,20 @@ Web 取得は `WebFetch` / `curl` に限定し、サブエージェントにも�
 | R10-R12 | ch9 の PLL 再校正(20°Cごと)、アンテナ遅延校正、診断情報→測位重み |
 | S3-S5 | ESP-NOW、測量モード、コーディネータ |
 | S7 | I2C ToF（高さ自動計測） |
+| **float 既定化** | 実機 `soltest` で double/float を比較し `CONFIG_UWB_LOC_USE_FLOAT` の既定値を判断する |
 
-### ユーザ判断待ち
-- ~~**`uwb_localizer` の `perf/exploit-structure` をマージするか**~~
-  → **解決済 (2026-08-21)**: 上流をマージ・凍結し、最終状態（`ab23b33`）を
-  `components/uwb_loc/` へ取り込んだ。測位計算が3〜5倍速い最適化版に更新済み。
-  以後 `components/uwb_loc/` は本リポジトリで独立して開発する（上流は見ない）
-- ~~**上流 `uwb_loc` が GCC の `-Werror=unused-but-set-variable` で落ちる**~~
-  → **解決済 (2026-08-21)**: マージ元ブランチで `wsum`（`uwb_nls.c:342`）は
-  削除済み。取り込み後の `components/uwb_loc/` にも `wsum` は存在せず、
-  CI の `strict` 除外は解除した（`tests/host/loc` の `test`/`strict`/`float`
-  をすべて実行している）
-- 上流の pytest 1件失敗（`test_self_survey_with_noise_and_missing_links[1]`）
-  → テストの基準アンカーが同一平面。テスト側の問題
-- ~~デフォルトブランチが `master`。`main` に変えるか~~
-  → **解決済 (2026-08-21): `main` に統一した。** リモートの `master` は削除済み。
-  既存クローンがある場合は `git branch -m master main && git fetch origin &&
-  git branch -u origin/main main && git remote set-head origin -a` を実行すること
+### 任意（実機不要、優先度低）
+| # | 内容 |
+|---|---|
+| `uwb_math` の共通化 | `uwb_sym3_solve_sphere` と Beck のλ探索の共通化（反復の形が同型） |
+| 測量 leave-one-out の計算量 | n=8 の外れ値入りで最大 ~5000 回のコレスキー/solve（S3 の double で数秒の可能性）。設置時1回として許容しているが、実機で時間を測るとなお良い |
+| 測量の2本外れ値（同一ノード共有） | greedy leave-one-out の既知の限界（総当たりの leave-two-out は組合せ数が多すぎる）。記録のみで未対応 |
+| `.cache` の untrack | `firmware/soltest/.cache/clangd/index/*.idx` がまだ git 追跡されている（`git rm -r --cached firmware/soltest/.cache/`）。レビュー §5 |
+| SPDX ヘッダ | `components/qm33120w_sdk/` 以外に SPDX ヘッダ・著作権表示が無い。レビュー §5（Low-Medium） |
 
 ---
 
-## 6. 落とし穴（踏むと時間を失う）
+## 7. 落とし穴（踏むと時間を失う）
 
 1. **Qorvo 公式サンプルの `.c` は latin-1。`grep -a` を使うこと**
 2. **`UUS_TO_DWT_TIME` は DW1000=65536 / DW3000公式=63898。**
@@ -229,15 +273,19 @@ Web 取得は `WebFetch` / `curl` に限定し、サブエージェントにも�
    迷子ファイルを作った実例あり。**絶対パスを使うこと**
 5. **`sdkconfig` は `.gitignore` 済み。** `sed` で書き換える手順を書いてはいけない。
    `-D SDKCONFIG=build/xxx/sdkconfig` 方式を使う（`GETTING_STARTED.md` に検証済みの手順あり）
-6. ~~`components/uwb_loc/` は上流と byte 一致を保っている。直接編集しないこと~~
-   → **2026-08-21 に方針転換**: 上流 `uwb_localizer` を凍結・最終取り込みした後は、
-   `components/uwb_loc/` は本リポジトリで独立して開発する。ESP32-S3 向けの
-   最適化（float 化・スカラー展開など）をソースに直接入れてよい
+6. **`components/uwb_loc/` はもう「上流と byte 一致」ではない。**
+   上流 `uwb_localizer` を凍結・最終取り込みした後は、`components/uwb_loc/` は本リポジトリで
+   独立して開発する方針に転換済み（2026-08-21）。ESP32-S3 向けの最適化（`uwb_math` ベースの
+   スカラー展開など）をソースに直接入れてよい
 7. サブエージェントに Web 調査を任せるときは**取得手段を明示的に限定する**
+8. **複数セッションが同じファイルを同時に編集していることがある。**
+   本セッション中、`components/uwb_survey/src/uwb_survey.c` が別セッションの編集途中で
+   一瞬ビルドエラーになる瞬間を観測した。ビルド失敗を見たら即座に「壊れた」と判断せず、
+   数分おいて `git diff` / 再ビルドで再確認すること
 
 ---
 
-## 7. 数字の要約（実機で最初に検証すべきもの）
+## 8. 数字の要約（実機で最初に検証すべきもの）
 
 | 項目 | 値 | 出典 |
 |---|---|---|
@@ -246,7 +294,9 @@ Web 取得は `WebFetch` / `curl` に限定し、サブエージェントにも�
 | StampFly 位置制御の実効帯域 | **約 0.064 Hz**（`pos.kp=0.4`） | `params.cpp:771` |
 | アンカー座標の推定誤差（σ=5cm時） | RMS 5cm / 最悪 25cm | `test_survey` |
 | 共通アンテナ遅延の推定誤差 | 平均 1.5cm | 同上 |
+| 外れ値棄却の誤棄却率（σ=5cm ノイズのみ） | **≤0.35%**（2000試行実測、n=8） | `test_survey`（A-2） |
 | **無校正のアンテナ遅延バイアス** | **Δ1ns = 30cm** | APS014 |
+| 電源電圧の絶対最大定格 | **4.0V**（動作上限 3.6V。5V/StampFly GROVE 4.35V は不可） | `QM33120W_DS.txt` / 公式回路図 |
 | ESP32-S3 の float | 加減乗と `madd.s` はハード、**除算と sqrt はソフト** | 逆アセンブルで確認 |
 
 **StampFly の ESKF には POS_X/POS_Y を直接観測する update 関数が1つも無く、

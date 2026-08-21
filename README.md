@@ -74,6 +74,9 @@ esptool.py --chip esp32s3 -p /dev/cu.usbmodemXXXX write_flash 0x0 merged-firmwar
 > **⚠ ピン定義（`boards/*.h`）は実機未検証の暫定値**を焼き込んであります。
 > 配線が [`docs/GETTING_STARTED.md` §3](docs/GETTING_STARTED.md#wiring) と違えば動きません。
 
+配布 zip には Qorvo ライセンスの条件（Qorvo 製 IC 限定）が適用されます →
+[`docs/PREBUILT_BINARIES.md`](docs/PREBUILT_BINARIES.md)
+
 ### B. 自分でビルドする（5 分）
 
 **実機がなくてもここまでできます。**
@@ -144,7 +147,8 @@ I (xxx) uwb_probe: === L1: PASS / L2: PASS ===
 |---|---|
 | ビルド | 全ファーム **警告 0・エラー 0**（ESP-IDF v5.5.2 / ESP32-S3） |
 | 測位パイプライン | ホスト（PC）上の合成データで検証済み（**188 件のチェック全通過**。設定のシリアライズ/デシリアライズ、遅延プリセット、フレーム照合の検算を含む） |
-| 測位ソルバ（uwb_loc） | 上流 [uwb_localizer](https://github.com/kouhei1970/uwb_localizer) のホストテストで検証済み |
+| 測位ソルバ（uwb_loc） | 本リポジトリ独立のホストテストで検証済み（**77 件 + 新旧比較回帰 591,418 件**。上流 [uwb_localizer](https://github.com/kouhei1970/uwb_localizer) は 2026-08-21 に凍結・独立し、以後の開発は本リポジトリ側で行っている） |
+| 線形代数（uwb_math）／自動測量（uwb_survey） | ホストで検証済み（uwb_math **10,781 件** / uwb_survey **561 件**） |
 | ソルバの計算時間 | ESP32-S3 実機用ベンチを実装済み（**実行は未**） |
 | **実機での SPI 疎通（Device ID 読み出し）** | **未確認** |
 | **実機での測距・測位** | **未確認** |

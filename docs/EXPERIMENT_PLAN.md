@@ -326,6 +326,7 @@ W ... respondDSRange: Poll<-TAG: peer=0x0001 とタイミングプリセット�
 | 9 | StampFly GROVE は電池電圧（~3.0〜4.35V）。供給能力と LDO 後の 3.3V で 60mA 取れるか | 実験 10 | 機体バッテリから直接取る | |
 | 10 | 折返し時間の実測（プリセットの根拠） | 実験 8 | プリセットの数値を見直す（**版番号を上げること**） | |
 | 11 | **IRQ プルアップの影響**（SLEEP 中の張り付き） | — | SLEEP/WAKEUP を使う設計にするときは要再検討 | モジュール上に DW_IRQ の 10kΩ プルアップあり（`SOLDER_PADS.md` §5.5(4)、公式回路図で確認）。現状の使い方（起床信号としてのみ使用、チップを能動的に SLEEP させない）では実害なし |
+| 12 | **起動直後に出るべきログ3行**: ① `spi: slow=… fast=… active=16000000`（SPI が 2MHz のまま止まっていないか）② メインタスクの `stack high-water mark`（12288B 化の効き目）③ `INIT_FAILED` が **出ないこと**（`dwt_checkidlerc()` 待ちタイムアウト） | 実験 1 | ①が出ない→SPI 切替の実装ミスを疑う／②が小さい→タスク分離を検討／③が出る→RST 未配線時のソフトリセットが効いていない | レビュー H-2・H-1・M-2（`docs/REVIEW_2026-08-21.md`）の修正がホスト検証止まりで、実機での動作は未確認。`docs/HANDOFF.md` §0 参照 |
 
 外部報告（GOROman 氏、<https://gist.github.com/GOROman/76c222768b042d35599d26192a25e829>）
 の詳細は [`docs/SOLDER_PADS.md`](SOLDER_PADS.md) 冒頭と

@@ -196,3 +196,108 @@ Lv1~ 2.6、Lv2~ 3.3 (初期値が違う 24 試行のうち別の局所解 / 鏡�
 | 未対応 | A-2（外れ値の leave-one-out）、A-4（キラリティ入力）。根本対策として「実測高さを LM の観測に入れる」を `SURVEY_SPEC.md` §2[3'] に記載 |
 
 `uwb_math` に欲しい関数（現在は各コンポーネント内 static）: sym3 の LDLᵀ 系（loc は余因子解が float で後退安定でなかったため LDLᵀ に切替）、`sym3_null_vector`、球面拘束付き 3×3 最小化 `solve_sphere`（Beck の λ 探索と同型）、sym2 の shifted 版。次回 uwb_math を触るときに統合する。
+
+## 統合状況 (2026-08-21、線形代数ヘルパの `uwb_math` への統合)
+
+上の「欲しい関数」を `components/uwb_math/` に実装し、`uwb_loc` 側の static
+inline (`uwb_internal.h` の LDLᵀ) を削除して置き換えた。**`uwb_survey` 側の
+差し替えも済（2026-08-21）**。上の表 #5 と「余因子解を採らなかった箇所」で
+`uwb_internal.h` と書いてある LDLᵀ は、いまは `uwb_math.h` にある。
+
+### 追加した関数 (`uwb_math.h`)
+
+| 関数 | 由来 | 置き場 | 除算 / sqrt | 備考 |
+|---|---|---|---|---|
+| `uwb_sym3_ldl` / `uwb_sym3_ldl_factor(s, shift, require_pd, f)` / `uwb_sym3_ldl_solve(f, b, x)` | `uwb_loc/uwb_internal.h` の `uwb_ldl3_*` をそのまま (演算順序を変えず) | **`static inline` (ヘッダ)** | 3 / 0、0 / 0 | `require_pd=1`: ピボット ≤ 0 で失敗。`=0`: 0 / NaN / ±inf だけ失敗 (LU 互換) |
+| `uwb_sym3_ldl_inverse(s, shift, require_pd, inv)` | 同上 | 関数 | 3 / 0 | inv と s は同じ配列でもよい |
+| `uwb_sym2_ldl` / `uwb_sym2_ldl_factor` / `uwb_sym2_ldl_solve` / `uwb_sym2_ldl_inverse` | 同上 (`uwb_ldl2_*`) | factor/solve は `static inline`、inverse は関数 | 2 / 0 | |
+| `uwb_sym3_solve_tol(s, b, x, rel_tol)` / `uwb_sym2_solve_tol` | 新規 | 関数 | 1 / 0 | 余因子解の特異判定しきい値を引数で。`rel_tol = UWB_MATH_SING_TOL` は `uwb_sym3_solve` とビット一致、`rel_tol = 0` は「det が厳密に 0 のときだけ失敗」(±inf も弾く) |
+| `uwb_sym3_adjugate(s, adj)` | 新規 (内部 `sym3_cofactors` の公開) | 関数 | 0 / 0 | det を返す。rank 2 なら adj = λ0λ1 n nᵀ |
+| `uwb_sym2_mv` / `uwb_sym2_solve_shifted` / `uwb_sym2_inverse_shifted` | 新規 (sym3 版の 2x2) | 関数 | 0、1、1 | shift = 0 は solve / inverse とビット一致 |
+| `uwb_sym3_null_vector(s, n)` | `uwb_survey.c` の `sym3_null_vector` | 関数 | 2 / 1 | 行を max\|s\| で正規化してから外積 (survey 版は生の行。1e-6 スケールだと外積 ≈ 1e-12 が `UWB_MATH_TINY` に掛かるため)。選択規則 (3 通りの最大ノルム) と符号規約は同じ。NaN を弾く |
+| `uwb_sym3_principal_axis(s, v)` | `uwb_survey.c` `fit_up` の rank-1 分岐 (最大ノルム行の正規化。関数にはなっていなかった) | 関数 | 1 / 1 | 符号を「絶対値最大の成分が正」に正準化する点だけ違う (survey の使い方 `coef = e0·b/λ0`、`w = ẑ − (e0·ẑ)e0` は符号に不変) |
+| `uwb_sym3_solve_sphere(M, b, lam_min, u, out_nu)` | `uwb_survey.c` の `solve_sphere` | 関数 | 反復ごと 4 / 1 | Newton の骨格・開始点 ν = 0・収束判定 16 eps・極の手前の二分はそのまま。線形部分を余因子 `uwb_sym3_solve_shifted` 2 回 (除算 2) から **LDLᵀ 1 回 + solve 2 回** (除算 3) に変えた (Beck と同じ部品。float で後退安定)。hard case で二分が極に達し LDLᵀ が失敗したら (float では ν が丸めで −λ_min ちょうどになる) 直前の u を正規化して返す (survey 版は 0 を返していた)。Beck の λ 探索と同型であることをヘッダに明記 (Beck は φ に線形項が付き rtsafe で括る)。今回 Beck は触っていない |
+
+### `uwb_loc` 側の置き換え
+
+- `components/uwb_loc/src/uwb_internal.h`: `uwb_ldl3` / `uwb_ldl2` 構造体と static inline 7 関数 (`uwb_ldl3_ok` 含む) を削除。`UWB_EPS` と内部 API の宣言だけ残る。
+- `uwb_closed_form.c`: `sc_solve_pd` (LLS) と `beck_eval` (Beck の φ) が `uwb_sym3_ldl_factor/solve` (dim=2 は sym2) を呼ぶ。
+- `uwb_nls.c`: `sym_inverse_lenient` / `sym_solve_lenient` が `uwb_sym3_ldl_inverse` / `uwb_sym3_ldl_factor/solve` を `require_pd = 0` で呼ぶ (旧 LU 互換の緩い特異判定はそのまま。`uwb_sym3_solve_tol(…, 0)` には切り替えていない: 数値を変えないため)。
+- 数値の同一性: `tests/host/loc` (test_uwb 77 件 + test_regress) を clang double / clang float (FMA) / clang float `-ffp-contract=off` / gcc-16 double / gcc-16 float / clang strict の 6 構成で統合前後に流し、**出力ログが 6 構成とも完全一致** (件数 591418 / 591184 / 525169 / 591418 / 525169 / 591418、カテゴリ別の最大差まで同じ)。
+
+### static inline にした判断 (tools/bench_loc、M3 Ultra、clang -O2、us/回、3 回の最小)
+
+LDLᵀ の factor / solve を最初は `uwb_math.c` の関数にしてベンチしたところ、
+Beck の φ 評価 (1 fix に ≈ 11 回 × factor 1 + solve 2) と NLS の反復ごとの
+呼び出しコストが見えた (下表「関数化」)。ヘッダの `static inline` に置くと
+統合前と同じコード生成になり (vec3 と同じ扱い)、差は ±1.5% (ノイズ) に収まった。
+`*_ldl_inverse` は共分散 1 回ぶんなので関数のまま。`uwb_solve_lv0` の N=4〜6 は
+ベンチの先頭行で CPU のウォームアップに掛かり単独計測では 1.2〜2.6 倍に見えたが、
+統合前バイナリ (HEAD を `git archive` でビルド) と交互に 3 回ずつ走らせると
+1.00〜1.01 倍だった (下表の double の lv0 / lv2 / Beck の「前」「inline」はこの
+交互計測。それ以外の列は非交互の 3 回の最小)。
+
+| 関数 | 条件 | double 前 | double 関数化 | double inline | float 前 | float 関数化 | float inline |
+|---|---|---:|---:|---:|---:|---:|---:|
+| uwb_solve_lv0 | N=6 | 0.177 | 0.208 (+17%) | 0.178 | 0.177 | 0.212 (+20%) | 0.217 |
+| uwb_solve_lv0 | N=8 | 0.222 | 0.229 | 0.222 | 0.223 | 0.223 | 0.221 |
+| uwb_solve_lv1 | N=6 | 0.620 | 0.689 (+11%) | 0.625 | 1.005 | 1.078 (+7%) | 1.011 |
+| uwb_solve_lv2 | N=6 | 0.623 | 0.682 (+10%) | 0.622 | 1.039 | 1.101 (+6%) | 1.016 |
+| uwb_solve_lv2 | N=8 | 0.729 | 0.785 (+8%) | 0.727 | 1.333 | 1.394 (+5%) | 1.303 |
+| uwb_beck_gtrs | N=6 | 0.289 | 0.343 (+18%) | 0.288 | 0.234 | 0.275 (+18%) | 0.227 |
+| uwb_ekf_update | CV(nx=6), N=6 | 0.268 | 0.269 | 0.267 | 0.249 | 0.243 | 0.242 |
+| uwb_gdop_from_jac | N=6 | 0.029 | 0.032 | 0.031 | 0.033 | 0.033 | 0.036 |
+
+(EKF / coplanar / GDOP は LDLᵀ を使わないので変化なし。float の lv0 N=6 の
+0.217 は非交互計測でウォームアップの影響が残った値。)
+
+### スタック使用量 (xtensa-esp32s3-elf-gcc 14.2 -O2 -fstack-usage、bytes、UWB_MAX_ANCHORS=8)
+
+| 関数 | double 前 | double 後 | float 前 | float 後 |
+|---|---:|---:|---:|---:|
+| uwb_beck_gtrs | 720 | 720 | 368 | 368 |
+| beck_eval | 128 | 128 | 64 | 64 |
+| uwb_lls_trilateration | 672 | 672 | 384 | 384 |
+| solve_nls | 720 | 720 | 400 | 400 |
+| uwb_solve_lv0 | 1024 | 1024 | 592 | 592 |
+| uwb_solve_lv2 | 32 | 32 | 32 | 32 |
+| cov_from_hessian | 144 | 96 (+ uwb_sym3_ldl_inverse 96) | 96 | 80 (+ 64) |
+| uwb_sym3_solve_sphere (新) | - | 176 | - | 96 |
+| uwb_sym3_null_vector (新) | - | 128 | - | 80 |
+| uwb_sym3_principal_axis (新) | - | 128 | - | 64 |
+| uwb_sym3_solve_tol (新) | - | 144 | - | 80 |
+
+ホットパスは inline なので前後同一。`cov_from_hessian` だけ inverse が関数呼び出しに
+なり、呼び出し連鎖の合計は 144 → 192 (double) / 96 → 144 (float) に増えるが、
+fix ごとに 1 回の冷たい経路で、`uwb_solve_lv0` の 1024 / 592 の内側に収まる
+(lv0 のフレームは変わっていない)。float の `uwb_math.c` では呼び出し元が増えた
+`sym3_maxabs` が gcc に inline されなくなり `uwb_sym3_solve` / `uwb_sym3_inverse`
+が 64 → 80 になった (uwb_loc はこれらをホットパスで使わない)。
+
+### テストとビルド
+
+- `tests/host/math`: 3439 → **10781 件** (`test_sym3_ldl` / `test_sym2_ldl` / `test_sym3_solve_tol` / `test_sym3_adjugate` / `test_sym2_extras` / `test_sym3_null_vector` / `test_sym3_principal_axis` / `test_sym3_solve_sphere`)。参照 LU / 余因子解との比較、shift、require_pd の意味論 (不定値行列は慣性法則で `require_pd=1` が必ず失敗)、ピボット無しゆえの失敗 (s00 = 0 の非特異行列)、スケール 1e-6 / 1 / 1e6、NaN / ±inf、構造的配置 (正方形・三角形・一直線)、球面拘束は既知の解 u* と乗数 ν* から b を作って復元 + Lagrange 条件 + 乱数単位ベクトルに負けないこと + hard case。`make test / strict / float / sanitize` に加え gcc-16 (`-Werror`) の double / float、clang float `-ffp-contract=off`、float の ASan+UBSan すべて通過。LDLᵀ の誤差は eps·κ·‖x‖ で解のノルムに比例するので、比較は成分ごとの相対ではなく `|Δx|/max|x|` で見ている (float の不定値行列で小さい成分が 1e-4 に見えた)。
+- `tests/host/loc`: 上記 6 構成でログ完全一致。
+- `firmware/tag` / `firmware/soltest`: `idf.py build` 成功、警告 0 (uwb_math.c / uwb_closed_form.c / uwb_nls.c の再コンパイルを確認)。
+
+### `uwb_survey` 側の差し替え (済、2026-08-21)
+
+`components/uwb_survey/src/uwb_survey.c` の static を下表のとおり `uwb_math`
+の関数に差し替えた。対応表:
+
+| survey 側 (static / inline コード) | uwb_math | 差し替え時の注意 |
+|---|---|---|
+| `solve_sphere(M, b, lam_min, u)` | `uwb_sym3_solve_sphere(M, b, lam_min, u, NULL)` | 線形部分が余因子 → LDLᵀ なので結果は丸めの範囲 (double 1e-15、float 1e-6 程度) で変わる。hard case で極に達したとき survey 版は 0 (呼び出し側は u = ẑ のまま)、uwb_math 版は直前の u を返す。`fit_up` の rank 3 分岐と rank 2 の `\|u_par\| ≥ 1` 分岐の 2 箇所 |
+| `sym3_null_vector(M, nvec)` | `uwb_sym3_null_vector(M, nvec)` | 行を max\|s\| で正規化する分、向きは丸めの範囲で同じ。選択規則・符号規約は同一 |
+| `fit_up` rank 1 分岐の「最大ノルム行 → `uwb_v3_normalize`」 | `uwb_sym3_principal_axis(M, e0)` | 符号が正準化されるが、続く `coef = e0·b/λ0` と ẑ の射影は符号に不変なので u は変わらない |
+| `fit_up` rank 2 分岐の `uwb_sym3_solve(Mr, b, upar)` | そのまま、または `uwb_sym3_ldl_factor/solve` (require_pd=1) | 任意。Mr = M + λ0 n nᵀ は正定値なので LDLᵀ の方が float で精度が出る |
+| (dim=2 の shift 付き solve が要る箇所が出たら) | `uwb_sym2_solve_shifted` / `uwb_sym2_inverse_shifted` / `uwb_sym2_mv` | 今は survey に該当箇所なし |
+
+差し替え後、`tests/host/survey` (561 件。A-2/A-4 実装で 365 → 561 に増えていた)
+は clang / gcc-16 / `-ffp-contract=off` / ASan+UBSan の double・float すべて通過。
+乱数 400 件（n=4..8、欠測リンク、距離ノイズ ≤5cm、δ、高さノイズ、外れ値なし）の
+新旧比較は `ok`/`degenerate`/`excluded`/`redundancy` が 400/400 一致、座標差の
+最大値は double 4.4e-15 m、float 1.9e-6 m（4000 件に広げても最大 2.9e-6 m、
+中央値 4.8e-7 m）で、`uwb_sym3_solve_sphere` の LDLᵀ 化による丸めレベルの差
+（想定どおり float ≈ 1e-6 m）に収まっている。`tests/host` 全体 (591418+10781+188+561件)
+と `firmware/tag` の `idf.py build`（警告 0）も通過。

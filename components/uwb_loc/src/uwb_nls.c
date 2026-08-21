@@ -94,7 +94,7 @@ static void normal_eq(int nf, int n, const uwb_real *jac, const uwb_real *w,
     }
 }
 
-/* 正規方程式の解と逆行列。LDLᵀ (uwb_internal.h)、特異判定は緩い方
+/* 正規方程式の解と逆行列。LDLᵀ (uwb_math の uwb_sym3_ldl_*)、特異判定は緩い方
  * (require_pd = 0: ピボットが 0 / NaN / inf のときだけ失敗)。
  *
  * 旧実装 (部分ピボット LU。ピボットが厳密に 0 のときだけ失敗) と同じ意味論を
@@ -109,8 +109,8 @@ static void normal_eq(int nf, int n, const uwb_real *jac, const uwb_real *w,
 static int sym_inverse_lenient(int nf, const uwb_real *h, uwb_real *inv)
 {
     int k, n = nf == 3 ? 6 : 3;
-    if (nf == 3) { if (!uwb_ldl3_inverse(h, (uwb_real)0, 0, inv)) return 0; }
-    else         { if (!uwb_ldl2_inverse(h, (uwb_real)0, 0, inv)) return 0; }
+    if (nf == 3) { if (!uwb_sym3_ldl_inverse(h, (uwb_real)0, 0, inv)) return 0; }
+    else         { if (!uwb_sym2_ldl_inverse(h, (uwb_real)0, 0, inv)) return 0; }
     for (k = 0; k < n; ++k)
         if (inv[k] != inv[k] || inv[k] - inv[k] != (uwb_real)0) return 0;   /* NaN / inf */
     return 1;
@@ -119,13 +119,13 @@ static int sym_inverse_lenient(int nf, const uwb_real *h, uwb_real *inv)
 static int sym_solve_lenient(int nf, const uwb_real *h, const uwb_real *b, uwb_real *x)
 {
     if (nf == 3) {
-        uwb_ldl3 f;
-        if (!uwb_ldl3_factor(h, (uwb_real)0, 0, &f)) return 0;
-        uwb_ldl3_solve(&f, b, x);
+        uwb_sym3_ldl f;
+        if (!uwb_sym3_ldl_factor(h, (uwb_real)0, 0, &f)) return 0;
+        uwb_sym3_ldl_solve(&f, b, x);
     } else {
-        uwb_ldl2 f;
-        if (!uwb_ldl2_factor(h, (uwb_real)0, 0, &f)) return 0;
-        uwb_ldl2_solve(&f, b, x);
+        uwb_sym2_ldl f;
+        if (!uwb_sym2_ldl_factor(h, (uwb_real)0, 0, &f)) return 0;
+        uwb_sym2_ldl_solve(&f, b, x);
     }
     return x[0] == x[0] && x[1] == x[1] && (nf == 2 || x[2] == x[2]);
 }

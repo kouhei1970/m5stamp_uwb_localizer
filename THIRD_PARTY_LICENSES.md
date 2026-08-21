@@ -112,3 +112,19 @@ MIT License, Copyright (c) 2026 Kouhei Ito
 
 再配布・改変を行う場合は、各ファイルの著作権が M5Stack Technology CO., LTD. に
 帰属することを別途確認してください。
+
+## 配布バイナリ（Release zip）について
+
+GitHub Release / Actions artifact で配布している各 zip（`probe-stamps3.zip` 等）には、
+`merged-firmware.bin` 等のバイナリに加えて次のライセンス文書を同梱しています。
+
+- `LICENSE` — 本リポジトリのライセンス本文（MIT）
+- `THIRD_PARTY_LICENSES.md` — 本ファイル
+- `LICENSES/LicenseRef-QORVO-2.txt` — Qorvo ドライバのライセンス全文
+
+これは上記 `LicenseRef-QORVO-2` の条件2（バイナリ再配布時は上記の著作権表示・
+条件・免責事項を配布物に含めること）を満たすためです。**条件3により、この
+バイナリは Qorvo 製 IC（本モジュール = M5Stamp UWB Module に搭載された
+QM33120W/DW3720、またはそれを内蔵するモジュール）と共に使う場合に限り
+利用が許可されており、他ベンダーのチップへ転用することはできません。**
+詳細は [`docs/PREBUILT_BINARIES.md`](docs/PREBUILT_BINARIES.md) を参照してください。

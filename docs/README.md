@@ -1,6 +1,6 @@
 # ドキュメント索引
 
-現役 21 本・約 8,200 行あります（他に、設計当時の調査・経緯を記録した
+現役 21 本・約 9,000 行あります（他に、設計当時の調査・経緯を記録した
 [archive](archive/) が 8 本）。**全部読む必要はありません。**
 下の「あなたはどれですか」から入ってください。
 
@@ -33,7 +33,7 @@ GETTING_STARTED.md  →  EXPERIMENT_PLAN.md  →  BRINGUP.md
 | # | 文書 | 何が分かるか |
 |---|---|---|
 | 1 | **[GETTING_STARTED.md](GETTING_STARTED.md)** | **ここから。** BOM から測位まで 11 章の完全手順（**1,200 行**） |
-| 2 | **[EXPERIMENT_PLAN.md](EXPERIMENT_PLAN.md)** | **何を・どの順で確かめ、どのフラグをいつ有効にするか。** 実機でしか潰せない前提10件つき |
+| 2 | **[EXPERIMENT_PLAN.md](EXPERIMENT_PLAN.md)** | **何を・どの順で確かめ、どのフラグをいつ有効にするか。** 実機でしか潰せない前提12件つき |
 | 3 | [PREBUILT_BINARIES.md](PREBUILT_BINARIES.md) | **ESP-IDF を入れずに**書き込んで試す |
 | 4 | [BRINGUP.md](BRINGUP.md) | 実験1（SPI 疎通で Device ID を読む）の受入基準と切り分け |
 | 5 | [SOLDER_PADS.md](SOLDER_PADS.md) | 半田パッドの寸法・**向きの確定**・アンテナ禁止領域 |
@@ -100,42 +100,42 @@ PLAN.md  →  各仕様書  →  archive/REIMPL_PLAN.md / archive/CRITICAL_REVIE
 | 文書 | 行 | 内容 |
 |---|---:|---|
 | [UWB_PRIMER.md](UWB_PRIMER.md) | 278 | UWB の原理。なぜ電波で cm が測れるのか |
-| [UWB_ALGORITHMS.md](UWB_ALGORITHMS.md) | 1715 | 測位アルゴリズムの導出（上流 uwb_localizer からの移植・改訂版） |
+| [UWB_ALGORITHMS.md](UWB_ALGORITHMS.md) | 1796 | 測位アルゴリズムの導出（上流 uwb_localizer からの移植・改訂版） |
 | [GLOSSARY.md](GLOSSARY.md) | 191 | 用語集。**§9 に「紛らわしい語」**（ToF の二義など） |
 | [UNITS.md](UNITS.md) | 157 | UUS / DTU / 実 µs。**遅延値を触る前に必読** |
 
 ### 実践
 | 文書 | 行 | 内容 |
 |---|---:|---|
-| [GETTING_STARTED.md](GETTING_STARTED.md) | 1209 | BOM から測位までの完全手順（11 章） |
-| [EXPERIMENT_PLAN.md](EXPERIMENT_PLAN.md) | 352 | 実機到着後の実験計画とフラグ有効化の順序 |
-| [PREBUILT_BINARIES.md](PREBUILT_BINARIES.md) | 155 | ビルド済みバイナリの入手と書き込み |
-| [BRINGUP.md](BRINGUP.md) | 189 | Phase 1（SPI 疎通）の受入確認 |
-| [SOLDER_PADS.md](SOLDER_PADS.md) | 515 | 半田パッドの仕様・配線・向きの確定 |
+| [GETTING_STARTED.md](GETTING_STARTED.md) | 1228 | BOM から測位までの完全手順（11 章） |
+| [EXPERIMENT_PLAN.md](EXPERIMENT_PLAN.md) | 359 | 実機到着後の実験計画とフラグ有効化の順序 |
+| [PREBUILT_BINARIES.md](PREBUILT_BINARIES.md) | 175 | ビルド済みバイナリの入手と書き込み。ライセンス条件込み |
+| [BRINGUP.md](BRINGUP.md) | 193 | Phase 1（SPI 疎通）の受入確認 |
+| [SOLDER_PADS.md](SOLDER_PADS.md) | 731 | 半田パッドの仕様・配線・向きの確定 |
 | [ANCHOR_PLACEMENT.md](ANCHOR_PLACEMENT.md) | 59 | アンカー配置ルール（実測にもとづく） |
 
 ### 設計・仕様
 | 文書 | 行 | 内容 |
 |---|---:|---|
-| [PLAN.md](PLAN.md) | 311 | 全体設計・フェーズ計画・**リポジトリの方針** |
-| [IRQ_POLICY.md](IRQ_POLICY.md) | 171 | IRQ の使用方針（確定版） |
+| [PLAN.md](PLAN.md) | 317 | 全体設計・フェーズ計画・**リポジトリの方針** |
+| [IRQ_POLICY.md](IRQ_POLICY.md) | 200 | IRQ の使用方針（確定版） |
 | [TIMING_PRESETS.md](TIMING_PRESETS.md) | 295 | 遅延プリセットの導出と版不一致検出 |
-| [SURVEY_SPEC.md](SURVEY_SPEC.md) | 307 | アンカー座標の自動測量の仕様 |
-| [STAMPFLY_INTEGRATION.md](STAMPFLY_INTEGRATION.md) | 1127 | StampFly 位置制御への統合検討 |
+| [SURVEY_SPEC.md](SURVEY_SPEC.md) | 432 | アンカー座標の自動測量の仕様（外れ値 leave-one-out・キラリティ入力を追記） |
+| [STAMPFLY_INTEGRATION.md](STAMPFLY_INTEGRATION.md) | 1128 | StampFly 位置制御への統合検討 |
 | [PLATFORM_TUNING.md](PLATFORM_TUNING.md) | 126 | ESP32-S3 の浮動小数点・コンパイル設定 |
-| [MATH_AUDIT_2026-08-21.md](MATH_AUDIT_2026-08-21.md) | 49 | 行列計算の残存箇所の監査とスカラー化の設計根拠。`components/uwb_math/` の仕様の元 |
+| [MATH_AUDIT_2026-08-21.md](MATH_AUDIT_2026-08-21.md) | 303 | 行列計算の残存箇所の監査とスカラー化の設計根拠。`components/uwb_math/` の仕様の元 |
 
 ### 経緯・分析
 | 文書 | 行 | 内容 |
 |---|---:|---|
-| [REVIEW_2026-08-21.md](REVIEW_2026-08-21.md) | 274 | 実機投入前の最終レビュー。Critical/High の指摘と対応状況、着手順 |
+| [REVIEW_2026-08-21.md](REVIEW_2026-08-21.md) | 282 | 実機投入前の最終レビュー。Critical 1・High 6、**全件対応済み**（実機確認のみ残る） |
 | [PERF_ANALYSIS.md](PERF_ANALYSIS.md) | 321 | 測位ソルバの性能分析と上流最適化の結果 |
-| [SOURCE_POLICY.md](SOURCE_POLICY.md) | 126 | **資料の格付けと、犯した誤りの記録** |
+| [SOURCE_POLICY.md](SOURCE_POLICY.md) | 136 | **資料の格付けと、犯した誤りの記録** |
 
 ### 引き継ぎ
 | 文書 | 行 | 内容 |
 |---|---:|---|
-| [HANDOFF.md](HANDOFF.md) | 241 | 次セッションへの申し送り |
+| [HANDOFF.md](HANDOFF.md) | 303 | 次セッションへの申し送り。現在地・確定事項・誤りと教訓・文書の地図・次の一手 |
 
 ---
 

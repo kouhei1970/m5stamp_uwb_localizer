@@ -173,6 +173,13 @@ jobs:
           cp "$b/bootloader/bootloader.bin"           "$out/bootloader/"
           cp "$b/partition_table/partition-table.bin" "$out/partition_table/"
           cp firmware/${{ matrix.app }}/ci.defaults "$out/kconfig-used.txt"
+          # ライセンス同梱: components/qm33120w_sdk/ の LicenseRef-QORVO-2 条件2
+          # （バイナリ再配布時は著作権表示を配布物に含める）を zip 単体で満たす
+          # ため、MIT 本体・サードパーティ一覧・Qorvo ライセンス全文を入れる。
+          cp LICENSE                 "$out/"
+          cp THIRD_PARTY_LICENSES.md "$out/"
+          mkdir -p "$out/LICENSES"
+          cp components/qm33120w_sdk/LICENSES/LicenseRef-QORVO-2.txt "$out/LICENSES/"
           {
             echo "# ${{ matrix.name }}"
             echo
@@ -205,6 +212,21 @@ jobs:
             echo
             echo '**ピン定義 (boards/*.h) は実機未検証の暫定値**です。配線がドキュメントと'
             echo '違う場合、このバイナリは動きません。docs/PREBUILT_BINARIES.md を読むこと。'
+            echo
+            echo '## ライセンス'
+            echo
+            echo '本リポジトリのコード（`components/uwb_port/` など）は MIT ライセンスです'
+            echo '（同梱の `LICENSE`）。このバイナリには Qorvo QM33120W/DW3720 用ドライバ'
+            echo '（`LicenseRef-QORVO-2`。全文は同梱の `LICENSES/LicenseRef-QORVO-2.txt`）と、'
+            echo 'M5Stack Technology CO LTD 由来の MIT ライセンスコード（`components/uwb_qm33120/`）'
+            echo 'が組み込まれています。'
+            echo
+            echo '**`LicenseRef-QORVO-2` 条件3により、このバイナリは Qorvo 製 IC'
+            echo '（本モジュール = M5Stamp UWB Module に搭載された QM33120W/DW3720）と'
+            echo '共に使う場合に限り利用が許可されています。他ベンダーのチップへ'
+            echo '転用することはできません。**'
+            echo
+            echo '詳細は同梱の `THIRD_PARTY_LICENSES.md` を参照してください。'
           } > "$out/README.md"
 
       - uses: actions/upload-artifact@v4
@@ -252,3 +274,11 @@ jobs:
             **⚠ ピン定義は実機未検証の暫定値です。** 配線が
             `docs/GETTING_STARTED.md` §3 と違う場合は動きません。
             詳細は `docs/PREBUILT_BINARIES.md`。
+
+            **ライセンス**: 本リポジトリのコードは MIT です。各 zip には Qorvo
+            QM33120W/DW3720 用ドライバ（`LicenseRef-QORVO-2`）が組み込まれており、
+            **Qorvo 製 IC（M5Stamp UWB Module 搭載の QM33120W/DW3720）と共に使う
+            場合に限り利用可能です。他ベンダーのチップへの転用はできません。**
+            各 zip に `LICENSE` / `THIRD_PARTY_LICENSES.md` /
+            `LICENSES/LicenseRef-QORVO-2.txt` を同梱しています。詳細は
+            `docs/PREBUILT_BINARIES.md` と `THIRD_PARTY_LICENSES.md`。

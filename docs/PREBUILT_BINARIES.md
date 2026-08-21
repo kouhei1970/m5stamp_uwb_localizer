@@ -17,6 +17,14 @@ GitHub Actions が全ファームをビルドし、**そのまま書き込める
 また、**このリポジトリのコードは実機で一度も動作確認していません。**
 ビルド済みバイナリは「ビルドが通ったもの」であって「動作確認済みのもの」ではありません。
 
+さらに、**利用条件（ライセンス）**: 本リポジトリのコードは MIT ですが、zip に
+組み込まれている Qorvo QM33120W/DW3720 用ドライバは `LicenseRef-QORVO-2` で、
+**Qorvo 製 IC（本モジュール = M5Stamp UWB Module に搭載された QM33120W/DW3720）
+と共に使う場合に限り利用可能**です。他ベンダーのチップへの転用はできません。
+このため各 zip には `LICENSE` / `THIRD_PARTY_LICENSES.md` /
+`LICENSES/LicenseRef-QORVO-2.txt` を同梱しています（詳細は
+[`../THIRD_PARTY_LICENSES.md`](../THIRD_PARTY_LICENSES.md)）。
+
 ---
 
 ## どれを取ればいいか
@@ -145,6 +153,18 @@ ESP-IDF を入れて自分でビルドしてください。
 
 各 artifact には `kconfig-used.txt`（そのバイナリに焼き込まれた設定）と
 `README.md`（書き込み手順）が同梱されます。**どの設定でビルドされたものか必ず確認できます。**
+
+zip の中身一覧:
+
+| ファイル / ディレクトリ | 内容 |
+|---|---|
+| `merged-firmware.bin` | 書き込み用の結合済みイメージ（オフセット `0x0`） |
+| `bootloader/bootloader.bin`, `partition_table/partition-table.bin`, `flasher_args.json` | 個別書き込み用（`esptool.py write_flash @flasher_args.json`） |
+| `kconfig-used.txt` | そのバイナリに焼き込まれた Kconfig 設定 |
+| `README.md` | 書き込み手順とライセンスの要約 |
+| `LICENSE` | 本リポジトリのライセンス本文（MIT） |
+| `THIRD_PARTY_LICENSES.md` | サードパーティ ライセンスの一覧 |
+| `LICENSES/LicenseRef-QORVO-2.txt` | Qorvo ドライバのライセンス全文（**Qorvo 製 IC 限定**、上記参照） |
 
 ---
 

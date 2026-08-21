@@ -1,8 +1,9 @@
 /* 閉形式ソルバ — 反復も初期値も要らない解。
  * Python 版 uwb_loc/solvers/closed_form.py に対応する。
  *
- * 行列は dim×dim (2x2 / 3x3) の対称パック形式で持ち、uwb_math の余因子解
- * (除算 1 回) と閉形式固有値で処理する。一般 LU / コレスキー / Jacobi は無い。 */
+ * 行列は dim×dim (2x2 / 3x3) の対称パック形式で持ち、uwb_math の LDLᵀ
+ * (uwb_sym3_ldl_*、除算 3 回) と閉形式固有値で処理する。一般 LU / コレスキー /
+ * Jacobi は無い。 */
 #include "uwb_internal.h"
 
 /* ------------------------------------------------- 2x2 / 3x3 の薄いラッパ */
@@ -28,13 +29,13 @@ static uwb_real sc_trace(int d, const uwb_real *s)
 static int sc_solve_pd(int d, const uwb_real *s, const uwb_real *b, uwb_real *x)
 {
     if (d == 3) {
-        uwb_ldl3 f;
-        if (!uwb_ldl3_factor(s, (uwb_real)0, 1, &f)) return 0;
-        uwb_ldl3_solve(&f, b, x);
+        uwb_sym3_ldl f;
+        if (!uwb_sym3_ldl_factor(s, (uwb_real)0, 1, &f)) return 0;
+        uwb_sym3_ldl_solve(&f, b, x);
     } else {
-        uwb_ldl2 f;
-        if (!uwb_ldl2_factor(s, (uwb_real)0, 1, &f)) return 0;
-        uwb_ldl2_solve(&f, b, x);
+        uwb_sym2_ldl f;
+        if (!uwb_sym2_ldl_factor(s, (uwb_real)0, 1, &f)) return 0;
+        uwb_sym2_ldl_solve(&f, b, x);
     }
     return x[0] == x[0] && x[1] == x[1] && (d == 2 || x[2] == x[2]);
 }
@@ -228,15 +229,15 @@ static int beck_eval(const beck_ctx *c, uwb_real lam, uwb_real *phi, uwb_real *d
 
     if (!(smin_l > (uwb_real)4 * UWB_MATH_EPS * c->sig[0])) return 0;
     if (c->d == 3) {
-        uwb_ldl3 f;
-        if (!uwb_ldl3_factor(c->sc, lam, 1, &f)) return 0;
-        uwb_ldl3_solve(&f, c->r0, q);        /* q = (Sc + λI)⁻¹ r0 */
-        uwb_ldl3_solve(&f, q, t);            /* t = (Sc + λI)⁻¹ q */
+        uwb_sym3_ldl f;
+        if (!uwb_sym3_ldl_factor(c->sc, lam, 1, &f)) return 0;
+        uwb_sym3_ldl_solve(&f, c->r0, q);        /* q = (Sc + λI)⁻¹ r0 */
+        uwb_sym3_ldl_solve(&f, q, t);            /* t = (Sc + λI)⁻¹ q */
     } else {
-        uwb_ldl2 f;
-        if (!uwb_ldl2_factor(c->sc, lam, 1, &f)) return 0;
-        uwb_ldl2_solve(&f, c->r0, q);
-        uwb_ldl2_solve(&f, q, t);
+        uwb_sym2_ldl f;
+        if (!uwb_sym2_ldl_factor(c->sc, lam, 1, &f)) return 0;
+        uwb_sym2_ldl_solve(&f, c->r0, q);
+        uwb_sym2_ldl_solve(&f, q, t);
     }
     n2 = dotd(c->d, q, q);
     alpha = c->bbar + lam * c->inv_2w;

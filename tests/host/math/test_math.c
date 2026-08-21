@@ -1917,6 +1917,718 @@ static void test_bchol_failure_modes(void)
     CHECK(uwb_bchol_zero(&m, -1, 0) == 0, "bchol_zero fails for nb<0");
 }
 
+/* ======================================================= LDLᵀ (sym3 / sym2) */
+/* uwb_loc の uwb_internal.h から移した LDLᵀ。参照 LU / 余因子解との一致、
+ * shift、require_pd の意味論 (正定値でない行列を弾く / 厳密に特異なときだけ
+ * 弾く)、ピボット無しゆえの失敗 (s00 = 0 の非特異行列) を見る。 */
+
+/* 符号を指定した良条件の対称行列: λ = scale·(1, ±(0.3..0.9), ±(0.3..0.9))。 */
+static void gen_sym3_signed(uwb_real *s, double scale, int neg1, int neg2, uwb_real *lam_out)
+{
+    uwb_real q[9], lam[3];
+    lam[0] = R(scale);
+    lam[1] = R((neg1 ? -1.0 : 1.0) * (0.3 + 0.6 * urand()) * scale);
+    lam[2] = R((neg2 ? -1.0 : 1.0) * (0.3 + 0.6 * urand()) * scale);
+    gram_schmidt3(q);
+    sym3_from_eig(q, lam, s);
+    if (lam_out) { lam_out[0] = lam[0]; lam_out[1] = lam[1]; lam_out[2] = lam[2]; }
+}
+
+static int v3_all_finite(const uwb_real *x)
+{
+    return x[0] - x[0] == R(0) && x[1] - x[1] == R(0) && x[2] - x[2] == R(0);
+}
+
+/* (S + shift·I) を LDLᵀ で factor / solve / inverse し、参照 LU と余因子解に
+ * 比べる。expect_ok は factor の期待値。 */
+static void run_sym3_ldl_case(const uwb_real *s, uwb_real shift, int require_pd, int expect_ok)
+{
+    uwb_real t[6], full[9], full_copy[9], b[3], x[3], bx[3], xref[3];
+    uwb_real inv[6], invfull[9], ref_inv[9];
+    uwb_sym3_ldl f;
+    int ok, okref, k;
+
+    for (k = 0; k < 6; ++k) t[k] = s[k];
+    t[0] += shift; t[3] += shift; t[5] += shift;
+    uwb_sym3_to_full(t, full);
+    b[0] = R(urand() * 2.0 - 1.0); b[1] = R(urand() * 2.0 - 1.0); b[2] = R(urand() * 2.0 - 1.0);
+
+    ok = uwb_sym3_ldl_factor(s, shift, require_pd, &f);
+    CHECK(ok == expect_ok, "sym3_ldl_factor succeeds/fails as expected");
+    if (!ok) return;
+
+    uwb_sym3_ldl_solve(&f, b, x);
+    memcpy(full_copy, full, sizeof full);
+    okref = ref_lu_solve(full_copy, b, xref, 3);
+    CHECK(okref == 1, "ref LU solves what sym3_ldl solved");
+    /* 誤差は eps·κ·‖x‖ 程度で解の**ノルム**に比例するので、成分ごとの相対
+     * (max_rel_diff) ではなく vec_err_over_norm で見る (小さい成分が不当に
+     * 厳しくならないように。不定値行列の float ではこの差が出る)。 */
+    if (okref) {
+        double e = vec_err_over_norm(x, xref, 3);
+        stat_note("sym3_ldl_solve vs ref LU (|dx|/max|x|)", e);
+        CHECK(e <= TOL_SOLVE, "sym3_ldl_solve matches ref LU");
+    }
+
+    /* b と x が同じ配列でも同じ結果 (ビット一致) */
+    bx[0] = b[0]; bx[1] = b[1]; bx[2] = b[2];
+    uwb_sym3_ldl_solve(&f, bx, bx);
+    CHECK(memcmp(bx, x, sizeof bx) == 0, "sym3_ldl_solve works in place");
+
+    /* 余因子解とも一致 (どちらも正しければ) */
+    if (uwb_sym3_solve_shifted(s, shift, b, xref))
+        CHECK(vec_err_over_norm(x, xref, 3) <= TOL_SOLVE, "sym3_ldl_solve matches cofactor solve_shifted");
+
+    ok = uwb_sym3_ldl_inverse(s, shift, require_pd, inv);
+    CHECK(ok == 1, "sym3_ldl_inverse succeeds when factor did");
+    memcpy(full_copy, full, sizeof full);
+    okref = ref_inverse(full_copy, ref_inv, 3);
+    if (ok && okref) {
+        uwb_sym3_to_full(inv, invfull);
+        CHECK(vec_err_over_norm(invfull, ref_inv, 9) <= TOL_SOLVE, "sym3_ldl_inverse matches ref inverse");
+    }
+    /* inv と s が同じ配列でもよい */
+    if (ok) {
+        uwb_real same[6];
+        for (k = 0; k < 6; ++k) same[k] = s[k];
+        CHECK(uwb_sym3_ldl_inverse(same, shift, require_pd, same) == 1 &&
+              memcmp(same, inv, sizeof same) == 0, "sym3_ldl_inverse works in place");
+    }
+}
+
+static void test_sym3_ldl(void)
+{
+    static const double scales[3] = { 1e-6, 1.0, 1e6 };
+    uwb_real s[6], lam[3];
+    int si, t;
+
+    for (si = 0; si < 3; ++si) {
+        double sc = scales[si];
+        /* SPD: require_pd どちらでも通る。shift = 0 と正の shift */
+        for (t = 0; t < 20; ++t) {
+            gen_spd3_wellposed(s, sc);
+            run_sym3_ldl_case(s, R(0), 1, 1);
+            run_sym3_ldl_case(s, R(0), 0, 1);
+            run_sym3_ldl_case(s, R(urand() * sc * sc), 1, 1);
+        }
+        /* 不定値 (固有値に負がある): require_pd = 1 は必ず失敗 (Sylvester の
+         * 慣性法則で D にも負が出る)、require_pd = 0 は通って参照 LU と一致 */
+        for (t = 0; t < 20; ++t) {
+            gen_sym3_signed(s, sc, 1, 0, lam);
+            run_sym3_ldl_case(s, R(0), 1, 0);
+            run_sym3_ldl_case(s, R(0), 0, 1);
+            gen_sym3_signed(s, sc, 1, 1, lam);
+            run_sym3_ldl_case(s, R(0), 1, 0);
+            run_sym3_ldl_case(s, R(0), 0, 1);
+            /* shift で正定値にすれば require_pd = 1 も通る */
+            run_sym3_ldl_case(s, R(1.5 * sc), 1, 1);
+        }
+    }
+
+    /* 条件数を制御した SPD: 誤差は eps·κ 程度に収まる (余因子解より良い) */
+    {
+#if UWB_REAL_IS_FLOAT
+        double kappa = 1e4;
+#else
+        double kappa = 1e8;
+#endif
+        int i;
+        for (i = 0; i < 20; ++i) {
+            uwb_real q[9], b[3], x[3], r[3], full[9];
+            uwb_sym3_ldl f;
+            double resid, bn;
+            int ok;
+            gram_schmidt3(q);
+            lam[0] = R(kappa); lam[1] = R(1.0 + urand() * (kappa - 1.0)); lam[2] = R(1);
+            sym3_from_eig(q, lam, s);
+            b[0] = R(urand() * 2.0 - 1.0); b[1] = R(urand() * 2.0 - 1.0); b[2] = R(urand() * 2.0 - 1.0);
+            ok = uwb_sym3_ldl_factor(s, R(0), 1, &f);
+            CHECK(ok == 1, "sym3_ldl_factor succeeds at large condition number");
+            if (!ok) continue;                 /* 失敗時に f を使わない (gcc の警告どおり) */
+            uwb_sym3_ldl_solve(&f, b, x);
+            /* 後退安定性: 残差 ‖Sx − b‖ は eps·‖S‖·‖x‖ 程度 (解の誤差 eps·κ とは別) */
+            uwb_sym3_to_full(s, full);
+            uwb_sym3_mv(s, x, r);
+            resid = sqrt(pow((double)r[0] - (double)b[0], 2) + pow((double)r[1] - (double)b[1], 2) +
+                         pow((double)r[2] - (double)b[2], 2));
+            bn = kappa * sqrt((double)uwb_v3_norm2(x));
+            stat_note("sym3_ldl residual / (kappa*|x|)", resid / bn);
+            CHECK(resid <= TOL_LOOSE * bn, "sym3_ldl_solve is backward stable at large condition number");
+        }
+    }
+
+    /* 決定的な失敗 */
+    {
+        uwb_real b[3] = { R(1), R(2), R(3) }, x[3] = { R(7), R(7), R(7) }, inv[6];
+        uwb_real zero_val = R(0), nan_val, inf_val;
+        uwb_sym3_ldl f;
+        int ok;
+        nan_val = zero_val / zero_val;
+        inf_val = R(1) / zero_val;
+
+        /* 零行列 */
+        uwb_sym3_zero(s);
+        CHECK(uwb_sym3_ldl_factor(s, R(0), 1, &f) == 0, "sym3_ldl_factor(pd) fails on zero matrix");
+        CHECK(uwb_sym3_ldl_factor(s, R(0), 0, &f) == 0, "sym3_ldl_factor(lenient) fails on zero matrix");
+        CHECK(uwb_sym3_ldl_inverse(s, R(0), 0, inv) == 0, "sym3_ldl_inverse fails on zero matrix");
+
+        /* rank 2 で最後のピボットが厳密に 0 (diag(4,4,0)) */
+        cfg_square(s);
+        CHECK(uwb_sym3_ldl_factor(s, R(0), 1, &f) == 0, "sym3_ldl_factor(pd) fails on diag(4,4,0)");
+        CHECK(uwb_sym3_ldl_factor(s, R(0), 0, &f) == 0, "sym3_ldl_factor(lenient) fails on diag(4,4,0)");
+        /* shift で正定値にすれば通る */
+        ok = uwb_sym3_ldl_factor(s, R(1), 1, &f);
+        CHECK(ok == 1, "sym3_ldl_factor(pd) succeeds on diag(4,4,0)+I");
+        if (ok) {
+            uwb_sym3_ldl_solve(&f, b, x);
+            CHECK(near((double)x[0], 0.2, TOL_EXACT) && near((double)x[1], 0.4, TOL_EXACT) &&
+                  near((double)x[2], 3.0, TOL_EXACT), "sym3_ldl_solve on diag(5,5,1)");
+        }
+
+        /* 非特異だが s00 = 0: ピボット無しなので失敗する (仕様) */
+        uwb_sym3_zero(s);
+        s[1] = R(1); s[5] = R(1);                    /* [[0,1,0],[1,0,0],[0,0,1]], det = −1 */
+        CHECK(uwb_sym3_ldl_factor(s, R(0), 0, &f) == 0, "sym3_ldl_factor(lenient) fails on zero leading pivot");
+        CHECK(uwb_sym3_ldl_factor(s, R(0), 1, &f) == 0, "sym3_ldl_factor(pd) fails on zero leading pivot");
+
+        /* NaN */
+        gen_spd3_rank(3, s, 1.0);
+        s[3] = nan_val;
+        CHECK(uwb_sym3_ldl_factor(s, R(0), 1, &f) == 0, "sym3_ldl_factor(pd) fails on NaN");
+        CHECK(uwb_sym3_ldl_factor(s, R(0), 0, &f) == 0, "sym3_ldl_factor(lenient) fails on NaN");
+
+        /* ±inf のピボットは lenient が弾く */
+        gen_spd3_rank(3, s, 1.0);
+        s[0] = inf_val;
+        CHECK(uwb_sym3_ldl_factor(s, R(0), 0, &f) == 0, "sym3_ldl_factor(lenient) fails on inf pivot");
+        s[0] = -inf_val;
+        CHECK(uwb_sym3_ldl_factor(s, R(0), 0, &f) == 0, "sym3_ldl_factor(lenient) fails on -inf pivot");
+        CHECK(uwb_sym3_ldl_factor(s, R(0), 1, &f) == 0, "sym3_ldl_factor(pd) fails on -inf pivot");
+    }
+}
+
+static void run_sym2_ldl_case(const uwb_real *s, uwb_real shift, int require_pd, int expect_ok)
+{
+    uwb_real full[4], full_copy[4], b[2], x[2], bx[2], xref[2], inv[3], invfull[4], ref_inv[4];
+    uwb_sym2_ldl f;
+    int ok, okref;
+
+    full[0] = s[0] + shift; full[1] = s[1]; full[2] = s[1]; full[3] = s[2] + shift;
+    b[0] = R(urand() * 2.0 - 1.0); b[1] = R(urand() * 2.0 - 1.0);
+
+    ok = uwb_sym2_ldl_factor(s, shift, require_pd, &f);
+    CHECK(ok == expect_ok, "sym2_ldl_factor succeeds/fails as expected");
+    if (!ok) return;
+
+    uwb_sym2_ldl_solve(&f, b, x);
+    memcpy(full_copy, full, sizeof full);
+    okref = ref_lu_solve(full_copy, b, xref, 2);
+    CHECK(okref == 1, "ref LU solves what sym2_ldl solved");
+    if (okref) {
+        double e = vec_err_over_norm(x, xref, 2);
+        stat_note("sym2_ldl_solve vs ref LU (|dx|/max|x|)", e);
+        CHECK(e <= TOL_SOLVE, "sym2_ldl_solve matches ref LU");
+    }
+    bx[0] = b[0]; bx[1] = b[1];
+    uwb_sym2_ldl_solve(&f, bx, bx);
+    CHECK(memcmp(bx, x, sizeof bx) == 0, "sym2_ldl_solve works in place");
+
+    if (uwb_sym2_solve_shifted(s, shift, b, xref))
+        CHECK(vec_err_over_norm(x, xref, 2) <= TOL_SOLVE, "sym2_ldl_solve matches cofactor solve_shifted");
+
+    ok = uwb_sym2_ldl_inverse(s, shift, require_pd, inv);
+    CHECK(ok == 1, "sym2_ldl_inverse succeeds when factor did");
+    memcpy(full_copy, full, sizeof full);
+    okref = ref_inverse(full_copy, ref_inv, 2);
+    if (ok && okref) {
+        invfull[0] = inv[0]; invfull[1] = inv[1]; invfull[2] = inv[1]; invfull[3] = inv[2];
+        CHECK(vec_err_over_norm(invfull, ref_inv, 4) <= TOL_SOLVE, "sym2_ldl_inverse matches ref inverse");
+    }
+}
+
+static void test_sym2_ldl(void)
+{
+    static const double scales[3] = { 1e-6, 1.0, 1e6 };
+    uwb_real s[3];
+    int si, t;
+
+    for (si = 0; si < 3; ++si) {
+        double sc = scales[si];
+        for (t = 0; t < 20; ++t) {
+            /* SPD (対角優位) */
+            s[1] = R((urand() * 2.0 - 1.0) * sc);
+            s[0] = R((double)uwb_math_abs(s[1]) + (0.5 + urand()) * sc);
+            s[2] = R((double)uwb_math_abs(s[1]) + (0.5 + urand()) * sc);
+            run_sym2_ldl_case(s, R(0), 1, 1);
+            run_sym2_ldl_case(s, R(0), 0, 1);
+            run_sym2_ldl_case(s, R(urand() * sc), 1, 1);
+            /* 不定値: det < 0 になるように非対角を大きく */
+            s[0] = R((0.5 + urand()) * sc);
+            s[2] = R((0.5 + urand()) * sc);
+            s[1] = R(2.0 * sc);
+            run_sym2_ldl_case(s, R(0), 1, 0);
+            run_sym2_ldl_case(s, R(0), 0, 1);
+            run_sym2_ldl_case(s, R(3.0 * sc), 1, 1);      /* shift で正定値に */
+        }
+    }
+
+    {
+        uwb_real b[2] = { R(1), R(2) }, x[2], inv[3];
+        uwb_real zero_val = R(0), nan_val = zero_val / zero_val;
+        uwb_sym2_ldl f;
+        int ok;
+
+        s[0] = R(0); s[1] = R(0); s[2] = R(0);
+        CHECK(uwb_sym2_ldl_factor(s, R(0), 0, &f) == 0, "sym2_ldl_factor fails on zero matrix");
+        CHECK(uwb_sym2_ldl_inverse(s, R(0), 0, inv) == 0, "sym2_ldl_inverse fails on zero matrix");
+
+        s[0] = R(1); s[1] = R(1); s[2] = R(1);              /* rank 1: d1 = 1 − 1 = 0 */
+        CHECK(uwb_sym2_ldl_factor(s, R(0), 0, &f) == 0, "sym2_ldl_factor(lenient) fails on rank-1");
+        CHECK(uwb_sym2_ldl_factor(s, R(0), 1, &f) == 0, "sym2_ldl_factor(pd) fails on rank-1");
+        ok = uwb_sym2_ldl_factor(s, R(1), 1, &f);
+        CHECK(ok == 1, "sym2_ldl_factor(pd) succeeds on rank-1 + I");
+        if (ok) {
+            uwb_sym2_ldl_solve(&f, b, x);                    /* [[2,1],[1,2]] x = (1,2) → (0,1) */
+            CHECK(near((double)x[0], 0.0, TOL_EXACT) && near((double)x[1], 1.0, TOL_EXACT), "sym2_ldl_solve on [[2,1],[1,2]]");
+        }
+
+        s[0] = R(0); s[1] = R(1); s[2] = R(0);              /* 非特異だが s00 = 0 */
+        CHECK(uwb_sym2_ldl_factor(s, R(0), 0, &f) == 0, "sym2_ldl_factor fails on zero leading pivot");
+
+        s[0] = nan_val; s[1] = R(0); s[2] = R(1);
+        CHECK(uwb_sym2_ldl_factor(s, R(0), 0, &f) == 0, "sym2_ldl_factor fails on NaN");
+    }
+}
+
+/* ============================================ solve_tol / adjugate / sym2 extras */
+
+static void test_sym3_solve_tol(void)
+{
+    static const double scales[3] = { 1e-6, 1.0, 1e6 };
+    uwb_real s[6], b[3], x[3], x2[3];
+    int si, t;
+
+    for (si = 0; si < 3; ++si) {
+        for (t = 0; t < 20; ++t) {
+            int ok1, ok2;
+            if (t & 1) gen_spd3_wellposed(s, scales[si]); else gen_sym3_mixed_wellposed(s, scales[si]);
+            b[0] = R(urand() * 2.0 - 1.0); b[1] = R(urand() * 2.0 - 1.0); b[2] = R(urand() * 2.0 - 1.0);
+            /* rel_tol = UWB_MATH_SING_TOL は uwb_sym3_solve と同じ式 → ビット一致 */
+            ok1 = uwb_sym3_solve(s, b, x);
+            ok2 = uwb_sym3_solve_tol(s, b, x2, UWB_MATH_SING_TOL);
+            CHECK(ok1 == 1 && ok2 == 1, "sym3_solve and solve_tol(SING_TOL) both succeed on well-posed");
+            if (ok1 && ok2) CHECK(memcmp(x, x2, sizeof x) == 0, "sym3_solve_tol(SING_TOL) reproduces sym3_solve bitwise");
+            /* rel_tol = 0 も同じ解 */
+            ok2 = uwb_sym3_solve_tol(s, b, x2, R(0));
+            CHECK(ok2 == 1 && memcmp(x, x2, sizeof x) == 0, "sym3_solve_tol(0) reproduces sym3_solve on well-posed");
+            /* in place */
+            x2[0] = b[0]; x2[1] = b[1]; x2[2] = b[2];
+            CHECK(uwb_sym3_solve_tol(s, x2, x2, R(0)) == 1 && memcmp(x, x2, sizeof x) == 0,
+                  "sym3_solve_tol works in place");
+        }
+    }
+
+    /* 厳密に特異 (det = 0 ちょうど) は rel_tol = 0 でも失敗 */
+    b[0] = R(1); b[1] = R(2); b[2] = R(3);
+    cfg_square(s);
+    CHECK(uwb_sym3_solve_tol(s, b, x, R(0)) == 0, "sym3_solve_tol(0) fails on diag(4,4,0)");
+    cfg_colinear(s);
+    CHECK(uwb_sym3_solve_tol(s, b, x, R(0)) == 0, "sym3_solve_tol(0) fails on diag(2,0,0)");
+    uwb_sym3_zero(s);
+    CHECK(uwb_sym3_solve_tol(s, b, x, R(0)) == 0, "sym3_solve_tol(0) fails on zero matrix");
+
+    /* ほぼ特異 (rank 2 の丸め): rel_tol = 0 は通ることがあるが、通ったなら有限 */
+    for (t = 0; t < 20; ++t) {
+        gen_spd3_rank(2, s, 1.0);
+        x[0] = x[1] = x[2] = R(7);
+        if (uwb_sym3_solve_tol(s, b, x, R(0))) CHECK(v3_all_finite(x), "sym3_solve_tol(0) never returns inf/NaN with ok=1");
+        else CHECK(x[0] == R(7) && x[1] == R(7) && x[2] == R(7), "sym3_solve_tol leaves x untouched on failure");
+        /* 既定のしきい値では失敗する (uwb_sym3_solve と同じ) */
+        CHECK(uwb_sym3_solve_tol(s, b, x, UWB_MATH_SING_TOL) == 0, "sym3_solve_tol(SING_TOL) fails on rank-2 SPD");
+    }
+
+    /* NaN / inf */
+    {
+        uwb_real zero_val = R(0), nan_val = zero_val / zero_val, inf_val = R(1) / zero_val;
+        gen_spd3_rank(3, s, 1.0);
+        s[4] = nan_val;
+        CHECK(uwb_sym3_solve_tol(s, b, x, R(0)) == 0, "sym3_solve_tol(0) fails on NaN");
+        gen_spd3_rank(3, s, 1.0);
+        s[0] = inf_val;
+        CHECK(uwb_sym3_solve_tol(s, b, x, R(0)) == 0, "sym3_solve_tol(0) fails on inf");
+    }
+
+    /* sym2 版 */
+    for (t = 0; t < 30; ++t) {
+        uwb_real s2[3], b2[2], y[2], y2[2];
+        int ok1, ok2;
+        s2[1] = R(urand() * 2.0 - 1.0);
+        s2[0] = R((double)uwb_math_abs(s2[1]) + 0.5 + urand());
+        s2[2] = R((double)uwb_math_abs(s2[1]) + 0.5 + urand());
+        if (t % 3 == 0) s2[0] = -s2[0];                     /* 不定値も混ぜる */
+        b2[0] = R(urand() * 2.0 - 1.0); b2[1] = R(urand() * 2.0 - 1.0);
+        ok1 = uwb_sym2_solve(s2, b2, y);
+        ok2 = uwb_sym2_solve_tol(s2, b2, y2, UWB_MATH_SING_TOL);
+        CHECK(ok1 == 1 && ok2 == 1 && memcmp(y, y2, sizeof y) == 0, "sym2_solve_tol(SING_TOL) reproduces sym2_solve bitwise");
+        ok2 = uwb_sym2_solve_tol(s2, b2, y2, R(0));
+        CHECK(ok2 == 1 && memcmp(y, y2, sizeof y) == 0, "sym2_solve_tol(0) reproduces sym2_solve on well-posed");
+    }
+    {
+        uwb_real s2[3] = { R(1), R(1), R(1) }, b2[2] = { R(1), R(2) }, y[2];
+        CHECK(uwb_sym2_solve_tol(s2, b2, y, R(0)) == 0, "sym2_solve_tol(0) fails on rank-1 (det = 0)");
+        s2[0] = R(0); s2[1] = R(0); s2[2] = R(0);
+        CHECK(uwb_sym2_solve_tol(s2, b2, y, R(0)) == 0, "sym2_solve_tol(0) fails on zero matrix");
+    }
+}
+
+/* max|s_ij| (床なし)。adj·S = det·I の誤差を max|s|³ で相対化するのに使う。 */
+static double sym3_maxabs_nofloor(const uwb_real *s)
+{
+    double worst = 0.0, v;
+    int i;
+    for (i = 0; i < 6; ++i) { v = fabs((double)s[i]); if (v > worst) worst = v; }
+    return worst;
+}
+
+static void test_sym3_adjugate(void)
+{
+    static const double scales[3] = { 1e-6, 1.0, 1e6 };
+    uwb_real s[6], adj[6], full[9], adjfull[9], prod[9], inv[6], det;
+    int si, t, i, j;
+
+    for (si = 0; si < 3; ++si) {
+        for (t = 0; t < 20; ++t) {
+            double m, m3, err;
+            gen_sym3_mixed_wellposed(s, scales[si]);
+            det = uwb_sym3_adjugate(s, adj);
+            CHECK(det == uwb_sym3_det(s), "sym3_adjugate returns the same det as sym3_det");
+
+            /* adj·S = det·I (max|s|³ で相対化) */
+            uwb_sym3_to_full(s, full);
+            uwb_sym3_to_full(adj, adjfull);
+            mat3_mul(adjfull, full, prod);
+            m = sym3_maxabs_nofloor(s);
+            m3 = m * m * m;
+            err = 0.0;
+            for (i = 0; i < 3; ++i)
+                for (j = 0; j < 3; ++j) {
+                    double want = (i == j) ? (double)det : 0.0;
+                    double e = fabs((double)prod[3 * i + j] - want) / m3;
+                    if (e > err) err = e;
+                }
+            stat_note("sym3_adjugate: |adj S - det I| / max|s|^3", err);
+            CHECK(err <= TOL_EXACT, "sym3_adjugate satisfies adj S = det I");
+
+            /* adj/det = S⁻¹ */
+            if (uwb_sym3_inverse(s, inv)) {
+                uwb_real q[6];
+                uwb_real f = R(1) / det;
+                for (i = 0; i < 6; ++i) q[i] = adj[i] * f;
+                CHECK(max_rel_diff(q, inv, 6) <= TOL_EXACT, "sym3_adjugate / det equals sym3_inverse");
+            }
+        }
+    }
+
+    /* rank 2: adj = (λ0 λ1) n nᵀ (n はヌルベクトル)、det = 0 */
+    cfg_triangle(s);                                 /* diag(1.5, 1.5, 0) */
+    det = uwb_sym3_adjugate(s, adj);
+    CHECK(near((double)det, 0.0, TOL_EXACT), "sym3_adjugate det of rank-2 is 0");
+    CHECK(near((double)adj[5], 2.25, TOL_EXACT) && near((double)adj[0], 0.0, TOL_EXACT) &&
+          near((double)adj[3], 0.0, TOL_EXACT) && near((double)adj[1], 0.0, TOL_EXACT),
+          "sym3_adjugate of triangle covariance is 2.25 e_z e_z^T");
+    for (t = 0; t < 20; ++t) {
+        uwb_real q[9], lam[3], n[3], ntn[6];
+        double l01, err;
+        gram_schmidt3(q);
+        lam[0] = R(1.0 + urand()); lam[1] = R(0.2 + 0.6 * urand()); lam[2] = R(0);
+        sym3_from_eig(q, lam, s);
+        det = uwb_sym3_adjugate(s, adj);
+        mat3_col(q, 2, n);
+        uwb_sym3_zero(ntn);
+        uwb_sym3_add_outer(ntn, n);
+        l01 = (double)lam[0] * (double)lam[1];
+        err = 0.0;
+        for (i = 0; i < 6; ++i) {
+            double e = fabs((double)adj[i] - l01 * (double)ntn[i]) / l01;
+            if (e > err) err = e;
+        }
+        CHECK(err <= TOL_EIG, "sym3_adjugate of rank-2 is (lam0 lam1) n n^T");
+        CHECK(fabs((double)det) <= TOL_EXACT * (double)lam[0] * (double)lam[0] * (double)lam[0],
+              "sym3_adjugate det of rank-2 is ~0");
+    }
+}
+
+static void test_sym2_extras(void)
+{
+    int t;
+    for (t = 0; t < 30; ++t) {
+        uwb_real s[3], x[2], y[2], b[2], xs[2], xref[2], inv[3], ref_inv[4], invfull[4];
+        uwb_real full[4], full_copy[4], shift;
+        int ok, okref;
+
+        s[0] = R(urand() * 4.0 - 2.0); s[1] = R(urand() * 4.0 - 2.0); s[2] = R(urand() * 4.0 - 2.0);
+        x[0] = R(urand() * 2.0 - 1.0); x[1] = R(urand() * 2.0 - 1.0);
+        b[0] = R(urand() * 2.0 - 1.0); b[1] = R(urand() * 2.0 - 1.0);
+        shift = R(urand() * 4.0 - 2.0);
+
+        /* mv */
+        uwb_sym2_mv(s, x, y);
+        CHECK(near((double)y[0], (double)s[0] * (double)x[0] + (double)s[1] * (double)x[1], TOL_EXACT) &&
+              near((double)y[1], (double)s[1] * (double)x[0] + (double)s[2] * (double)x[1], TOL_EXACT),
+              "sym2_mv");
+
+        /* shift = 0 は solve / inverse とビット一致 */
+        ok = uwb_sym2_solve(s, b, xref);
+        CHECK(uwb_sym2_solve_shifted(s, R(0), b, xs) == ok && (!ok || memcmp(xs, xref, sizeof xs) == 0),
+              "sym2_solve_shifted(0) reproduces sym2_solve");
+        ok = uwb_sym2_inverse(s, ref_inv);                  /* ref_inv をパックの一時置き場に流用 */
+        CHECK(uwb_sym2_inverse_shifted(s, R(0), inv) == ok && (!ok || memcmp(inv, ref_inv, 3 * sizeof inv[0]) == 0),
+              "sym2_inverse_shifted(0) reproduces sym2_inverse");
+
+        /* shift 付きを参照 LU と比較 */
+        full[0] = s[0] + shift; full[1] = s[1]; full[2] = s[1]; full[3] = s[2] + shift;
+        memcpy(full_copy, full, sizeof full);
+        ok = uwb_sym2_solve_shifted(s, shift, b, xs);
+        okref = ref_lu_solve(full_copy, b, xref, 2);
+        CHECK(ok == okref, "sym2_solve_shifted success matches ref LU");
+        if (ok && okref) CHECK(max_rel_diff(xs, xref, 2) <= TOL_SOLVE, "sym2_solve_shifted matches ref LU");
+
+        memcpy(full_copy, full, sizeof full);
+        ok = uwb_sym2_inverse_shifted(s, shift, inv);
+        okref = ref_inverse(full_copy, ref_inv, 2);
+        CHECK(ok == okref, "sym2_inverse_shifted success matches ref LU");
+        if (ok && okref) {
+            invfull[0] = inv[0]; invfull[1] = inv[1]; invfull[2] = inv[1]; invfull[3] = inv[2];
+            CHECK(max_rel_diff(invfull, ref_inv, 4) <= TOL_SOLVE, "sym2_inverse_shifted matches ref inverse");
+        }
+    }
+    /* shift が固有値をちょうど打ち消すと特異 */
+    {
+        uwb_real s[3] = { R(1), R(0), R(2) }, b[2] = { R(1), R(1) }, x[2], inv[3];
+        CHECK(uwb_sym2_solve_shifted(s, R(-1), b, x) == 0, "sym2_solve_shifted fails when shift cancels an eigenvalue");
+        CHECK(uwb_sym2_inverse_shifted(s, R(-2), inv) == 0, "sym2_inverse_shifted fails when shift cancels an eigenvalue");
+        CHECK(uwb_sym2_solve_shifted(s, R(1), b, x) == 1 && near((double)x[0], 0.5, TOL_EXACT) &&
+              near((double)x[1], 1.0 / 3.0, TOL_EXACT), "sym2_solve_shifted on diag(1,2)+I");
+    }
+}
+
+/* ================================ null_vector / principal_axis / solve_sphere */
+
+static int v3_is_canonical(const uwb_real *v)
+{
+    int big = 0;
+    if (uwb_math_abs(v[1]) > uwb_math_abs(v[big])) big = 1;
+    if (uwb_math_abs(v[2]) > uwb_math_abs(v[big])) big = 2;
+    return v[big] >= R(0);
+}
+
+static void test_sym3_null_vector(void)
+{
+    static const double scales[3] = { 1e-6, 1.0, 1e6 };
+    uwb_real s[6], n[3], want[3], r[3], v[3], lam[3];
+    int si, t;
+
+    for (si = 0; si < 3; ++si) {
+        double sc = scales[si];
+        for (t = 0; t < 20; ++t) {
+            uwb_real q[9];
+            double resid, dotv;
+            gram_schmidt3(q);
+            lam[0] = R(sc); lam[1] = R((0.1 + 0.9 * urand()) * sc); lam[2] = R(0);
+            sym3_from_eig(q, lam, s);
+            mat3_col(q, 2, want);
+
+            CHECK(uwb_sym3_null_vector(s, n) == 1, "sym3_null_vector succeeds on rank 2");
+            CHECK(near(sqrt((double)uwb_v3_norm2(n)), 1.0, TOL_EXACT), "sym3_null_vector is unit");
+            CHECK(v3_is_canonical(n), "sym3_null_vector sign is canonical");
+            uwb_sym3_mv(s, n, r);
+            resid = sqrt((double)uwb_v3_norm2(r)) / sc;
+            stat_note("sym3_null_vector |S n| / lam0", resid);
+            CHECK(resid <= TOL_EIG, "sym3_null_vector residual |S n| is small");
+            dotv = fabs((double)uwb_v3_dot(n, want));
+            CHECK(near(dotv, 1.0, TOL_EIG), "sym3_null_vector matches the constructed null direction");
+
+            /* min_eigvec と同じ向き (どちらも符号正準) */
+            if (uwb_sym3_min_eigvec(s, NULL, v))
+                CHECK(vec_err_over_norm(n, v, 3) <= TOL_EIG, "sym3_null_vector agrees with sym3_min_eigvec");
+        }
+    }
+
+    /* 構造的な配置 */
+    cfg_square(s);
+    CHECK(uwb_sym3_null_vector(s, n) == 1 && near((double)n[2], 1.0, TOL_EXACT) &&
+          near((double)n[0], 0.0, TOL_EXACT) && near((double)n[1], 0.0, TOL_EXACT),
+          "sym3_null_vector of square covariance is e_z");
+    cfg_triangle(s);
+    CHECK(uwb_sym3_null_vector(s, n) == 1 && near((double)n[2], 1.0, TOL_EXACT), "sym3_null_vector of triangle covariance is e_z");
+
+    /* rank ≤ 1 / 零 / NaN は失敗し n に触らない */
+    n[0] = n[1] = n[2] = R(7);
+    cfg_colinear(s);
+    CHECK(uwb_sym3_null_vector(s, n) == 0, "sym3_null_vector fails on rank 1");
+    uwb_sym3_zero(s);
+    CHECK(uwb_sym3_null_vector(s, n) == 0, "sym3_null_vector fails on zero matrix");
+    {
+        uwb_real zero_val = R(0), nan_val = zero_val / zero_val;
+        gen_spd3_rank(2, s, 1.0);
+        s[5] = nan_val;
+        CHECK(uwb_sym3_null_vector(s, n) == 0, "sym3_null_vector fails on NaN");
+    }
+    CHECK(n[0] == R(7) && n[1] == R(7) && n[2] == R(7), "sym3_null_vector leaves n untouched on failure");
+}
+
+static void test_sym3_principal_axis(void)
+{
+    static const double scales[3] = { 1e-6, 1.0, 1e6 };
+    uwb_real s[6], v[3], want[3], r[3], e[3];
+    int si, t;
+
+    for (si = 0; si < 3; ++si) {
+        double sc = scales[si];
+        for (t = 0; t < 20; ++t) {
+            double resid;
+            do {
+                want[0] = R(urand() * 2.0 - 1.0); want[1] = R(urand() * 2.0 - 1.0); want[2] = R(urand() * 2.0 - 1.0);
+            } while (!(uwb_v3_normalize(want) > R(1e-3)));
+            uwb_sym3_zero(s);
+            uwb_sym3_add_scaled_outer(s, R(sc), want);
+
+            CHECK(uwb_sym3_principal_axis(s, v) == 1, "sym3_principal_axis succeeds on rank 1");
+            CHECK(near(sqrt((double)uwb_v3_norm2(v)), 1.0, TOL_EXACT), "sym3_principal_axis is unit");
+            CHECK(v3_is_canonical(v), "sym3_principal_axis sign is canonical");
+            CHECK(near(fabs((double)uwb_v3_dot(v, want)), 1.0, TOL_EXACT), "sym3_principal_axis matches the constructed axis");
+            uwb_sym3_mv(s, v, r);
+            uwb_v3_axpy(R(-sc), v, r);
+            resid = sqrt((double)uwb_v3_norm2(r)) / sc;
+            stat_note("sym3_principal_axis |S v - lam v| / lam", resid);
+            CHECK(resid <= TOL_EIG, "sym3_principal_axis is an eigenvector of the rank-1 matrix");
+            /* 固有ベクトル (孤立した λ0 = sc) とも一致 */
+            if (uwb_sym3_eigvec(s, R(sc), e))
+                CHECK(vec_err_over_norm(v, e, 3) <= TOL_EIG, "sym3_principal_axis agrees with sym3_eigvec");
+        }
+    }
+
+    cfg_colinear(s);
+    CHECK(uwb_sym3_principal_axis(s, v) == 1 && near((double)v[0], 1.0, TOL_EXACT) &&
+          v[1] == R(0) && v[2] == R(0), "sym3_principal_axis of colinear covariance is e_x");
+
+    v[0] = v[1] = v[2] = R(7);
+    uwb_sym3_zero(s);
+    CHECK(uwb_sym3_principal_axis(s, v) == 0, "sym3_principal_axis fails on zero matrix");
+    {
+        uwb_real zero_val = R(0), nan_val = zero_val / zero_val;
+        cfg_colinear(s);
+        s[5] = nan_val;
+        CHECK(uwb_sym3_principal_axis(s, v) == 0, "sym3_principal_axis fails on NaN");
+    }
+    CHECK(v[0] == R(7) && v[1] == R(7) && v[2] == R(7), "sym3_principal_axis leaves v untouched on failure");
+}
+
+/* f(u) = uᵀMu − 2bᵀu */
+static double sphere_objective(const uwb_real *m, const uwb_real *b, const uwb_real *u)
+{
+    return (double)uwb_sym3_quad(m, u) - 2.0 * (double)uwb_v3_dot(b, u);
+}
+
+static void test_sym3_solve_sphere(void)
+{
+    static const double scales[3] = { 1e-6, 1.0, 1e6 };
+    uwb_real m[6], b[3], u[3], ustar[3], lam[3], nu, nustar, r[3];
+    int si, t, k;
+
+    for (si = 0; si < 3; ++si) {
+        double sc = scales[si];
+        for (t = 0; t < 25; ++t) {
+            uwb_real q[9], l[3];
+            double bn, resid, fu, worst_gap;
+            int ok;
+
+            /* 正定値 M (κ ≤ 20)、既知の解 u* とその乗数 ν* ∈ (−λ_min/2, 3λ_max) から
+             * b = (M + ν* I) u* を作る。ν* > −λ_min なら u* が大域最小。 */
+            gram_schmidt3(q);
+            l[0] = R(sc); l[1] = R((0.3 + 0.6 * urand()) * sc); l[2] = R((0.05 + 0.2 * urand()) * sc);
+            sym3_from_eig(q, l, m);
+            do {
+                ustar[0] = R(urand() * 2.0 - 1.0); ustar[1] = R(urand() * 2.0 - 1.0); ustar[2] = R(urand() * 2.0 - 1.0);
+            } while (!(uwb_v3_normalize(ustar) > R(1e-3)));
+            if (t % 5 == 0) nustar = R(0);                    /* 無拘束解がそのまま単位長 */
+            else            nustar = R(-0.5 * (double)l[2] + urand() * (3.0 * sc + 0.5 * (double)l[2]));
+            uwb_sym3_mv(m, ustar, b);
+            uwb_v3_axpy(nustar, ustar, b);
+
+            CHECK(uwb_sym3_eigvals(m, lam) == 1, "eigvals for solve_sphere input");
+            nu = R(12345);
+            ok = uwb_sym3_solve_sphere(m, b, lam[2], u, &nu);
+            CHECK(ok == 1, "sym3_solve_sphere succeeds on a well-posed problem");
+            if (!ok) continue;
+
+            CHECK(near(sqrt((double)uwb_v3_norm2(u)), 1.0, TOL_EXACT), "sym3_solve_sphere returns a unit vector");
+            {
+                double e = vec_err_over_norm(u, ustar, 3);
+                stat_note("sym3_solve_sphere |u - u*|", e);
+                CHECK(e <= TOL_LOOSE, "sym3_solve_sphere recovers the constructed minimizer");
+            }
+            /* Lagrange 条件 (M + νI) u = b が返した ν で成り立つ */
+            uwb_sym3_mv(m, u, r);
+            uwb_v3_axpy(nu, u, r);
+            uwb_v3_sub(r, b, r);
+            bn = sqrt((double)uwb_v3_norm2(b));
+            resid = sqrt((double)uwb_v3_norm2(r)) / bn;
+            stat_note("sym3_solve_sphere |(M+nu I)u - b| / |b|", resid);
+            CHECK(resid <= TOL_LOOSE, "sym3_solve_sphere satisfies the Lagrange condition");
+            CHECK(fabs((double)nu - (double)nustar) <= 16.0 * TOL_LOOSE * sc, "sym3_solve_sphere multiplier matches");
+            CHECK(nu > -lam[2], "sym3_solve_sphere multiplier is on the positive-definite side");
+
+            /* 大域最小: 乱数の単位ベクトルより目的関数が小さい */
+            fu = sphere_objective(m, b, u);
+            worst_gap = 0.0;
+            for (k = 0; k < 16; ++k) {
+                uwb_real w[3];
+                double fw;
+                do {
+                    w[0] = R(urand() * 2.0 - 1.0); w[1] = R(urand() * 2.0 - 1.0); w[2] = R(urand() * 2.0 - 1.0);
+                } while (!(uwb_v3_normalize(w) > R(1e-3)));
+                fw = sphere_objective(m, b, w);
+                if (fu - fw > worst_gap) worst_gap = fu - fw;
+            }
+            CHECK(worst_gap <= TOL_LOOSE * (sc + 2.0 * bn), "sym3_solve_sphere is not beaten by random unit vectors");
+        }
+    }
+
+    /* 失敗条件: b = 0、M が正定値でない、NaN。u には触らない */
+    {
+        uwb_real zero_val = R(0), nan_val = zero_val / zero_val;
+        uwb_real q[9], l[3];
+        gram_schmidt3(q);
+        l[0] = R(1); l[1] = R(0.5); l[2] = R(0.25);
+        sym3_from_eig(q, l, m);
+        u[0] = u[1] = u[2] = R(7);
+        b[0] = b[1] = b[2] = R(0);
+        CHECK(uwb_sym3_solve_sphere(m, b, l[2], u, NULL) == 0, "sym3_solve_sphere fails on b = 0");
+        b[0] = R(1); b[1] = R(2); b[2] = R(3);
+        l[2] = R(-0.25);
+        sym3_from_eig(q, l, m);
+        CHECK(uwb_sym3_solve_sphere(m, b, l[2], u, NULL) == 0, "sym3_solve_sphere fails on indefinite M (starts at nu = 0)");
+        l[2] = R(0.25);
+        sym3_from_eig(q, l, m);
+        m[1] = nan_val;
+        CHECK(uwb_sym3_solve_sphere(m, b, l[2], u, NULL) == 0, "sym3_solve_sphere fails on NaN");
+        CHECK(u[0] == R(7) && u[1] == R(7) && u[2] == R(7), "sym3_solve_sphere leaves u untouched on failure");
+    }
+
+    /* hard case: b ⊥ v_min で ‖u(ν)‖ が 1 に届かない → 打ち切って正規化した
+     * u (b の方向) を返す (仕様。厳密な最小ではない) */
+    {
+        uwb_sym3_zero(m);
+        m[0] = R(1); m[3] = R(2); m[5] = R(3);
+        b[0] = R(0); b[1] = R(0); b[2] = R(0.1);
+        CHECK(uwb_sym3_solve_sphere(m, b, R(1), u, &nu) == 1, "sym3_solve_sphere returns in the hard case");
+        CHECK(near(sqrt((double)uwb_v3_norm2(u)), 1.0, TOL_EXACT), "sym3_solve_sphere hard case returns a unit vector");
+        CHECK(near((double)u[2], 1.0, TOL_EXACT), "sym3_solve_sphere hard case returns the direction of b");
+        CHECK(nu > R(-1) && nu <= R(0), "sym3_solve_sphere hard case multiplier stays in (-lam_min, 0]");
+    }
+}
+
 /* ================================================================= main */
 
 int main(void)
@@ -1936,6 +2648,14 @@ int main(void)
     test_bchol_dense();
     test_bchol_survey();
     test_bchol_failure_modes();
+    test_sym3_ldl();
+    test_sym2_ldl();
+    test_sym3_solve_tol();
+    test_sym3_adjugate();
+    test_sym2_extras();
+    test_sym3_null_vector();
+    test_sym3_principal_axis();
+    test_sym3_solve_sphere();
 
     stat_report();
 
