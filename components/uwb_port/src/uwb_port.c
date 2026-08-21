@@ -460,14 +460,23 @@ esp_err_t uwb_port_irq_enable(void)
      * 「常にタイムアウト待ちになる」または「即座にIRQで起床し続ける」
      * （後者は各待ちループの通常のステータス判定が不一致フレームとして
      * 処理し続けるだけで、実害はvTaskDelay(1)相当に留まる想定）。
-     * pull_down_en = GPIO_PULLDOWN_ENABLE: 未配線・ハイインピーダンス状態
-     * でピンがフロートし外来ノイズで誤起床しないよう、明示的にプルダウン
-     * する（Lowをデフォルトにしてアクティブ判定に倒す）。 */
+     * pull_down_en = GPIO_PULLDOWN_DISABLE (2026-08-21訂正): 公式回路図
+     * (assets/SCH_UWB_MODULE_SCH_main_V0.2_...pdf、docs/SOLDER_PADS.md
+     * §5.5(4)) で、M5Stamp UWB Module上にDW_IRQをVCC_3V3へプルアップする
+     * 抵抗R2(10kΩ)が実装済みであることが判明した。ESP32-S3の内部プルダウン
+     * (概算45kΩ程度)はこの10kΩに負けるため、有効化してもIRQピンをLow側へ
+     * 倒す効果はほぼ無く、3.3Vを(10k+45k)で分圧した約60µAのリーク電流を
+     * 常時流すだけになる。無効化しても実害はない。
+     * 極性判定の既定Low（未配線時のフロート対策）は、モジュール側の外付け
+     * プルアップに対抗できないため内部プルダウンでは実現できない。未配線
+     * 時のフロート対策は、pin_irqをUWB_PORT_PIN_UNUSEDにする運用
+     * （uwb_port_irq_enable()はs_cfg.pin_irq==UWB_PORT_PIN_UNUSEDなら
+     * ESP_ERR_NOT_SUPPORTEDを返してGPIO設定自体を行わない）に委ねる。 */
     gpio_config_t io_conf = {
         .pin_bit_mask = (1ULL << (unsigned int)s_cfg.pin_irq),
         .mode         = GPIO_MODE_INPUT,
         .pull_up_en   = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
         .intr_type    = GPIO_INTR_POSEDGE,
     };
     esp_err_t err = gpio_config(&io_conf);

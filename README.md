@@ -292,7 +292,7 @@ firmware/tag ──┬─ uwb_ranging ─┬─ uwb_loc          （ハード非
 |---|---|
 | チップ | Qorvo **QM33120W**（DW3720 系。Device ID `0xDECA0314`） |
 | ホスト I/F | **SPI 一択**（mode0 / MSB first、初期化 2MHz → 通常 16MHz、チップ上限 32MHz） |
-| **電源** | **DC 3.3V 単一。5V は不可（壊れます）** |
+| **電源** | **公式仕様 DC 3.3V。パッド 2 はチップ直結（動作 2.4〜3.6V、絶対最大定格 4.0V）。5V は不可（壊れます）** |
 | 消費電流 | スリープ 75.9µA / アンカー動作 5.23mA / **タグ動作 58.0mA** @3.3V |
 | チャネル | **ch9 固定**（中心周波数 7987.2MHz） |
 | 接続 | 0.5mm 12P FPC コネクタ（`S017-F` のみ） / **1.27mm キャステレーションホール 12 個**（両方） |
@@ -335,6 +335,7 @@ firmware/tag ──┬─ uwb_ranging ─┬─ uwb_loc          （ハード非
 | `components/qm33120w_sdk/`（Qorvo 提供 SDK の vendoring） | **LicenseRef-QORVO-2** |
 | `components/uwb_loc/`（[uwb_localizer](https://github.com/kouhei1970/uwb_localizer) 由来） | **MIT** — Copyright (c) 2026 Kouhei Ito |
 | `components/uwb_qm33120/`（[m5stack/M5Stamp-UWB](https://github.com/m5stack/M5Stamp-UWB) の Arduino ラッパを C++ へ移植） | **MIT** — Copyright (c) 2026 M5Stack Technology CO LTD |
+| `assets/`（M5Stack 公式ドキュメントの製品写真・ピンマップ・回路図） | **MIT の対象外**。Copyright M5Stack Technology CO., LTD.、引用・参照目的で同梱（[`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md)） |
 
 > ### ⚠️ `LicenseRef-QORVO-2` の重要な制約
 >

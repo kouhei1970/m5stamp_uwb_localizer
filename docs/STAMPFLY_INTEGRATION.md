@@ -768,7 +768,7 @@ IRQ / RSTn / WAKEUP  → 無し
 | **RSTn** | 取れない → `hard_reset_on_begin`（`uwb_qm33120_types.hpp:83`）が使えない。ソフトリセット (`dwt_softreset`) だけで復旧できるか**要検証** |
 | GROVE 拡張性 | **I2C 拡張・UART 拡張の両方を潰す** |
 | 配線 | 2コネクタが基板上の別位置 → 標準ケーブル1本では不可。**カスタムケーブル必須** |
-| 電源 | GROVE は 5V（`archive/SURVEY_stampfly_grove.md:47`）。**モジュールは 3.3V 単一**（`archive/SURVEY_m5stamp_uwb_module.md:99`）→ **LDO が要る** |
+| 電源 | StampFly の GROVE は電池直結（満充電約 4.35V、プロジェクト設計者による実機確認 2026-08-21）で **QM33120W の絶対最大定格 4.0V を超える**。パッド 2 はチップ直結（`docs/SOLDER_PADS.md` §5.4）のため → **LDO 必須**（または基板の 3.3V レールから取る） |
 
 ### HW-2: SPI2_HOST に相乗り + GROVE を CS / IRQ / RST に使う
 
@@ -838,19 +838,20 @@ G13 → CS,  G15 → IRQ,  G1 → RSTn,  G2 → WAKEUP（予備）
 
 | 項目 | 値 | 出典 |
 |---|---|---|
-| モジュール電源 | **3.3V 単一**（内部に 3.3V→1.8V PMIC `JW5712`）。**5V 不可** | `docs/archive/SURVEY_m5stamp_uwb_module.md:99` |
-| 消費電流（タグ動作） | **58.0 mA @3.3V** | 同 `:100` |
+| モジュール電源 | **公式仕様 3.3V**。パッド 2 は QM33120W の電源レールに直結（動作 2.4〜3.6V、絶対最大定格 4.0V）。モジュール上の DC-DC（`JW5712`、入力 2.7〜5.5V）は内部 1.8V 系用で入力上限は広げない。**5V 不可** | `docs/refs/QM33120W_DS.txt:553,567-569`、実物確認（2026-08-21） |
+| 消費電流（タグ動作） | **58.0 mA @3.3V** | `docs/archive/SURVEY_m5stamp_uwb_module.md:100` |
 | 消費電流（アンカー動作 / スリープ） | 5.23 mA / 75.9 µA | 同 `:100` |
 | TX 瞬時ピーク | **未公開** | 同 `:101` |
-| GROVE の供給 | **5V**（M5Stack 一般仕様） | `docs/archive/SURVEY_stampfly_grove.md:47` |
+| GROVE の供給 | **StampFly は電池直結**（満充電約 4.35V。絶対最大定格 4.0V を超えるため直結不可）。M5Stack 製品一般の GROVE は 5V | プロジェクト設計者による実機確認（2026-08-21）、`docs/archive/SURVEY_stampfly_grove.md:47`（一般 GROVE の 5V 部分） |
 | GROVE の供給電流定格 | **未公開** | 同 `:49` |
 | StampFly の 3.3V レギュレータ余裕 | **文書に一切記載なし**（`stampfly_ecosystem` 全体を検索して該当なし） | 未解決 |
 | バッテリ低電圧閾値 | 3.4 V（`safety.battery.low_v`） | `SF/components/sf_core/params.cpp:825` |
 | 電圧監視 | INA3221 ch1、PowerTask 10 Hz | `SF/main/config.hpp:302-311`, `SF/tasks/power_task.cpp:158` |
 
 **未解決の課題:**
-1. GROVE から 5V を取るなら **3.3V LDO が必要**（重量・スペース増）。基板上の 3.3V レールから
-   直接取れるなら不要だが、**その余裕が文書化されていない**
+1. StampFly の GROVE（電池電圧、満充電約 4.35V）は QM33120W の絶対最大定格 4.0V を超えるため
+   **直結不可・LDO 必須**（重量・スペース増）。基板上の 3.3V レールから取れば LDO は不要だが、
+   **その電流余裕が文書化されていない**
 2. **TX 瞬時ピーク電流が不明。** 3.3V レールが瞬間的に落ちると **IMU / ToF まで巻き添えになる**
    → デカップリング（数十〜100 µF）を UWB モジュール直近に入れることを推奨
 3. 58 mA は 4モータの消費（アンペアオーダー）に比べれば小さいが、**飛行時間には効く**

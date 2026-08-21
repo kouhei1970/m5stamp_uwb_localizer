@@ -22,8 +22,10 @@
    → M5Stamp UWB Module 用のレンジング層は**まるごと新規**。ただしゼロからではなく
      **M5Stack 公式 Arduino ライブラリ (m5stack/M5Stamp-UWB, MIT + Qorvo SDK) を
      ESP-IDF へ移植**するのが現実解。
-2. **M5Stamp UWB Module のコネクタは GROVE ではなく 0.5mm 12P FPC（Flexible Printed Circuit、フレキシブル基板）。電源は 3.3V 単一。**
-   GROVE(5V) から直接は挿さらない。**FPC→配線の変換と 5V→3.3V 降圧が必須。**
+2. **M5Stamp UWB Module のコネクタは GROVE ではなく 0.5mm 12P FPC（Flexible Printed Circuit、フレキシブル基板）。電源は 3.3V 単一（チップ直結、絶対最大 4.0V）。**
+   GROVE（M5Stack 一般の GROVE は 5V 出力のものが多いが、**StampFly の GROVE は
+   電池電圧そのもの＝満充電で ~4.35V あり、これもチップの絶対最大 4.0V を超える**）
+   から直接は挿さらない。**FPC→配線の変換と、3.3V への降圧（LDO 必須）が必須。**
 3. StampFly の GROVE は**2系統ある**（赤=I2C G13/G15、黒=UART G1/G2）。
    どちらも内蔵バスと非共有・ファームウェア未使用。
 
@@ -204,7 +206,7 @@ GPIO に余裕があるので **SPI4線 + IRQ + RSTn をフル配線**して開�
 ### StampFly（下流・Phase 6）
 | 案 | 配線 | 長所 | 短所 |
 |---|---|---|---|
-| **A: GROVE 2系統併用** | G13,G15,G1,G2 → SCK/MOSI/MISO/CS | 半田付け無しに近い | IRQ/RST 無し（ポーリング）、I2C/UART 拡張を両方潰す、カスタムケーブル必須、**5V→3.3V 降圧が必要** |
+| **A: GROVE 2系統併用** | G13,G15,G1,G2 → SCK/MOSI/MISO/CS | 半田付け無しに近い | IRQ/RST 無し（ポーリング）、I2C/UART 拡張を両方潰す、カスタムケーブル必須、**StampFly の GROVE は電池電圧（満充電 ~4.35V、チップの絶対最大 4.0V 超）→ LDO で 3.3V が必要** |
 | ~~B: 空きGPIO 直付け~~ | ~~G5,G10,G41,G42~~ | — | **【訂正 2026-08-21】成立しない。** この4本は現行ファームで**モータPWM**（`vehicle/main/config.hpp:63-66`）。当時の調査が古いリポジトリを見てモータピンを見落としていた |
 | C: 内蔵SPI2 相乗り | G14/G43/G44 + 新規CS | 線が3本節約 | これらはコネクタに出ていない＝直付け必須、BMI270 の 10MHz バスと競合 |
 
@@ -212,11 +214,14 @@ GPIO に余裕があるので **SPI4線 + IRQ + RSTn をフル配線**して開�
 → **補強材料(調査5)**: M5Stack 公式ライブラリは `attachInterrupt` を一切使わない
   **完全ポーリング方式**（`dwt_readsysstatuslo()` ループ監視）。
   つまり **IRQ 線が無くても元の実装がそのまま動く**。案 A の最大の懸念が消えた。
-→ いずれも **5V→3.3V LDO（Low Dropout regulator、低損失レギュレータ）（60mA 以上）を載せた小さな変換基板が必要**。
-   FPC 12P → 配線の変換も同基板でやるのが素直。
+→ いずれも **StampFly の GROVE は電池電圧（満充電 ~4.35V、チップの絶対最大 4.0V 超）→
+   LDO（Low Dropout regulator、低損失レギュレータ）で 3.3V を作る変換（60mA 以上）を
+   載せた小さな変換基板が必要**。FPC 12P → 配線の変換も同基板でやるのが素直。
 
 ### 電力
-モジュールはタグ動作 58.0mA @3.3V。StampFly の GROVE 5V の供給能力は**未公開**。
+モジュールはタグ動作 58.0mA @3.3V。StampFly の GROVE は電池電圧（満充電 ~4.35V、
+チップの絶対最大 4.0V 超のため LDO 必須）で、供給能力および LDO 後の 3.3V での
+供給能力は**未公開**。
 → 実機で電流実測して確認する（Phase 6 の受入条件）。
 
 ---
@@ -270,7 +275,8 @@ GPIO に余裕があるので **SPI4線 + IRQ + RSTn をフル配線**して開�
 - `sf_hal_uwb_qm33120` として C++ ラッパを作り stampfly_ecosystem へ
 - `tasks/uwb_task.cpp`、`sf_core/include/topics.hpp` に `Topic<UwbPosData, Queue, N>` 追加
 - `sf_estimator` / ESKF（Error-State Kalman Filter、誤差状態カルマンフィルタ）への供給
-- **受入条件: 機体に載せて飛行中に位置が出る。GROVE 5V の電流も実測確認**
+- **受入条件: 機体に載せて飛行中に位置が出る。GROVE（StampFly は電池電圧 ~4.35V。
+  LDO 後の 3.3V）の電流も実測確認**
 
 ---
 
@@ -286,7 +292,7 @@ GPIO に余裕があるので **SPI4線 + IRQ + RSTn をフル配線**して開�
 | ~~R1~~ | ~~Qorvo SDK のライセンス~~ | — | **解決済(2026-08-19)**: 改変込みのソース再配布は許可。条件=著作権/SPDX表示の保持＋**Qorvo製IC限定**。vendoring 可。詳細は archive/SURVEY_m5stamp_uwb_port.md |
 | R2 | Arduino→ESP-IDF 移植の手間（SPI/GPIO/時刻APIの差） | Phase 1-2 が伸びる | `uwb_port` で Arduino API 相当を薄く再現し差分を最小化 |
 | ~~R3~~ | ~~StampFly に G5/G10/G41/G42 のパッドが無い~~ | — | **解決済(2026-08-21): 案B は成立しない。** 4本ともモータPWM。**案A（GROVE 2系統・IRQ無し）で確定** |
-| R4 | GROVE 5V の供給能力不足 | Phase 6 で電源設計やり直し | 電流実測。最悪は機体のバッテリから直接取る |
+| R4 | StampFly GROVE（電池電圧、満充電 ~4.35V）の供給能力、または LDO 後 3.3V の供給能力不足 | Phase 6 で電源設計やり直し | 電流実測。最悪は機体のバッテリから直接取る |
 | R5 | 公式ライブラリが TWR のみで TDoA 未実装 | 多数タグ運用は困難 | 当面 TWR 前提。TDoA は将来課題 |
 | R6 | **更新レート**。DS-TWR を N アンカー逐次で回すと1周が長い（N に比例） | 飛行制御に使うには不足の可能性が高い | **Phase 2 完了時点で1リンクの所要時間を実測**。不足なら (a) SS-TWR へ切替 (b) インターバル短縮 (c) アンカーを間引いて交互にポーリング (d) EKF で補間、を検討。**N を増やすと直接効く**ので台数と更新レートはトレードオフ |
 | ~~R7~~ | ~~ハードウェアの入手数~~ | — | **解決済(2026-08-19)**: 4台以上を保有。Phase 4 まで一気に検証可能 |

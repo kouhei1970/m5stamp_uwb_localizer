@@ -95,3 +95,20 @@ MIT License, Copyright (c) 2026 Kouhei Ito
 
 `components/uwb_port/` など、本リポジトリのために新規に書かれたコードは、リポジトリ直下の
 [`LICENSE`](LICENSE) と同一の MIT ライセンスです。
+
+## `assets/` 内の M5Stack 由来ファイル — MIT の対象外（引用・参照目的）
+
+以下のファイルは M5Stack Technology CO., LTD. が公式ドキュメントサイト
+（docs.m5stack.com）の Stamp UWB 製品ページで配布している画像・回路図です。
+著作権は M5Stack Technology CO., LTD. に帰属し、本リポジトリの MIT ライセンスの
+対象**外**です。本リポジトリでは、配線・電源仕様の検証といった**引用・参照目的**で
+同梱しています。
+
+| ファイル | 内容 | 出典 |
+|---|---|---|
+| `assets/S017_Stamp_UWB_pinmap.jpg` | 公式ピンマップ画像（パッド / FPC のピン配置図） | M5Stack 公式ドキュメント（[Stamp UWB 製品ページ](https://docs.m5stack.com/en/stamp/Stamp_UWB)） |
+| `assets/S017_Stamp_UWB_main_pictures_01.webp` | 製品写真 | 同上 |
+| `assets/SCH_UWB_MODULE_SCH_main_V0.2_20251128_2026_06_01_11_54_35.pdf` | 公式回路図（V0.2、2025-11-28） | 同上 |
+
+再配布・改変を行う場合は、各ファイルの著作権が M5Stack Technology CO., LTD. に
+帰属することを別途確認してください。

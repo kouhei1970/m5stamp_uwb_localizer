@@ -59,7 +59,8 @@
 ### やること
 1. **半田パッドの pin 1 がどちら側かをテスターで確定する**
    → [`GETTING_STARTED.md` §3.1](GETTING_STARTED.md#orientation)
-2. 電源は **3.3V 単一**。**5V を入れない**（GROVE の 5V から直結しない）
+2. 電源は **公式 3.3V。チップ直結のため上限 3.6V（絶対最大 4.0V）。M5Stack の GROVE 5V も
+   StampFly の GROVE（電池 ~4.35V）も直結不可、LDO 必須。`SOLDER_PADS.md` §5.4**
 
 ### なぜ最初か
 > **公式 PINMAP 画像を入手できておらず、パッドの向きは推定です。**
@@ -322,8 +323,9 @@ W ... respondDSRange: Poll<-TAG: peer=0x0001 とタイミングプリセット�
 | 6 | **IRQ がアクティブ HIGH か** | 実験 7 | 極性を変える（`GPIO_INTR_NEGEDGE`） | |
 | 7 | `pin_rst` 未配線で `dwt_softreset` だけで復旧できるか | 実験 1（StampFly 構成） | RST 配線が必須になる | 外部報告（公式ライブラリ + XIAO ESP32-C6、`dwt_softreset()`+待ちで温間リセットの `CONFIG_FAILED` が解消）で裏付けあり。本リポジトリの `begin()` にも同様のソフトリセットを追加中。本リポジトリのコードでは未 |
 | 8 | アンテナ遅延の実値 | 実験 4 | 校正値を入れる | |
-| 9 | GROVE 5V の供給能力（StampFly） | 実験 10 | 機体バッテリから直接取る | |
+| 9 | StampFly GROVE は電池電圧（~3.0〜4.35V）。供給能力と LDO 後の 3.3V で 60mA 取れるか | 実験 10 | 機体バッテリから直接取る | |
 | 10 | 折返し時間の実測（プリセットの根拠） | 実験 8 | プリセットの数値を見直す（**版番号を上げること**） | |
+| 11 | **IRQ プルアップの影響**（SLEEP 中の張り付き） | — | SLEEP/WAKEUP を使う設計にするときは要再検討 | モジュール上に DW_IRQ の 10kΩ プルアップあり（`SOLDER_PADS.md` §5.5(4)、公式回路図で確認）。現状の使い方（起床信号としてのみ使用、チップを能動的に SLEEP させない）では実害なし |
 
 外部報告（GOROman 氏、<https://gist.github.com/GOROman/76c222768b042d35599d26192a25e829>）
 の詳細は [`docs/SOLDER_PADS.md`](SOLDER_PADS.md) 冒頭と

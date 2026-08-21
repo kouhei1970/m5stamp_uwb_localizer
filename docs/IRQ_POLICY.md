@@ -169,3 +169,32 @@ DS-TWR（Double-Sided TWR、両側二方向測距）は**両側に遅延送信�
 - タグ側（StampFly / `boards/stampfly.h`）は `pin_irq` が
   `UWB_PORT_PIN_UNUSED` のままなので、`UWB_ENABLE_IRQ=y` でビルドしても
   自動的にポーリングへフォールバックする（仕様どおり）。
+
+## 【重要】モジュール上の IRQ 外付けプルアップについて（2026-08-21、公式回路図で判明）
+
+公式回路図（`assets/SCH_UWB_MODULE_SCH_main_V0.2_...pdf`。詳細は
+`docs/SOLDER_PADS.md` §5.5(4)）を確認したところ、**M5Stamp UWB Module 上に
+DW_IRQ を VCC_3V3 へプルアップする抵抗 R2（10kΩ）が実装されている**ことが分かった。
+
+- **動作中は問題にならない**: QM33120W の IRQ は既定でアクティブ HIGH の
+  push-pull 出力なので、チップ自身がピンを能動的に駆動している間はこの
+  外付けプルアップの影響を受けない。上記「実装状況」の `GPIO_INTR_POSEDGE`
+  前提はそのまま有効。
+- **SLEEP / DEEPSLEEP 中は IRQ ピンが H に張り付く**: チップが低消費電力状態に
+  入って IRQ 出力が Hi-Z（または非駆動）になると、モジュール上の 10kΩ
+  プルアップにより IRQ ピンは High に固定される。QM33120W データシートには
+  「sleep するには IRQ が low/inactive でなければならない」旨の記載があり、
+  **この外付けプルアップはその条件と逆方向に働く部品**である。
+- **`uwb_port.c` の内部プルダウンは実質無意味**: 従来 `gpio_config()` に
+  `pull_down_en = GPIO_PULLDOWN_ENABLE`（未配線時のフロート対策）を設定して
+  いたが、内部プルダウン（ESP32-S3 で概算 45kΩ 程度）はモジュール上の
+  10kΩ プルアップに負けるため、**IRQ ピンを Low 側へ倒す効果はほぼ無く、
+  3.3V を (10k+45k) で分圧した約 60µA のリーク電流を常時流すだけ**になる。
+  2026-08-21 に `GPIO_PULLDOWN_DISABLE` へ修正した
+  （`components/uwb_port/src/uwb_port.c`）。
+- **`GPIO_INTR_POSEDGE`（アクティブ HIGH）前提は「動作中のみ」有効**という
+  留保が付く。現状の実装（起床信号としてのみ IRQ を使い、チップを能動的に
+  SLEEP させる運用はしていない）では実害は無いが、**将来 SLEEP/WAKEUP を
+  積極的に使う設計にする場合は、この 10kΩ プルアップの影響
+  （SLEEP 復帰直後に IRQ が誤って High のまま読める可能性、Wakeup 直後の
+  ノイズ耐性など）を要再検討**。

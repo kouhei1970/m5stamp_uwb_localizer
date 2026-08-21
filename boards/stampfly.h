@@ -86,10 +86,12 @@
  * (dwt_softreset) だけで復旧できるか要検証」)。
  *
  * ■ 電源について（重要）
- * **GROVE の 5V レールから電源を取ってはいけない。** M5Stamp UWB Module は
- * 3.3V 単一入力のため、LDO による降圧が必要
- * (docs/STAMPFLY_INTEGRATION.md §5.3 HW-1 表「電源」行:
- * 「GROVE は 5V。モジュールは 3.3V 単一 → LDO が要る」)。
+ * **GROVE のレールから電源を直接取ってはいけない。** StampFly の GROVE は
+ * 電池電圧そのもの（満充電でも約4.35V。プロジェクト設計者による実機確認、
+ * 2026-08-21）で、パッド2(VCC_3V3)はQM33120Wの電源レールに直結しているため
+ * (docs/SOLDER_PADS.md §5.4)、絶対最大定格4.0Vを超えて壊れる恐れがある。
+ * LDOによる降圧、または基板上の3.3Vレールからの給電が必要
+ * (docs/STAMPFLY_INTEGRATION.md §5.3 HW-1 表「電源」行、docs/SOLDER_PADS.md §5.4)。
  *
  * ■ ケーブルについて
  * GROVE(RED) と GROVE(BLACK) は StampFly 基板上の別位置にあるため、市販の

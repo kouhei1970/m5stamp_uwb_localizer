@@ -123,7 +123,7 @@
 | **Kconfig / menuconfig** | — | ESP-IDF のビルド設定機構。`idf.py menuconfig` で対話的に設定する |
 | **FPC** | **F**lexible **P**rinted **C**ircuit（フレキシブル基板） | 薄いフィルム状の配線。M5Stamp UWB Module の一部品種はこのコネクタを持つ |
 | **キャステレーション** | castellation | 基板の端の半円形の半田パッド。M5StampS3A の側面にある |
-| **LDO** | **L**ow **D**rop**o**ut regulator | 低損失の降圧レギュレータ。GROVE の 5V から 3.3V を作るのに要る |
+| **LDO** | **L**ow **D**rop**o**ut regulator | 低損失の降圧レギュレータ。M5Stack 一般の GROVE は 5V 出力が多いが、**StampFly の GROVE は電池電圧（満充電 ~4.35V、チップの絶対最大 4.0V 超）**であり、いずれも 3.3V を作るのに要る |
 | **XSHUT** | — | ToF 距離センサのシャットダウン端子。同一 I2C アドレスの複数個を個別に初期化するのに使う |
 | **PWM** | **P**ulse **W**idth **M**odulation（パルス幅変調） | StampFly のモータ駆動信号 |
 
