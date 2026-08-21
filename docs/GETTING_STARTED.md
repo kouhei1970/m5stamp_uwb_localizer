@@ -149,9 +149,10 @@ make test
 （NVS そのものの読み書きは実機が要るので含まれません）。
 **ここが通らないなら環境（コンパイラ）側の問題**です。
 
-> `tools/test_uwb_loc/` にもテストがありますが、こちらはテストコード本体を
-> `third_party/uwb_localizer/`（gitignore 済み）から参照するため、
-> 上流リポジトリを別途クローンしないと動きません。買った人が実行する必要はありません。
+> `tests/host/loc/` にも測位ソルバ（`components/uwb_loc/`）単体のテストがあります
+> （77件、`make test` / `make strict` / `make float`）。こちらは本リポジトリ内で
+> 完結しており、上流リポジトリのクローンは不要です。買った人が実行する必要は
+> ありません。
 
 ### 2.4 とりあえずビルドしてみる
 
@@ -331,7 +332,6 @@ AtomS3 は空き GPIO が実質 6 本しかないので、WAKEUP と GP7 は未�
 - 16MHz で不安定なら、`boards/stamps3.h` / `boards/atoms3.h` の
   `spi_fast_hz` を **8000000 → 4000000** と落として切り分けます
   （`spi_slow_hz`（初期化時 2MHz）は変えない）。
-
 - **注意**: 次の[§4 `firmware/probe`](#probe) は `dwt_probe()`/`dwt_readdevid()`
   までしか行わず `Qm33120::begin()` を呼ばないため、`spi_fast_hz` へは
   一度も切り替わらず常に `spi_slow_hz`（2MHz）のままです。`spi_fast_hz` を
@@ -339,6 +339,7 @@ AtomS3 は空き GPIO が実質 6 本しかないので、WAKEUP と GP7 は未�
   切り分けは [§5 `firmware/twr`](#twr)（または `firmware/tag`/`firmware/anchor`）
   で行い、`begin()` 成功時のログ `spi: slow=... Hz fast=... Hz active=... Hz`
   の `active` が `spi_fast_hz` と一致しているか確認してください。
+
 <a id="extra-parts"></a>
 
 ### 3.7 推奨: 外付け部品
@@ -1100,11 +1101,11 @@ DW3720 の OTP アドレス `0x0B` は "Antenna Delay – RFLoop" とされて�
 3. **`firmware/twr` で 1 対 1 に戻る。** 5 台で悩むより 2 台で確実に測れる状態を作る。
 4. **`lv0` と Lv2（トップレベル）を比べる。** 大きく食い違うなら座標系か配線の問題。
 5. **`spi_fast_hz` を 4MHz に落として再現するか見る。** 変わるなら配線品質の問題。
-
    （この段階では `firmware/twr`/`tag`/`anchor` は `begin()` を通るので
    `spi_fast_hz` が実際に効く。`begin()` ログの `active` 値で今何Hzで
    動いているか確認できる。`firmware/probe` に戻って切り分ける場合は
    4.3 の注意のとおり `spi_fast_hz` は効かないので注意。）
+
 ---
 
 <a id="limitations"></a>

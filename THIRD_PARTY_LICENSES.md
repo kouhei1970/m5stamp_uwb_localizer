@@ -26,13 +26,16 @@ MIT License, Copyright (c) 2026 Kouhei Ito
 
 [kouhei1970/uwb_localizer](https://github.com/kouhei1970/uwb_localizer) の測位ソルバ部分
 （`c/include/uwb_loc.h`、`c/src/{uwb_model,uwb_closed_form,uwb_nls,uwb_ekf,uwb_linalg}.c`、
-`c/src/{uwb_internal,uwb_linalg}.h`）を、`third_party/uwb_localizer/`
-（コミット `8d0edc057ed05cf6b4af91df329999fe2343f515`）からそのまま vendoring したものです。
-ロジックは無改造で、ESP-IDF 用の `CMakeLists.txt` / `Kconfig` を追加しただけです。
-全文は上流の [`LICENSE`](https://github.com/kouhei1970/uwb_localizer/blob/HEAD/LICENSE)（本リポジトリの [`LICENSE`](LICENSE) と同一の MIT）を
-参照してください。**`third_party/` は `.gitignore` されているので、clone しただけでは
-ローカルには存在しません**（参照用クローンを手元に置いている場合のみ
-`third_party/uwb_localizer/LICENSE` にあります）。
+`c/src/{uwb_internal,uwb_linalg}.h`）を取り込んだものです。取り込み元は上流ブランチ
+`perf/exploit-structure`（コミット `ab23b33`、2026-08-21 に上流 `main` へマージ）の
+最終状態で、ESP-IDF 用の `CMakeLists.txt` / `Kconfig` を追加しています。
+
+**2026-08-21 に上流 `uwb_localizer` を凍結し、この最終状態を取り込んだ。以後
+`components/uwb_loc/` は本リポジトリで独立して開発する（上流はもう追わない）。**
+このため以後の変更は本リポジトリのコミット履歴を参照してください。ライセンスは
+引き続き MIT（表記は変更なし）です。全文は上流の
+[`LICENSE`](https://github.com/kouhei1970/uwb_localizer/blob/HEAD/LICENSE)（本リポジトリの
+[`LICENSE`](LICENSE) と同一の MIT）を参照してください。
 
 ## `docs/UWB_ALGORITHMS.md` — MIT（文書の移植）
 

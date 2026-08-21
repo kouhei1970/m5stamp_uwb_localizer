@@ -129,7 +129,7 @@ StampFly への統合はその成果物を利用する下流作業。
 | 対象 | 方針 |
 |---|---|
 | `m5stamp_uwb_localizer`（本リポジトリ） | **ESP32-S3 専用に最適化してよい**。-O2 / 240MHz / float / IRAM / esp-dsp など |
-| `uwb_localizer`（上流） | **移植性を維持**。他プロジェクトでも使うライブラリなので ESP32 依存を持ち込まない |
+| `uwb_localizer`（上流） | ~~移植性を維持。他プロジェクトでも使うライブラリなので ESP32 依存を持ち込まない~~ → **2026-08-21 に上流を凍結し、最終状態（`ab23b33`）を `components/uwb_loc/` に取り込んだ。以後 `components/uwb_loc/` は本リポジトリで独立して開発する（上流はもう追わない）** |
 | StampFly | 引き続き**非依存**。StampFly はあくまで本成果物の利用者の一つ |
 
 「StampFly 非依存」と「プラットフォーム非依存」は別物である点に注意。
@@ -156,7 +156,7 @@ StampFly への統合はその成果物を利用する下流作業。
   | `qm33120w_sdk` | C（原本のまま） | Arduino依存ゼロ。無改造コピー |
   | `uwb_port` | C | Qorvo SDK の関数ポインタ/`extern "C"` に直接バインドするため |
   | `uwb_qm33120` / `uwb_twr` | **C++** | M5Stamp-UWB 由来。構造を保って移植＝最小工数 |
-  | `uwb_loc` | C99（原本のまま） | uwb_localizer c/ を無改造 vendoring。**上流追従のため byte 一致を保つ**。ESP32-S3 向けの加速は Kconfig（`UWB_USE_FLOAT` 等）とビルド設定で行い、ソースは分岐させない方針を第一候補とする |
+  | `uwb_loc` | C99 | **2026-08-21 に上流 `uwb_localizer` を凍結し、最終状態（`ab23b33`）を取り込んだ。以後 `components/uwb_loc/` は本リポジトリで独立して開発する。** ESP32-S3 向けの最適化（float 化・スカラー展開など）をソースに直接入れてよい |
   | `uwb_localizer`(app層) | C++ | 上位ロジック |
   移植性は「ハード依存が `uwb_port` 1枚に閉じている」ことで担保され、言語では担保しない。
   stampfly_ecosystem は元々 C++ なので統合も素直（`namespace stampfly` ラッパを被せる）

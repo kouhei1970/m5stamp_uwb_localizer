@@ -27,31 +27,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # tools/test_uwb_loc は上流のテストコード本体を参照する。
-      # third_party/ は .gitignore 済みなのでここで取得する。
-      - name: Fetch upstream uwb_localizer (for test_uwb_loc)
-        run: |
-          git clone --depth 1 https://github.com/kouhei1970/uwb_localizer.git \
-            third_party/uwb_localizer
-
       - name: test_pipeline
         run: make -C tools/test_pipeline test
 
       - name: test_survey
         run: make -C tools/test_survey test
 
-      - name: test_uwb_loc
-        run: make -C tools/test_uwb_loc test
+      - name: test_uwb_loc (tests/host/loc)
+        run: |
+          make -C tests/host/loc test
+          make -C tests/host/loc strict
+          make -C tests/host/loc float
 
       # ESP-IDF ビルドとは警告設定が違うので、ホスト側も -Werror で別途通す
       # （docs/HANDOFF.md「落とし穴」3）。
-      #
-      # tools/test_uwb_loc の strict は**意図的に外している**。対象が
-      # components/uwb_loc/（上流と byte 一致を保つ vendoring）であり、
-      # 本リポジトリでは直せないため。GCC では
-      # uwb_nls.c:342 の `wsum` が -Wunused-but-set-variable で落ちる
-      # （clang は通すので macOS では気づけない）。上流へ報告する事項として
-      # docs/HANDOFF.md に記録してある。test（53件）は上で実行済み。
       - name: strict build (own code only)
         run: |
           make -C tools/test_pipeline strict

@@ -2,7 +2,7 @@
 # uwb_ranging_pipeline.cpp）+ components/uwb_loc を、実機なしでホスト上で
 # 直接ビルド・実行して検証するための Makefile。
 #
-# tools/test_uwb_loc/Makefile と同じ考え方（third_party は読み取り専用、
+# tests/host/loc/Makefile と同じ考え方（third_party には依存せず、
 # ビルドするのは本番と同じ components/ 配下のソース）。ただし今回は
 # C（uwb_loc）と C++（uwb_ranging）の混在なので、.c は cc、.cpp は c++ で
 # それぞれコンパイルしてから link する。

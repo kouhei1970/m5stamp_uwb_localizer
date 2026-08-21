@@ -7,7 +7,7 @@
  * xorshift32 に固定シードを与えるので、**どの環境でも同じ数値が出る**
  * （libc の rand() は実装依存なので使わない）。
  *
- * third_party/uwb_localizer/c/tests/test_uwb.c および tools/test_pipeline
+ * tests/host/loc/test_uwb.c および tools/test_pipeline
  * と同じ CHECK() マクロの流儀（PASS/FAIL をその場で数え、失敗時だけ内容を
  * 表示する）を踏襲する。
  */

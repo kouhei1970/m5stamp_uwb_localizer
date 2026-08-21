@@ -49,12 +49,20 @@ void uwb_ekf_reset(uwb_ekf *e)
  *
  * プロセスノイズは **最上位の微分に連続時間の白色雑音が乗る**モデルで
  * 統一してある (CV なら加速度、CA なら加加速度)。離散版と混ぜると
- * sigma_a の意味がモードによって変わってしまう。 */
-static void transition(const uwb_ekf *e, uwb_real dt, uwb_real *f, uwb_real *q)
+ * sigma_a の意味がモードによって変わってしまう。
+ *
+ * k x k の小行列 f1/q1 をそのまま返す (nx x nx へのクロネッカー展開はしない)。
+ * F = f1 (x) I_nd、Q = q1 (x) I_nd という構造は uwb_ekf_predict() 側で直接使う。
+ *
+ * 重要な前提: f1 は**単位上三角**である (f1[i*k+i] = 1、j > i のみ非ゼロ、
+ * j < i は常にゼロ)。これは積分器の連鎖 (dt^(j-i)/(j-i)!) という遷移の
+ * 作り方そのものから来る性質で、uwb_ekf_predict() の in-place 更新はこの前提が
+ * 成り立つことに依存している。将来遷移モデルを変えるときはこの性質を
+ * 壊さないこと (壊すなら predict 側も作業配列を使う実装に戻す必要がある)。 */
+static void transition(const uwb_ekf *e, uwb_real dt, uwb_real *f1, uwb_real *q1)
 {
-    uwb_real f1[9], q1[9];
-    int k = e->norder, nd = e->nd, nx = e->nx;
-    int i, j, a;
+    int k = e->norder;
+    int i, j;
 
     for (i = 0; i < k * k; ++i) { f1[i] = (uwb_real)0; q1[i] = (uwb_real)0; }
     for (i = 0; i < k; ++i) f1[i * k + i] = (uwb_real)1;
@@ -80,47 +88,62 @@ static void transition(const uwb_ekf *e, uwb_real dt, uwb_real *f, uwb_real *q)
         }
         for (i = 0; i < k * k; ++i) q1[i] *= s2;
     }
-
-    /* クロネッカー積 (小行列 (x) I_nd) */
-    for (i = 0; i < nx * nx; ++i) { f[i] = (uwb_real)0; q[i] = (uwb_real)0; }
-    for (i = 0; i < k; ++i)
-        for (j = 0; j < k; ++j)
-            for (a = 0; a < nd; ++a) {
-                int row = i * nd + a, col = j * nd + a;
-                f[row * nx + col] = f1[i * k + j];
-                q[row * nx + col] = q1[i * k + j];
-            }
 }
 
 void uwb_ekf_predict(uwb_ekf *e, uwb_real dt)
 {
-    uwb_real f[UWB_MAX_STATE * UWB_MAX_STATE], q[UWB_MAX_STATE * UWB_MAX_STATE];
-    uwb_real xnew[UWB_MAX_STATE], tmp[UWB_MAX_STATE * UWB_MAX_STATE];
-    int nx = e->nx, i, j, k;
+    uwb_real f1[9], q1[9];
+    int nx = e->nx, k = e->norder, nd = e->nd;
+    int i, j, a, c;
 
     if (!(dt > (uwb_real)0)) return;
-    transition(e, dt, f, q);
+    transition(e, dt, f1, q1);
 
-    for (i = 0; i < nx; ++i) {
-        uwb_real s = (uwb_real)0;
-        for (j = 0; j < nx; ++j) s += f[i * nx + j] * e->x[j];
-        xnew[i] = s;
-    }
-    for (i = 0; i < nx; ++i) e->x[i] = xnew[i];
+    /* 1) x <- F x。f1 は単位上三角なので、i (次数のブロック) を昇順に
+     * 処理すれば、右辺で読む x[j*nd+a] (j>i) はまだ今回の更新を受けて
+     * おらず、xnew の一時配列なしで in-place に計算できる。 */
+    for (i = 0; i < k; ++i)
+        for (a = 0; a < nd; ++a) {
+            int r = i * nd + a;
+            uwb_real s = e->x[r];      /* f1[i][i] = 1 の項 */
+            for (j = i + 1; j < k; ++j) s += f1[i * k + j] * e->x[j * nd + a];
+            e->x[r] = s;
+        }
 
-    /* P = F P F^T + Q */
-    for (i = 0; i < nx; ++i)
-        for (j = 0; j < nx; ++j) {
-            uwb_real s = (uwb_real)0;
-            for (k = 0; k < nx; ++k) s += f[i * nx + k] * e->P[k * nx + j];
-            tmp[i * nx + j] = s;
+    /* 2) P <- F P (行方向)。行 r=i*nd+a の更新に足し込むのは行
+     * rj=j*nd+a (j>i) だけであり、rj > r が常に成り立つ (r を昇順に
+     * 処理する限り rj はまだ未更新)。したがって i (→ a) を昇順に
+     * 回せば in-place で正しい。行 r 自身を後から他の行の材料として
+     * 使うことはない (j>i' の条件から自分自身の行ブロックは除外される)。 */
+    for (i = 0; i < k; ++i)
+        for (a = 0; a < nd; ++a) {
+            int r = i * nd + a;
+            for (j = i + 1; j < k; ++j) {
+                uwb_real coef = f1[i * k + j];
+                int rj = j * nd + a;
+                for (c = 0; c < nx; ++c) e->P[r * nx + c] += coef * e->P[rj * nx + c];
+            }
         }
-    for (i = 0; i < nx; ++i)
-        for (j = 0; j < nx; ++j) {
-            uwb_real s = (uwb_real)0;
-            for (k = 0; k < nx; ++k) s += tmp[i * nx + k] * f[j * nx + k];
-            e->P[i * nx + j] = s + q[i * nx + j];
+
+    /* 3) P <- (F P) F^T (列方向)。2) と対称の議論で、列 cj=j*nd+a の
+     * 更新に使う列 ci=i*nd+a (i>j) は ci > cj であり、cj を昇順に
+     * 処理する限り未更新。in-place で正しい。 */
+    for (j = 0; j < k; ++j)
+        for (a = 0; a < nd; ++a) {
+            int cj = j * nd + a;
+            for (i = j + 1; i < k; ++i) {
+                uwb_real coef = f1[j * k + i];
+                int ci = i * nd + a;
+                for (c = 0; c < nx; ++c) e->P[c * nx + cj] += coef * e->P[c * nx + ci];
+            }
         }
+
+    /* 4) P <- P + Q。Q = q1 (x) I_nd なので、軸 a が一致する成分にしか
+     * 足し込まれない (非対角ブロックは軸をまたぐとゼロ)。 */
+    for (i = 0; i < k; ++i)
+        for (j = 0; j < k; ++j)
+            for (a = 0; a < nd; ++a)
+                e->P[(i * nd + a) * nx + (j * nd + a)] += q1[i * k + j];
 }
 
 static void ekf_position(const uwb_ekf *e, uwb_real *p)
@@ -300,24 +323,34 @@ int uwb_ekf_update(uwb_ekf *e, uwb_real t, const uwb_meas *meas, int n, uwb_fix 
 
     for (i = 0; i < n; ++i) {
         uwb_real p[3], res, j3[3], sg;
-        uwb_real h[UWB_MAX_STATE], ph[UWB_MAX_STATE], kg[UWB_MAX_STATE];
-        uwb_real s, tmp[UWB_MAX_STATE * UWB_MAX_STATE];
-        int a, b, c;
+        uwb_real h[UWB_MAX_STATE], u[UWB_MAX_STATE], w[UWB_MAX_STATE];
+        uwb_real kg[UWB_MAX_STATE], v[UWB_MAX_STATE];
+        uwb_real s, r, q;
+        int a, b;
 
         if (!uwb_meas_usable(e->cfg, &meas[i])) continue;
         ekf_position(e, p);
         uwb_evaluate(e->cfg, p, &meas[i], &res, j3, &sg);
 
-        for (a = 0; a < nx; ++a) h[a] = (uwb_real)0;
+        /* h の非ゼロは先頭 nd 個だけ。後段で読むのもその範囲だけなので
+         * 末尾のゼロ埋めは不要 (旧実装は tmp[a][b] 経由で h[nd..nx) を
+         * 読んでいたが、Joseph 展開を消した新実装では触れない)。 */
         for (a = 0; a < e->nd; ++a) h[a] = j3[a];
 
+        /* u = P h、w = h^T P。P は毎回対称化しているので数学的には
+         * u == w のはずだが、対称性に依存せず両方を素直に計算する
+         * (h の非ゼロが nd 個だけなので、コストはどちらも nx*nd で同じ)。 */
         for (a = 0; a < nx; ++a) {
-            uwb_real acc = (uwb_real)0;
-            for (b = 0; b < nx; ++b) acc += e->P[a * nx + b] * h[b];
-            ph[a] = acc;
+            uwb_real su = (uwb_real)0, sw = (uwb_real)0;
+            for (b = 0; b < e->nd; ++b) {
+                su += e->P[a * nx + b] * h[b];
+                sw += h[b] * e->P[b * nx + a];
+            }
+            u[a] = su; w[a] = sw;
         }
-        s = sg * sg;
-        for (a = 0; a < nx; ++a) s += h[a] * ph[a];
+        r = sg * sg;
+        s = r;
+        for (a = 0; a < e->nd; ++a) s += h[a] * u[a];
 
         if (!(s > (uwb_real)0) || s != s) {
             if (i < 32) excluded |= (1UL << i);
@@ -329,37 +362,30 @@ int uwb_ekf_update(uwb_ekf *e, uwb_real t, const uwb_meas *meas, int n, uwb_fix 
             continue;
         }
 
-        for (a = 0; a < nx; ++a) kg[a] = ph[a] / s;
+        for (a = 0; a < nx; ++a) kg[a] = u[a] / s;
         for (a = 0; a < nx; ++a) e->x[a] += kg[a] * res;
 
-        /* Joseph 形式。数値的に P の対称正定値性が保たれる */
+        /* Joseph 形式 P <- (I-Kh^T) P (I-Kh^T)^T + K R K^T を
+         * h の非ゼロがランク1であることを使って展開すると
+         *   P[a][b] <- P[a][b] - K[a]*w[b] - v[a]*K[b] + R*K[a]*K[b]
+         *   v[a] := u[a] - K[a]*(s-R)   ( = ((I-Kh^T)P h)[a] の閉じた形 )
+         * になる。nx x nx の作業行列 (tmp, m1) が不要になり、O(nx^3) が
+         * O(nx^2) に落ちる (導出は OPT_SPEC.md 最適化 A を参照)。 */
+        q = s - r;
+        for (a = 0; a < nx; ++a) v[a] = u[a] - kg[a] * q;
+
         for (a = 0; a < nx; ++a)
-            for (b = 0; b < nx; ++b) {
-                uwb_real imkh = (a == b ? (uwb_real)1 : (uwb_real)0) - kg[a] * h[b];
-                tmp[a * nx + b] = imkh;
+            for (b = 0; b < nx; ++b)
+                e->P[a * nx + b] = e->P[a * nx + b]
+                                  - kg[a] * w[b] - v[a] * kg[b]
+                                  + r * kg[a] * kg[b];
+        /* 対称化。丸めで崩れるのを毎回直す */
+        for (a = 0; a < nx; ++a)
+            for (b = a + 1; b < nx; ++b) {
+                uwb_real avg = (uwb_real)0.5 * (e->P[a * nx + b] + e->P[b * nx + a]);
+                e->P[a * nx + b] = avg;
+                e->P[b * nx + a] = avg;
             }
-        {
-            uwb_real m1[UWB_MAX_STATE * UWB_MAX_STATE];
-            for (a = 0; a < nx; ++a)
-                for (b = 0; b < nx; ++b) {
-                    uwb_real acc = (uwb_real)0;
-                    for (c = 0; c < nx; ++c) acc += tmp[a * nx + c] * e->P[c * nx + b];
-                    m1[a * nx + b] = acc;
-                }
-            for (a = 0; a < nx; ++a)
-                for (b = 0; b < nx; ++b) {
-                    uwb_real acc = (uwb_real)0;
-                    for (c = 0; c < nx; ++c) acc += m1[a * nx + c] * tmp[b * nx + c];
-                    e->P[a * nx + b] = acc + kg[a] * kg[b] * sg * sg;
-                }
-            /* 対称化。丸めで崩れるのを毎回直す */
-            for (a = 0; a < nx; ++a)
-                for (b = a + 1; b < nx; ++b) {
-                    uwb_real avg = (uwb_real)0.5 * (e->P[a * nx + b] + e->P[b * nx + a]);
-                    e->P[a * nx + b] = avg;
-                    e->P[b * nx + a] = avg;
-                }
-        }
         ++n_used;
     }
 

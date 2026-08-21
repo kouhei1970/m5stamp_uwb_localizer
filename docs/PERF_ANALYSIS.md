@@ -130,7 +130,8 @@ ESP32-S3 は単精度 FPU を持つので、`double` → `float` は
 # 【追記 2026-08-20】上流 (kouhei1970/uwb_localizer) を実際に最適化した結果
 
 作業場所: `/Users/kouhei/tmp/github/uwb_localizer`、ブランチ **`perf/exploit-structure`**
-（**未コミット・未 push**。ユーザのレビュー待ち）
+（**2026-08-21 に上流 main へマージ・凍結し、本リポジトリ（`components/uwb_loc/`）へ
+取り込み済み**。以後 `components/uwb_loc/` は本リポジトリで独立して開発する）
 
 ## 実測結果（ホスト macOS、10万回/条件、us/回。メインが自分で再現確認）
 

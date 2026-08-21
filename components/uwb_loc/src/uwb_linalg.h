@@ -26,6 +26,13 @@ int uwb_inverse(uwb_real *a, uwb_real *inv, int n);
  *  正定値でなければ 0。 */
 int uwb_cholesky(uwb_real *a, int n);
 
+/** 対称行列の固有値・固有ベクトルを Jacobi 法で求める。eig[n] に昇順で書く。
+ *  vec が非NULL なら vec[n*n] に固有ベクトルを「列ベクトル」として、
+ *  eig と同じ昇順で書く (vec[row*n+col] は固有ベクトル col の第 row 成分)。
+ *  vec が NULL なら固有ベクトルは計算しない(従来と同じ)。
+ *  a は破壊される。収束しなければ 0。 */
+int uwb_sym_eig(uwb_real *a, uwb_real *eig, uwb_real *vec, int n);
+
 /** 対称行列の固有値を Jacobi 法で求める。eig[n] に昇順で書く。
  *  a は破壊される。収束しなければ 0。 */
 int uwb_sym_eigvals(uwb_real *a, uwb_real *eig, int n);

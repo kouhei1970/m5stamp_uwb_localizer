@@ -996,3 +996,10 @@ Grove の4本（G1/G2/G13/G15）以外に **G6 / G8 / G11** が未使用。
 **基板上でアクセスできればタグでも IRQ が取れる**が、
 「ファームが使っていない」と「基板に出ている」は別問題。実機で要確認。
 （この区別を誤って G5/G10/G41/G42 を「空き」と誤報した前科がある）
+
+## 上流 uwb_localizer を凍結・最終同期 (2026-08-21)
+上流 `perf/exploit-structure`（コミット `ab23b33`）を上流 `main` へマージして凍結し、
+最終状態を `components/uwb_loc/` に取り込んだ。以後 `components/uwb_loc/` は
+本リポジトリで独立して開発する（上流はもう追わない）。ホストテストは
+`tests/host/loc/`（77件、`test`/`strict`/`float`）に移設し、旧 `tools/test_uwb_loc/`
+（上流クローン参照）は削除。ベンチは `tools/bench_loc/` へ。CI の上流 clone ステップも撤去した。

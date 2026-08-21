@@ -137,8 +137,9 @@ ESP-IDF を入れて自分でビルドしてください。
 
 `.github/workflows/build.yml`:
 
-1. **ホスト側テスト**（`test_pipeline` / `test_survey` / `test_uwb_loc`）を実行
-   ※ `test_uwb_loc` は上流 `uwb_localizer` のテストコード本体を参照するので、CI が別途 clone します
+1. **ホスト側テスト**（`test_pipeline` / `test_survey` / `tests/host/loc`）を実行
+   ※ 上流 `uwb_localizer` は 2026-08-21 に凍結・最終取り込み済み。CI は上流を
+   clone せず、本リポジトリ内のソースだけでテストします
 2. **14 通りのファーム**を ESP-IDF v5.5.2 でビルドし、`idf.py merge-bin` で結合
 3. artifact として保存し、**タグを打った時は Release に添付**
 

@@ -248,10 +248,14 @@ m5stamp_uwb_localizer/
 │   ├── tag/                 ★ 本番用タグ（測距 → 測位 → JSON Lines 出力）
 │   └── soltest/             ソルバの実機ベンチ（UWB ハード不要）
 │
+├── tests/
+│   └── host/
+│       └── loc/             測位ソルバのホスト検証（旧 tools/test_uwb_loc、`make test`）
+│
 ├── tools/
 │   ├── test_pipeline/       ★ 測位パイプラインのホスト検証（実機不要、`make test`）
 │   ├── test_survey/         自動測量の計算のホスト検証
-│   └── test_uwb_loc/        測位ソルバのホスト検証（上流クローンが別途必要）
+│   └── bench_loc/           測位ソルバのマイクロベンチマーク（`make bench`）
 │
 └── third_party/             上流リポジトリの参照クローン（gitignore 済み・ビルド対象外）
 ```

@@ -15,7 +15,7 @@
  * ESP-IDF 依存なのでここには含めず、バイト列の往復・境界値・壊れたデータの
  * 扱いだけを見る（実機が無い段階で検証できるのはこの層まで）。
  *
- * third_party/uwb_localizer/c/tests/test_uwb.c と同じ CHECK() マクロの
+ * tests/host/loc/test_uwb.c と同じ CHECK() マクロの
  * 流儀（PASS/FAILをその場でカウントし、失敗時だけ内容を表示する）を踏襲する。
  */
 #include <cmath>

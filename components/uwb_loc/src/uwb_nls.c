@@ -339,7 +339,7 @@ int uwb_solve_lv0(const uwb_config *cfg, const uwb_meas *meas, int n, uwb_fix *o
     /* Lv0 は反復しないので、残差と共分散だけ評価して返す */
     {
         nls_result r;
-        uwb_real wsum = (uwb_real)0, num = (uwb_real)0;
+        uwb_real num = (uwb_real)0;
         uwb_real jm[UWB_MAX_MEAS * 3], hmat[9], inv[9];
         for (k = 0; k < 3; ++k) r.p[k] = p[k];
         for (i = 0; i < set.n; ++i) {
@@ -348,7 +348,6 @@ int uwb_solve_lv0(const uwb_config *cfg, const uwb_meas *meas, int n, uwb_fix *o
             r.resid[i] = e; r.sigma[i] = sg;
             for (k = 0; k < 3; ++k) r.jac[i * 3 + k] = j3[k];
             r.w[i] = (uwb_real)1 / (sg * sg);
-            wsum += r.w[i];
             num += e * e;
         }
         for (i = 0; i < set.n; ++i)

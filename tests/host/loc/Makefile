@@ -1,18 +1,18 @@
-# components/uwb_loc/ (ESP-IDF コンポーネントとして vendoring したコピー) が
-# third_party/uwb_localizer/c/tests/test_uwb.c (53件) に対して元と同じ結果を
-# 返すことをホストで確認するための Makefile。
+# uwb_loc (components/uwb_loc) のホストテスト。
 #
-# テストコード自体は third_party/uwb_localizer/c/tests/test_uwb.c をそのまま
-# 参照する（third_party は読み取り専用なのでコピーしない）。ビルドするのは
-# components/uwb_loc/src/*.c、つまり本番でビルドされるのと同じソース。
+# 上流 uwb_localizer は 2026-08-21 に凍結し、最終状態を components/uwb_loc/
+# へ取り込んだ。以後 components/uwb_loc/ は本リポジトリで独立して開発する
+# ので、ここは third_party や上流クローンに依存せず本リポジトリ内だけで
+# 完結する (旧 tools/test_uwb_loc の後継)。
 #
 #   make            既定値 (UWB_MAX_ANCHORS=8 / UWB_MAX_MEAS=8。
 #                   Kconfig の既定と同じ) でビルド
-#   make test       同上でビルドしてテスト実行 (53件)
+#   make test       同上でビルドしてテスト実行 (77件)
 #   make test-upstream-defaults
 #                   取り込み元の既定値 (16/32) でテスト実行。参考用
 #   make strict     -Wall -Wextra -Werror -pedantic で通るか見る
 #                   (UWB_MAX_ANCHORS=8 / UWB_MAX_MEAS=8)
+#   make float      float 版で作り直して試す (マイコン想定)
 #   make clean
 
 CC      ?= cc
@@ -20,9 +20,9 @@ CFLAGS  ?= -O2 -g
 WARN     = -Wall -Wextra -pedantic -Wshadow -Wconversion -Wno-sign-conversion
 LDLIBS   = -lm
 
-ROOT        = ../..
+ROOT        = ../../..
 UWB_LOC_DIR = $(ROOT)/components/uwb_loc
-TEST_SRC    = $(ROOT)/third_party/uwb_localizer/c/tests/test_uwb.c
+TEST_SRC    = test_uwb.c
 
 INCLUDES = -I$(UWB_LOC_DIR)/include -I$(UWB_LOC_DIR)/src
 
@@ -43,7 +43,7 @@ TEST_BIN = $(BUILD)/test_uwb
 
 DEFS ?= $(ANCHORS8_DEFS)
 
-.PHONY: all test test-upstream-defaults strict clean
+.PHONY: all test test-upstream-defaults strict float clean
 
 all: $(LIB)
 
@@ -72,6 +72,13 @@ test-upstream-defaults:
 strict:
 	$(MAKE) clean
 	$(MAKE) WARN="-Wall -Wextra -Werror -pedantic -Wshadow -Wconversion -Wno-sign-conversion" test
+
+# 単精度でも通るか。マイコンでは float の方が速い/小さいことが多い。
+# -Wconversion を外すのは、テストのアンカー座標が double リテラルで
+# 書いてあるため。ライブラリ本体は float でも無警告で通る。
+float:
+	$(MAKE) clean
+	$(MAKE) CFLAGS="-O2 -g -DUWB_USE_FLOAT" WARN="-Wall -Wextra -pedantic -Wshadow" test
 
 clean:
 	rm -rf $(BUILD)

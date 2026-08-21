@@ -4,7 +4,20 @@
 
 #include "uwb_loc.h"
 
+#include <float.h>
+
 #define UWB_EPS ((uwb_real)1e-12)
+
+/* uwb_real の「1 に対して区別できる最小の相対差」(machine epsilon)。
+ * <float.h> は C99 のフリースタンディングヘッダなので組込みでも安全に使える。
+ * 上の UWB_EPS (1e-12、「値の小ささ」を判定する固定しきい値) とは別物なので
+ * 混同しないこと。UWB_REAL_EPS は「これ以上桁を詰めても丸め誤差でしかない」
+ * という収束判定の床に使う (最適化 E)。 */
+#ifdef UWB_USE_FLOAT
+#define UWB_REAL_EPS ((uwb_real)FLT_EPSILON)
+#else
+#define UWB_REAL_EPS ((uwb_real)DBL_EPSILON)
+#endif
 
 /** 有効な観測か (アンカーの添字が範囲内で、そのアンカーが enabled)。 */
 int uwb_meas_usable(const uwb_config *cfg, const uwb_meas *m);

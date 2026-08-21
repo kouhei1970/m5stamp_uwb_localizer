@@ -42,7 +42,7 @@
 | リポジトリ | 場所 | 状態 |
 |---|---|---|
 | **m5stamp_uwb_localizer**（本体） | `/Users/kouhei/tmp/github/m5stamp_uwb_localizer` | **GitHub 公開済み** `kouhei1970/m5stamp_uwb_localizer` (public)。全コミット push 済み |
-| **uwb_localizer**（上流） | `/Users/kouhei/tmp/github/uwb_localizer` | ブランチ `perf/exploit-structure` を push 済み。**未マージ**。PR 未作成 |
+| **uwb_localizer**（上流） | `/Users/kouhei/tmp/github/uwb_localizer` | **解決済 (2026-08-21)**: `perf/exploit-structure` を `main` にマージして凍結。最終状態（`ab23b33`）を `components/uwb_loc/` に取り込み済み。以後 `components/uwb_loc/` は本リポジトリで独立して開発する（上流は見ない） |
 | stampfly_ecosystem | `third_party/stampfly_ecosystem` | 2026-08-19 の読み取り専用クローン。**書き込み禁止** |
 | M5Stamp-UWB / uwb_localizer 参照用 | `third_party/` | 読み取り専用 |
 | 一次資料（PDF/公式API） | `docs/refs/` | **`.gitignore` 済み**（再配布禁止文書を含む） |
@@ -50,7 +50,7 @@
 ### ビルド・テストの現況（すべて通る）
 ```
 firmware/{probe,devtest,twr,tag,anchor,soltest}   全て警告0・エラー0
-tools/test_pipeline    188件    tools/test_survey  281件    tools/test_uwb_loc  53件
+tools/test_pipeline    188件    tools/test_survey  281件    tests/host/loc  77件
 ```
 **GitHub Actions でも同じものが回っている**（`.github/workflows/build.yml`）。
 ホストテスト3種 + strict、ファーム14通り、タグ `v*` で Release 添付。
@@ -61,10 +61,10 @@ tools/test_pipeline    188件    tools/test_survey  281件    tools/test_uwb_loc
 |---|---|---|
 | 1 | **GitHub の Social preview が壊れている。** 3回アップロードしたが画像本体が配信されない（`og:image` の URL が 404）。DevTools で送信は 204 成功、読み戻しだけ失敗 → **GitHub 側の不具合**。クライアント側（拡張/ブラウザ/ネットワーク）は調査済みで無実 | ユーザ。**数日後に再試行。それまで Settings で Remove image しておく**（壊れた画像より自動生成カードの方がまし） |
 | 2 | `assets/social_card.{png,jpg}` は 1280x640 で作り直し済み・コミット済み | — |
-| 3 | 上流 `uwb_localizer` へ報告: `uwb_nls.c:342` の `wsum` が GCC `-Werror=unused-but-set-variable` で落ちる（clang は通す） | ユーザ判断 |
-| 4 | 上流 `perf/exploit-structure` をマージするか | ユーザ判断 |
+| 3 | 上流 `uwb_localizer` へ報告: `uwb_nls.c:342` の `wsum` が GCC `-Werror=unused-but-set-variable` で落ちる（clang は通す） | **解決済 (2026-08-21)**: 上流ブランチ側で `wsum` は削除済み。マージ・取り込み後は本リポジトリ側でも再発しない |
+| 4 | 上流 `perf/exploit-structure` をマージするか | **解決済 (2026-08-21)**: マージ・凍結し、最終状態を本リポジトリへ取り込んだ。以後独立開発 |
 | 5 | エディタの clangd が旧ディレクトリ名のパスを見ている | どれか1つで `idf.py fullclean && idf.py build` |
-| 6 | **最終レビュー**（ユーザが「最終レビューの前に一度セッションを閉じる」と言って終了） | 次セッションの最初にやる |
+| 6 | **最終レビュー**（ユーザが「最終レビューの前に一度セッションを閉じる」と言って終了） | **完了 (2026-08-21)**。結果は `docs/REVIEW_2026-08-21.md`。§0 の表 #1〜#4（DS-TWR の PRETOC、SPI 16MHz 切替、タグのメインタスクスタック、decamutex）は同日に修正済み。残りの指摘は同報告書 §7 の着手順に従う |
 
 ---
 
@@ -75,12 +75,13 @@ components/
   qm33120w_sdk/   Qorvo ドライバ (vendoring, SPDX 保持)     ← 一次資料。信頼してよい
   uwb_port/       dwt_spi_s / deca_sleep / mutex / GPIO     ← 自作
   uwb_qm33120/    デバイス層 + SS/DS-TWR                     ← M5Stack 由来を大幅に修正
-  uwb_loc/        測位ソルバ Lv0-Lv3 (uwb_localizer の c/)   ← 無改造 vendoring
+  uwb_loc/        測位ソルバ Lv0-Lv3 (uwb_localizer 凍結時点を取り込み)  ← 以後は本リポジトリで独立開発
   uwb_ranging/    アンカーテーブル + スケジューラ + パイプライン
   uwb_cfgstore/   NVS 永続化 + シリアルコンソール
   uwb_survey/     MDS + Gauss-Newton + ゲージ固定（自動測量の計算部分）
 firmware/         probe / devtest / twr / soltest / tag / anchor
-tools/            test_pipeline / test_survey / test_uwb_loc
+tests/host/       loc (uwb_loc のホスト検証)
+tools/            test_pipeline / test_survey / bench_loc
 ```
 
 **ハード依存は `uwb_port` と `uwb_ranging_scheduler` の2箇所だけ**に隔離。
@@ -185,15 +186,15 @@ Web 取得は `WebFetch` / `curl` に限定し、サブエージェントにも�
 | S7 | I2C ToF（高さ自動計測） |
 
 ### ユーザ判断待ち
-- **`uwb_localizer` の `perf/exploit-structure` をマージするか**
-  → マージされたら `components/uwb_loc/` を再 vendoring（測位計算が3〜5倍速い）
-  → `uwb_survey` の自前 Jacobi も上流の `uwb_sym_eig()` に寄せられる
-- **上流 `uwb_loc` が GCC の `-Werror=unused-but-set-variable` で落ちる**
-  （`components/uwb_loc/src/uwb_nls.c:342` の `wsum` が set-but-unused）。
-  **clang は通すので macOS では気づけない。GitHub Actions の GCC ビルドで発覚した。**
-  `components/uwb_loc/` は上流と byte 一致を保つ約束なのでこちらでは直せない。
-  → 上流へ報告する。CI では `tools/test_uwb_loc` の `strict` だけ対象外にしてある
-  （`test` の53件は実行している）
+- ~~**`uwb_localizer` の `perf/exploit-structure` をマージするか**~~
+  → **解決済 (2026-08-21)**: 上流をマージ・凍結し、最終状態（`ab23b33`）を
+  `components/uwb_loc/` へ取り込んだ。測位計算が3〜5倍速い最適化版に更新済み。
+  以後 `components/uwb_loc/` は本リポジトリで独立して開発する（上流は見ない）
+- ~~**上流 `uwb_loc` が GCC の `-Werror=unused-but-set-variable` で落ちる**~~
+  → **解決済 (2026-08-21)**: マージ元ブランチで `wsum`（`uwb_nls.c:342`）は
+  削除済み。取り込み後の `components/uwb_loc/` にも `wsum` は存在せず、
+  CI の `strict` 除外は解除した（`tests/host/loc` の `test`/`strict`/`float`
+  をすべて実行している）
 - 上流の pytest 1件失敗（`test_self_survey_with_noise_and_missing_links[1]`）
   → テストの基準アンカーが同一平面。テスト側の問題
 - ~~デフォルトブランチが `master`。`main` に変えるか~~
@@ -216,7 +217,10 @@ Web 取得は `WebFetch` / `curl` に限定し、サブエージェントにも�
    迷子ファイルを作った実例あり。**絶対パスを使うこと**
 5. **`sdkconfig` は `.gitignore` 済み。** `sed` で書き換える手順を書いてはいけない。
    `-D SDKCONFIG=build/xxx/sdkconfig` 方式を使う（`GETTING_STARTED.md` に検証済みの手順あり）
-6. **`components/uwb_loc/` は上流と byte 一致を保っている。** 直接編集しないこと
+6. ~~`components/uwb_loc/` は上流と byte 一致を保っている。直接編集しないこと~~
+   → **2026-08-21 に方針転換**: 上流 `uwb_localizer` を凍結・最終取り込みした後は、
+   `components/uwb_loc/` は本リポジトリで独立して開発する。ESP32-S3 向けの
+   最適化（float 化・スカラー展開など）をソースに直接入れてよい
 7. サブエージェントに Web 調査を任せるときは**取得手段を明示的に限定する**
 
 ---
