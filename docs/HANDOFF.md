@@ -164,7 +164,10 @@ Web 取得は `WebFetch` / `curl` に限定し、サブエージェントにも�
   → `uwb_survey` の自前 Jacobi も上流の `uwb_sym_eig()` に寄せられる
 - 上流の pytest 1件失敗（`test_self_survey_with_noise_and_missing_links[1]`）
   → テストの基準アンカーが同一平面。テスト側の問題
-- デフォルトブランチが `master`。`main` に変えるか
+- ~~デフォルトブランチが `master`。`main` に変えるか~~
+  → **解決済 (2026-08-21): `main` に統一した。** リモートの `master` は削除済み。
+  既存クローンがある場合は `git branch -m master main && git fetch origin &&
+  git branch -u origin/main main && git remote set-head origin -a` を実行すること
 
 ---
 
