@@ -187,8 +187,14 @@ jobs:
           mkdir -p "$out"
           b="firmware/${{ matrix.app }}/build"
           cp "$b/merged-firmware.bin" "$out/"
-          cp "$b/flasher_args.json"   "$out/" || true
           cp "$b"/*.bin               "$out/" || true
+          # flasher_args.json は bootloader/ と partition_table/ の下を
+          # 相対パスで参照する。同梱しないと「個別に書き込む」経路が
+          # 壊れるので、ディレクトリ構造ごとコピーする。
+          cp "$b/flasher_args.json" "$out/"
+          mkdir -p "$out/bootloader" "$out/partition_table"
+          cp "$b/bootloader/bootloader.bin"           "$out/bootloader/"
+          cp "$b/partition_table/partition-table.bin" "$out/partition_table/"
           cp firmware/${{ matrix.app }}/ci.defaults "$out/kconfig-used.txt"
           {
             echo "# ${{ matrix.name }}"
@@ -205,6 +211,12 @@ jobs:
             echo
             echo 'ブラウザから書き込む場合は https://espressif.github.io/esptool-js/ で'
             echo 'merged-firmware.bin をオフセット 0x0 に指定する。'
+            echo
+            echo '個別に書き込みたい場合は同梱の flasher_args.json が使える:'
+            echo
+            echo '```sh'
+            echo 'esptool.py --chip esp32s3 -p /dev/cu.usbmodemXXXX write_flash @flasher_args.json'
+            echo '```'
             echo
             echo '## 適用した設定'
             echo
