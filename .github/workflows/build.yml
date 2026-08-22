@@ -34,6 +34,15 @@ jobs:
       - name: host tests (tests/host/*)
         run: make -C tests test strict float
 
+      # 文書とコードの整合チェック。同じ表を複数の文書に置いた結果、訂正が
+      # 片方だけに入って食い違う事故（docs/HANDOFF.md の D-2）を機械的に防ぐ。
+      # リンク切れ・削除済み文書への参照・パッド↔FPC 対応表の重複・
+      # Kconfig シンボルの実在・配線表と boards/*.h の一致を見る。
+      - name: docs consistency (tools/docs_check)
+        run: |
+          pip install --quiet pyyaml
+          python3 tools/docs_check/verify_docs.py
+
   # ---------------------------------------------------------------- #
   # ファームウェアのビルド → 書き込み可能なバイナリを artifact に
   # ---------------------------------------------------------------- #
@@ -43,7 +52,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # --- 実験1: SPI 疎通確認 ---
+          # 既定は「両側 IRQ（BothIrq、約90Hz）＋ IRQ 有効」。2026-08-22 に
+          # ポーリング主体をやめたため、下記の base variant がその既定で焼かれる。
+          # IRQ の極性は実機未検証なので、駄目だったとき用に *-polling がある。
+
+          # --- 実験1: SPI 疎通確認（遅延プリセットは無関係） ---
           - name: probe-stamps3
             app: probe
             kconfig: |
@@ -73,7 +86,7 @@ jobs:
           - name: twr-anchor-ss
             app: twr
             kconfig: |
-              CONFIG_UWB_TWR_BOARD_ATOMS3=y
+              CONFIG_UWB_TWR_BOARD_STAMPS3=y
               CONFIG_UWB_TWR_ROLE_ANCHOR=y
               CONFIG_UWB_TWR_METHOD_SS=y
           - name: twr-tag-ds
@@ -85,12 +98,17 @@ jobs:
           - name: twr-anchor-ds
             app: twr
             kconfig: |
-              CONFIG_UWB_TWR_BOARD_ATOMS3=y
+              CONFIG_UWB_TWR_BOARD_STAMPS3=y
               CONFIG_UWB_TWR_ROLE_ANCHOR=y
               CONFIG_UWB_TWR_METHOD_DS=y
 
           # --- 実験5/6: 本番。アドレスと座標は実行時にコンソールで設定するので
           #     **5台とも同じバイナリでよい** ---
+          - name: anchor-stamps3-ds
+            app: anchor
+            kconfig: |
+              CONFIG_UWB_ANCHOR_BOARD_STAMPS3=y
+              CONFIG_UWB_ANCHOR_METHOD_DS=y
           - name: anchor-atoms3-pinoutA-ds
             app: anchor
             kconfig: |
@@ -114,22 +132,23 @@ jobs:
               CONFIG_UWB_TAG_BOARD_STAMPFLY=y
               CONFIG_UWB_TAG_METHOD_DS=y
 
-          # --- 実験7/8: IRQ + AnchorIrq プリセット。
-          #     **この2つは必ずセットで使うこと**（片側だけ焼くと測距が成立しない） ---
-          - name: anchor-atoms3-pinoutB-ds-fast
+          # --- フォールバック: IRQ が実機で期待どおり動かなかった場合に使う。
+          #     **この2つは必ずセットで使うこと**（遅延プリセットが片側だけ
+          #     違うと測距が成立しない） ---
+          - name: anchor-stamps3-ds-polling
             app: anchor
             kconfig: |
-              CONFIG_UWB_ANCHOR_BOARD_ATOMS3=y
-              CONFIG_UWB_BOARD_ATOMS3_PINOUT_B=y
+              CONFIG_UWB_ANCHOR_BOARD_STAMPS3=y
               CONFIG_UWB_ANCHOR_METHOD_DS=y
-              CONFIG_UWB_ENABLE_IRQ=y
-              CONFIG_UWB_TIMING_PROFILE_ANCHOR_IRQ=y
-          - name: tag-stamps3-ds-fast
+              CONFIG_UWB_ENABLE_IRQ=n
+              CONFIG_UWB_TIMING_PROFILE_POLLING_BOTH=y
+          - name: tag-stampfly-ds-polling
             app: tag
             kconfig: |
-              CONFIG_UWB_TAG_BOARD_STAMPS3=y
+              CONFIG_UWB_TAG_BOARD_STAMPFLY=y
               CONFIG_UWB_TAG_METHOD_DS=y
-              CONFIG_UWB_TIMING_PROFILE_ANCHOR_IRQ=y
+              CONFIG_UWB_ENABLE_IRQ=n
+              CONFIG_UWB_TIMING_PROFILE_POLLING_BOTH=y
 
     steps:
       - uses: actions/checkout@v4

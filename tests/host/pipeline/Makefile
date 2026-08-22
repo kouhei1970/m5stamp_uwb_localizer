@@ -22,12 +22,13 @@
 #                    uwb_qm33120_units R1/R8 検算 + uwb_cfgstore の
 #                    シリアライズ往復・境界値・破損データ検算）
 #   make strict     -Wall -Wextra -Werror -pedantic で通るか見る
+#   make sanitize   ASan/UBSan 付きでビルドして実行
 #   make clean
 
 CC       ?= cc
 CXX      ?= c++
-CFLAGS   ?= -O2 -g
-CXXFLAGS ?= -O2 -g -std=c++17
+CFLAGS   ?= -O2 -g -MMD -MP
+CXXFLAGS ?= -O2 -g -std=c++17 -MMD -MP
 WARN_C    = -Wall -Wextra -pedantic -Wshadow -Wconversion -Wno-sign-conversion
 WARN_CXX  = -Wall -Wextra -Wshadow
 LDLIBS    = -lm
@@ -70,7 +71,13 @@ CFGSTORE_OBJ = $(patsubst $(CFGSTORE_DIR)/src/%.cpp,$(BUILD)/%.o,$(CFGSTORE_SRC)
 TEST_OBJ = $(BUILD)/test_pipeline.o
 TEST_BIN = $(BUILD)/test_pipeline
 
-.PHONY: all test strict clean
+# -MMD -MP (CFLAGS/CXXFLAGS) が $(BUILD)/*.d にヘッダ依存を書き出す。
+# ヘッダだけ直してもここで拾って再コンパイルされるので、古い .o のまま
+# 「通ってはいけないものが通る」事故を防ぐ（初回ビルドでは .d が無いので
+# 空リストになるだけで問題ない）。
+-include $(wildcard $(BUILD)/*.d)
+
+.PHONY: all test strict sanitize clean
 
 all: $(TEST_BIN)
 
@@ -104,6 +111,14 @@ test: $(TEST_BIN)
 strict:
 	$(MAKE) clean
 	$(MAKE) WARN_CXX="-Wall -Wextra -Wshadow -Werror" test
+
+# ASan/UBSan で未定義動作・メモリ破壊を検出する。CFLAGS/CXXFLAGS はコンパイルと
+# リンクの両方の recipe に載るので、-fsanitize は自動的に両方（C/C++ とも）に付く。
+sanitize:
+	$(MAKE) clean
+	$(MAKE) CFLAGS="-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer" \
+	        CXXFLAGS="-O1 -g -std=c++17 -fsanitize=address,undefined -fno-omit-frame-pointer" test
+	$(MAKE) clean
 
 clean:
 	rm -rf $(BUILD)

@@ -11,6 +11,7 @@
 
 | 文書 | 内容 |
 |---|---|
+| **[DESIGN_HISTORY.md](DESIGN_HISTORY.md)** | **廃案・訂正・方針変更の経緯の集約先。現役文書から外した経緯はここへ入れる** |
 | [REIMPL_PLAN.md](REIMPL_PLAN.md) | 移植元（M5Stack 版 Arduino ラッパ）の課題一覧 R1〜R12 と、それぞれの決着 |
 | [CRITICAL_REVIEW.md](CRITICAL_REVIEW.md) | 移植元コードの批判的レビュー（訂正ボックス入り） |
 | [SURVEY_m5stamp_uwb_module.md](SURVEY_m5stamp_uwb_module.md) | M5Stamp UWB Module のハードウェア仕様の事前調査 |
@@ -18,4 +19,6 @@
 | [SURVEY_stampfly_ecosystem.md](SURVEY_stampfly_ecosystem.md) | StampFly 側のソフト構成の事前調査 |
 | [SURVEY_stampfly_grove.md](SURVEY_stampfly_grove.md) | StampFly の GROVE 端子と GPIO 空き状況の事前調査（本文中に訂正あり） |
 | [SURVEY_uwb_localizer.md](SURVEY_uwb_localizer.md) | 上流測位ライブラリ（uwb_localizer）の事前調査 |
+| [REVIEW_2026-08-21.md](REVIEW_2026-08-21.md) | 実機投入前の最終レビュー。Critical 1・High 6 は対応済み。**Medium 以下とテストの穴は未対応で、`../HANDOFF.md` §0 に引き継いである** |
 | [PROGRESS.md](PROGRESS.md) | 開発進捗ログ（著者の作業記録。何がどこまで検証済みか） |
+| [MATH_AUDIT_2026-08-21.md](MATH_AUDIT_2026-08-21.md) | 行列計算の残存箇所とスカラー化の設計根拠の監査。指摘は全件対応済み（`components/uwb_math/` へ統合） |

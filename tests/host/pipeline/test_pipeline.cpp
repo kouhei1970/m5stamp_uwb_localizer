@@ -68,6 +68,45 @@ void makeSamples(const AnchorEntry* entries, size_t n, const float* tag, Ranging
     }
 }
 
+/*
+ * ------------------------------------------------------------ 乱数
+ *
+ * tests/host/survey/test_survey.c の自前 xorshift32 + Box-Muller をそのまま
+ * 移植したもの（libc の rand() は実装依存で環境ごとに数値が変わるので使わない。
+ * 固定シードでどの環境でも同じ数値が出ることが目的）。シナリオ19（ノイズ+
+ * 外れ値混入下でのLv2ゲート検証）で使う。
+ */
+struct Rng32 {
+    unsigned int s;
+};
+
+void rngSeed(Rng32& r, unsigned int seed) { r.s = seed ? seed : 1u; }
+
+unsigned int rngNext(Rng32& r)
+{
+    unsigned int x = r.s;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    r.s = x;
+    return x;
+}
+
+/** [0,1) の一様乱数。上位24bitだけ使う。 */
+double rngUniform(Rng32& r)
+{
+    return static_cast<double>(rngNext(r) >> 8) * (1.0 / 16777216.0);
+}
+
+/** Box-Muller。標準正規。 */
+double rngNormal(Rng32& r)
+{
+    double u1 = rngUniform(r);
+    double u2 = rngUniform(r);
+    if (u1 < 1e-12) u1 = 1e-12;
+    return std::sqrt(-2.0 * std::log(u1)) * std::cos(2.0 * 3.14159265358979323846 * u2);
+}
+
 } // namespace
 
 /* ==================================================================== *
@@ -1068,6 +1107,188 @@ static void scenario18_ranging_sample_t_us()
           static_cast<double>(dist3(lv2.p, truth)));
 }
 
+/* ==================================================================== *
+ * 19. ノイズ+外れ値混入下でLv2の外れ値ゲート（Huber+chi2）が実際に効くこと
+ *
+ * これまでの全シナリオは無雑音（合成距離そのまま）だった。外れ値棄却
+ * （シナリオ2）はノイズ0で+3.0mバイアスを弾く例しか無く、Lv2の
+ * chi2ゲート（uwb_nls.c の solve_gated()）がノイズを乗せた残差分布の
+ * 中で「実際に効いている」ことを一度も確認していなかった
+ * （ノイズ無しだと、外れ値以外の残差は数値誤差レベルまで0に落ちるので、
+ * ゲートの閾値判定そのものは素通りしているだけでも見分けが付かない）。
+ *
+ * ここでは tests/host/survey/test_survey.c と同じ手法（自前xorshift32 +
+ * Box-Muller、固定シード）でアンカーsigma0の既定値(0.1m, uwb_model.c)に
+ * 対して意味のある5cmのガウスノイズを全リンクに乗せたうえで、1本に
+ * chi2ゲートの閾値（既定 |残差| > 4*sigma = 0.4m）を大きく超える+3.0mの
+ * バイアスを混ぜる（シナリオ2で無雑音のとき確実に弾けることを確認済みの
+ * 大きさと配置）。固定シードで200試行し、「ほぼ毎回、正しいアンカーだけが
+ * excludedに入り、位置は真値近くに留まる」ことを見る。ゲートが効いて
+ * いなければ excluded=0 のまま座標が大きくずれる試行が多発するはず。
+ * ==================================================================== */
+static void scenario19_noise_and_outlier_gate()
+{
+    std::printf("--- 19. ノイズ(5cm)+外れ値(+3.0m)混入下でLv2ゲートが効くこと ---\n");
+
+    // シナリオ2と同じ5台配置・同じ外れ値アンカー（無雑音での正解が
+    // 既に確認済みの組み合わせに、ノイズだけを足す）。
+    static const AnchorEntry entries[5] = {
+        {0x0001, {0.0f, 0.0f, 2.4f}, 0.0f, true}, {0x0002, {5.0f, 0.0f, 0.2f}, 0.0f, true},
+        {0x0003, {5.0f, 5.0f, 2.4f}, 0.0f, true}, {0x0004, {0.0f, 5.0f, 0.2f}, 0.0f, true},
+        {0x0005, {2.5f, 2.5f, 2.4f}, 0.0f, true},
+    };
+    const float truth[3] = {2.0f, 3.0f, 1.2f};
+    const size_t outlierIdx    = 2;
+    const float outlierBiasM   = 3.0f;
+    const double noiseSigmaM   = 0.05; // 5cm。アンカーsigma0既定0.1mの半分。
+
+    AnchorTable table;
+    CHECK(table.set(entries, 5), "AnchorTable::set() 失敗");
+    PositioningPipeline pipeline(table);
+
+    Rng32 rng;
+    rngSeed(rng, 20260823u); // 固定シード（このファイル内で再現性を持たせる）
+    const int trials = 200;
+    int nFail = 0, nCorrectExcluded = 0, nWrongExcluded = 0, nExcludedTrials = 0;
+    double sumErrWhenExcluded = 0.0;
+    float  worstErrWhenExcluded = 0.0f;
+
+    for (int t = 0; t < trials; ++t) {
+        RangingSample samples[5];
+        makeSamples(entries, 5, truth, samples);
+        samples[outlierIdx].distance_m += outlierBiasM;
+        for (size_t i = 0; i < 5; ++i) {
+            samples[i].distance_m = static_cast<float>(
+                static_cast<double>(samples[i].distance_m) + noiseSigmaM * rngNormal(rng));
+        }
+
+        const PositionResult lv2 = pipeline.solve(samples, 5, SolverLevel::Lv2);
+        if (!(lv2.solvable && lv2.ok)) {
+            ++nFail;
+            continue;
+        }
+
+        const bool excludedOutlier = (lv2.excluded & (1UL << outlierIdx)) != 0;
+        if (excludedOutlier) {
+            ++nCorrectExcluded;
+            ++nExcludedTrials;
+            const float e = dist3(lv2.p, truth);
+            sumErrWhenExcluded += static_cast<double>(e);
+            if (e > worstErrWhenExcluded) worstErrWhenExcluded = e;
+        } else if (lv2.excluded != 0) {
+            ++nWrongExcluded; // 外れ値ではない無関係なリンクを落とした
+        }
+    }
+
+    std::printf("    5cmノイズ+外れ値(添字%zu,+%.1fm) x%d回: 正しく棄却 %d / 無関係を誤棄却 %d / "
+                "解けず %d / 棄却時の座標誤差 平均 %.4f m 最大 %.4f m\n",
+                outlierIdx, static_cast<double>(outlierBiasM), trials, nCorrectExcluded, nWrongExcluded,
+                nFail, nExcludedTrials ? sumErrWhenExcluded / nExcludedTrials : 0.0,
+                static_cast<double>(worstErrWhenExcluded));
+
+    CHECK(nFail == 0, "ノイズ+外れ値混入で %d/%d 回解けなかった", nFail, trials);
+    // ゲートが実際に効いていることの核心のCHECK。
+    //
+    // 実測（このシード・この配置での固定値）: 200回中184回（92%）で正しく
+    // 棄却できる。redundancy=2（5測距−自由度3）と低めなので、Huberで
+    // ロバスト化した後の残差がノイズの乗り方次第でchi2ゲートの閾値
+    // (4*sigma=0.4m)をわずかに下回る試行が数%残る（tests/host/survey の
+    // scenario9(A-2)で文書化されているマスキングと同種の限界で、実装の
+    // バグではない）。閾値は実測(184)に十分な余裕を持たせつつ、
+    // 「ノイズを入れてもゲートがほぼ機能している」ことを担保する85%
+    // （170/200）に置く。
+    CHECK(nCorrectExcluded >= (trials * 85) / 100,
+          "外れ値を正しく棄却できたのが %d/%d 回しかない（ノイズ下でLv2ゲートが効いていない疑い）",
+          nCorrectExcluded, trials);
+    CHECK(nWrongExcluded == 0, "無関係なリンクを %d 回誤って棄却した", nWrongExcluded);
+    // 実測の最大 0.2263m に対して余裕を持たせた 0.35m（無制限の暴走は防ぐ）。
+    CHECK(worstErrWhenExcluded < 0.35f, "棄却後の座標誤差の最大値が大きすぎる: %.4f m",
+          static_cast<double>(worstErrWhenExcluded));
+}
+
+/* ==================================================================== *
+ * 20. 欠測 + 外れ値棄却の組み合わせ: excluded がアンカーテーブル添字を
+ *     指すこと（fillResult() の添字変換のバグを踏みやすい組み合わせ）
+ *
+ * シナリオ2（外れ値棄却）は欠測なしの5台、シナリオ3/4（欠測あり）は
+ * 外れ値バイアス無しだった。この2つを一度も同時に検証していなかった。
+ *
+ * PositioningPipeline::buildMeasurements() は samples を先頭から見て
+ * ok==true のものだけを measBuf_ に詰め、usedAnchorIndex[] に「measBuf_の
+ * 添字 -> アンカーテーブルの添字」の対応を残す。fillResult() はソルバが
+ * 返す uwb_fix.excluded（measBuf_ の添字基準のビット）をこの対応で
+ * アンカーテーブル添字基準へ変換する（uwb_ranging_pipeline.cpp 参照）。
+ * 欠測が「間」にあると measBuf_ の添字とアンカーテーブル添字がずれる
+ * （このシナリオでは添字1のアンカーが欠けるので、以降のアンカーは
+ * measBuf_上で必ず1つ若い位置に詰まる）ので、対応表を使わず measBuf_の
+ * 添字をそのままアンカー添字として扱う実装ミスがあれば、ここで
+ * excluded のビットが1つずれて検出できる。
+ *
+ * chi2ゲート（solve_gated, uwb_nls.c）は set->n > nf+1（3D なら > 3+1=4）
+ * のときしか働かないため、有効測距がちょうど4件（5台中1台欠測の最小構成）
+ * だとゲート自体が作動しない。ゲートを実際に働かせるため、ここでは
+ * 6台中1台欠測で有効5件（5 > 4）にしてある。
+ * ==================================================================== */
+static void scenario20_missing_plus_outlier_excluded_index()
+{
+    std::printf("--- 20. 欠測+外れ値棄却: excludedがアンカーテーブル添字を指すこと ---\n");
+
+    // 添字{0,2,3,4}にシナリオ1と同じ非同一平面4台（無雑音で誤差<1e-3m実証済み）
+    // を割り当て、添字1と5は「欠測にする1台」「外れ値にする1台」という
+    // 役回り専用のおまけアンカーにする。こうすると、欠測(添字1)と外れ値棄却
+    // (添字5)を両方取り除いたあとに残る集合が、たまたま同一直線/悪条件に
+    // ならず、座標誤差のチェックを添字変換以外の要因（幾何の悪条件）で
+    // 曇らせない。
+    static const AnchorEntry entries[6] = {
+        {0x0001, {0.0f, 0.0f, 2.4f}, 0.0f, true},  // シナリオ1と同じ4台(1/4)
+        {0x0002, {2.5f, 2.5f, 1.3f}, 0.0f, true},  // おまけ: これを欠測にする
+        {0x0003, {5.0f, 0.0f, 0.2f}, 0.0f, true},  // シナリオ1と同じ4台(2/4)
+        {0x0004, {5.0f, 5.0f, 2.4f}, 0.0f, true},  // シナリオ1と同じ4台(3/4)
+        {0x0005, {0.0f, 5.0f, 0.2f}, 0.0f, true},  // シナリオ1と同じ4台(4/4)
+        {0x0006, {2.5f, 2.5f, 2.4f}, 0.0f, true},  // おまけ: これに外れ値バイアス
+    };
+    const float truth[3] = {2.0f, 3.0f, 1.2f};
+
+    AnchorTable table;
+    CHECK(table.set(entries, 6), "AnchorTable::set() 失敗");
+
+    RangingSample samples[6];
+    makeSamples(entries, 6, truth, samples);
+
+    // アンカー添字1（0x0002）が欠測。有効なのは添字 {0,2,3,4,5} の5件で、
+    // measBuf_ にはこの順に詰まる（位置0..4）。つまり添字2以降は
+    // measBuf_上で必ず「添字−1」の位置にずれる。
+    samples[1].ok = false;
+
+    // アンカー添字5（0x0006。measBuf_上の位置は4）に大きな外れ値バイアス。
+    // 添字(5)と詰めた後の位置(4)が異なる状態を作るのが狙い。
+    const size_t outlierAnchorIdx = 5;
+    samples[outlierAnchorIdx].distance_m += 3.0f;
+
+    PositioningPipeline pipeline(table);
+    const PositionResult lv2 = pipeline.solve(samples, 6, SolverLevel::Lv2);
+
+    CHECK(lv2.nTotal == 5, "有効測距数の数え方がおかしい (nTotal=%d, 期待5)", lv2.nTotal);
+    CHECK(lv2.solvable, "有効測距5件あるのに solvable=0 になった");
+    CHECK(lv2.ok, "欠測+外れ値混入で解が維持されなかった (ok=%d, 残差RMS=%.4f)", lv2.ok,
+          static_cast<double>(lv2.residualRms));
+
+    const unsigned long expectedBit = (1UL << outlierAnchorIdx);
+    CHECK(lv2.excluded == expectedBit,
+          "excludedがアンカー添字%zu(期待0x%lx)を指していない (excluded=0x%lx)。"
+          "欠測でずれたmeasBuf_内の位置がそのまま出ている疑い（fillResult()の添字変換バグ）",
+          outlierAnchorIdx, expectedBit, lv2.excluded);
+    // 欠測アンカー自身（添字1）のビットが立っていないこと
+    // （欠測とexcludedが混同されていないか）。
+    CHECK((lv2.excluded & (1UL << 1)) == 0,
+          "欠測アンカー(添字1)のビットがexcludedに混入している (excluded=0x%lx)", lv2.excluded);
+
+    const float err = dist3(lv2.p, truth);
+    std::printf("    欠測(添字1)+外れ値(添字5,+3.0m): excluded=0x%lx / 座標誤差=%.4f m / nUsed=%d\n",
+                lv2.excluded, static_cast<double>(err), lv2.nUsed);
+    CHECK(err < 0.1f, "欠測+外れ値棄却後の座標誤差が大きすぎる (%.4f m)", static_cast<double>(err));
+}
+
 int main()
 {
     std::printf("=== tests/host/pipeline: uwb_ranging 測位パイプライン 合成データ検証 ===\n");
@@ -1092,6 +1313,8 @@ int main()
     scenario16_apply_timing_profile_preserves_other_fields();
     scenario17_payload_matches_either_and_timing_tag();
     scenario18_ranging_sample_t_us();
+    scenario19_noise_and_outlier_gate();
+    scenario20_missing_plus_outlier_excluded_index();
 
     std::printf("\n=== %d 件中 %d 件失敗 ===\n", g_run, g_fail);
     return (g_fail == 0) ? 0 : 1;

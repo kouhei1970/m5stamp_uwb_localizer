@@ -26,6 +26,20 @@
 
 static const char *TAG = "uwb_port";
 
+/* 【M-1】本ファイルの deca_sleep()（下記）は「1 tick <= 1ms」
+ * （= CONFIG_FREERTOS_HZ >= 1000）を前提に、tick境界の切り捨てを
+ * +1 tick で吸収している（docs/REVIEW_2026-08-21.md §1 M-1）。
+ * firmware/<app>/sdkconfig.defaults はいずれも CONFIG_FREERTOS_HZ=1000 を
+ * 明示済みだが、将来どこかの sdkconfig.defaults がこの値を下げて
+ * ビルドしてしまうと deca_sleep() の +1 tick 丸めが前提から外れ
+ * （1 tick が 1ms を超えるため、+1 tick が deca_sleep(2) 等の短い
+ * 待ちに対して過大/過小どちらの側にも意図と違う量になりうる）、
+ * uwb_qm33120*.cpp 各所の pdMS_TO_TICKS(1) ベースの待ちループ粒度の
+ * 前提も崩れる。実機を焼く前にビルドで気付けるよう #error で弾く。 */
+#if !defined(CONFIG_FREERTOS_HZ) || (CONFIG_FREERTOS_HZ < 1000)
+#error "uwb_port.c requires CONFIG_FREERTOS_HZ >= 1000 (1 tick <= 1ms); see firmware/*/sdkconfig.defaults and deca_sleep() below."
+#endif
+
 /* Fixed-size DMA scratch buffers. 4096 bytes comfortably covers any
  * header+body(+crc) combination used by the Qorvo driver's SPI transfers;
  * anything larger is rejected with DWT_ERROR rather than silently
@@ -60,7 +74,18 @@ static bool s_irq_active              = false; /* uwb_port_irq_enable() に成�
 
 void deca_sleep(unsigned int time_ms)
 {
-    vTaskDelay(pdMS_TO_TICKS(time_ms));
+    /* 【M-1】pdMS_TO_TICKS(time_ms) だけだと、呼び出しタイミングが
+     * tick境界の直前だった場合に実待ち時間が最短 (time_ms-1) tick まで
+     * 短くなりうる（vTaskDelay() は「次のtick境界までの端数」を
+     * 切り捨てるため）。SDK内部（例: dw3720_device.c の
+     * ull_softreset() 等、「DW3720 needs 1.5ms to initialise」コメント
+     * 付近）は deca_sleep(2) のような短い待ちを多用しており、切り捨てが
+     * 起きるとチップ側が要求する最短待ち時間を割り込む恐れがある。
+     * +1 して「実待ちは必ず time_ms 以上になる」側へ丸める
+     * (docs/REVIEW_2026-08-21.md §1 M-1)。ファイル冒頭の #error により
+     * CONFIG_FREERTOS_HZ>=1000（1 tick <= 1ms）が保証されているので、
+     * この+1による超過分は高々1ms未満に収まる。 */
+    vTaskDelay(pdMS_TO_TICKS(time_ms) + 1);
 }
 
 void deca_usleep(unsigned long time_us)
@@ -461,7 +486,7 @@ esp_err_t uwb_port_irq_enable(void)
      * （後者は各待ちループの通常のステータス判定が不一致フレームとして
      * 処理し続けるだけで、実害はvTaskDelay(1)相当に留まる想定）。
      * pull_down_en = GPIO_PULLDOWN_DISABLE (2026-08-21訂正): 公式回路図
-     * (assets/SCH_UWB_MODULE_SCH_main_V0.2_...pdf、docs/SOLDER_PADS.md
+     * (assets/SCH_UWB_MODULE_SCH_main_V0.2_...pdf、docs/WIRING.md
      * §5.5(4)) で、M5Stamp UWB Module上にDW_IRQをVCC_3V3へプルアップする
      * 抵抗R2(10kΩ)が実装済みであることが判明した。ESP32-S3の内部プルダウン
      * (概算45kΩ程度)はこの10kΩに負けるため、有効化してもIRQピンをLow側へ

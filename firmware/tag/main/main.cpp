@@ -37,6 +37,7 @@
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
+#include <cstring>
 
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -158,7 +159,7 @@ static uwb::Config makeConfigFromBoard()
 #endif
     // タイミングプリセット(docs/TIMING_PRESETS.md、タスクD)。相手(Anchor)へ
     // Poll フレームで伝わり、不一致検出に使われる
-    // (uwb_qm33120_twr.cpp checkTimingTagAndWarn())。
+    // (uwb_qm33120_twr.cpp checkTimingTag()/logTimingMismatch())。
     cfg.timing_profile = TIMING_PROFILE;
     return cfg;
 }
@@ -226,6 +227,68 @@ static void jsonAppend(char* buf, size_t cap, size_t* off, const char* fmt, ...)
     }
 }
 
+/**
+ * @brief JSON 1行の末尾の閉じ（"]}\n"）を必ず書き込む。
+ *
+ * 【修正7】docs/archive/REVIEW_2026-08-21.md app層M-4: jsonAppend() は
+ * バッファが逼迫すると超過分を無言で捨てて *off をそれ以上進めなくする
+ * （*off は cap-1 付近で頭打ちになる）。これまでは printXxxLine() の
+ * どれも最後に普通の jsonAppend(buf, JSON_BUF_SIZE, &off, "]}\n") を
+ * 使っていたため、直前までの内容だけで容量を使い切っていると、この
+ * 最後の閉じ自体も捨てられて改行の無いままバッファが終わる。
+ * fputs() はその不完全な文字列をそのまま書き出すので、次に出力される
+ * 行の先頭（"{"...）と連結してしまい、ホスト側の「1行=1JSON」前提の
+ * パーサ（third_party/uwb_localizer/uwb_loc/hal/jsonl.py 等、readline()
+ * で1行ずつ json.loads() する）がその周辺の行をまとめて壊す。
+ *
+ * この関数は「容量が足りなければ直前のバイトを巻き戻してでも」"]}\n"
+ * を必ず書き切る。巻き戻しが発生した（＝この行のどこかで jsonAppend()
+ * の切り詰めが既に起きていた）場合は、"]}\n" の直前にテキストの目印
+ * "...TRUNCATED..." を残す。切り詰められた行は（配列要素の途中で
+ * 切れている可能性があるため）そもそも有効なJSONである保証はできない
+ * が、それは今回の要件ではない — 保証するのは「必ず改行で終わる」こと
+ * だけであり、これにより巻き添えで壊れる行をこの1行だけに抑えられる。
+ */
+static void jsonAppendClose(char* buf, size_t cap, size_t* off)
+{
+    static const char kClose[]     = "]}\n";
+    static const char kTruncated[] = "...TRUNCATED...]}\n";
+    const size_t closeLen           = sizeof(kClose) - 1;
+    const size_t truncatedLen       = sizeof(kTruncated) - 1;
+
+    // *off が cap-1 付近まで来ているなら、手前で jsonAppend() の切り詰めが
+    // 既に起きていたとみなす（通常の内容がたまたまこの数バイト差ちょうど
+    // に収まる確率は無視できるほど低い）。
+    const bool truncated = (*off + closeLen + 1) > cap;
+
+    const char* closing;
+    size_t len;
+    if (!truncated) {
+        closing = kClose;
+        len      = closeLen;
+    } else if (cap > truncatedLen) {
+        // 目印込みでも収まる: 収まる位置まで手前のバイトを巻き戻す。
+        *off    = cap - truncatedLen - 1;
+        closing = kTruncated;
+        len      = truncatedLen;
+    } else if (cap > closeLen) {
+        // 目印までは入らない: 最低限の閉じだけは必ず書く。
+        *off    = cap - closeLen - 1;
+        closing = kClose;
+        len      = closeLen;
+    } else {
+        // cap が異常に小さい（現状の JSON_BUF_SIZE では起こらない）。
+        // 書けるものが無いので、最低限バッファを空文字列にしておく。
+        buf[0] = '\0';
+        *off    = 0;
+        return;
+    }
+
+    std::memcpy(buf + *off, closing, len);
+    *off += len;
+    buf[*off] = '\0';
+}
+
 /** アンカーの短縮ID文字列（"A0002"のような形）を作る。JSON側の"a"/"id"に使う。 */
 static void formatAnchorId(uint16_t shortAddr, char* out, size_t outSize)
 {
@@ -251,7 +314,7 @@ static void printAnchorsLine(const uwb::AnchorTable& table)
                    static_cast<double>(e.pos[2]), static_cast<double>(e.antenna_delay_m),
                    e.enabled ? "true" : "false");
     }
-    jsonAppend(buf, JSON_BUF_SIZE, &off, "]}\n");
+    jsonAppendClose(buf, JSON_BUF_SIZE, &off); // 【修正7】末尾の閉じは必ず書く（jsonAppendClose() 冒頭コメント参照）
     std::fputs(buf, stdout);
 }
 
@@ -278,7 +341,7 @@ static void printMeasLine(double t, const uwb::AnchorTable& table, const uwb::Ra
                    static_cast<double>(samples[i].distance_m));
         first = false;
     }
-    jsonAppend(buf, JSON_BUF_SIZE, &off, "]}\n");
+    jsonAppendClose(buf, JSON_BUF_SIZE, &off); // 【修正7】末尾の閉じは必ず書く（jsonAppendClose() 冒頭コメント参照）
     std::fputs(buf, stdout);
 }
 
@@ -287,14 +350,20 @@ static void printMeasLine(double t, const uwb::AnchorTable& table, const uwb::Ra
  *  両方から呼ぶ共通部分。 */
 static void appendResultBody(char* buf, size_t cap, size_t* off, const uwb::PositionResult& r)
 {
+    // 【修正4】"redundancy" (= n_used - (dim+1)) を追加。0 は「Lv2のロバスト
+    // 外れ値棄却が自由度不足で原理的に効いていない解」を意味する
+    // (docs/archive/REVIEW_2026-08-21.md app層M-1、
+    // components/uwb_ranging/include/uwb_ranging_types.hpp の
+    // PositionResult::redundancy 参照)。ホスト側で ok=true かつ
+    // redundancy=0 の行を見分けられるよう、n_used/n_total と並べて出す。
     jsonAppend(buf, cap, off,
                "\"ok\":%s,\"ambiguous\":%s,\"solvable\":%s,"
                "\"p\":[%.4f,%.4f,%.4f],\"gdop\":%.4f,\"residual_rms\":%.4f,\"sigma\":%.4f,"
-               "\"n_used\":%d,\"n_total\":%d,\"excluded\":\"0x%08lX\"",
+               "\"n_used\":%d,\"n_total\":%d,\"redundancy\":%d,\"excluded\":\"0x%08lX\"",
                r.ok ? "true" : "false", r.ambiguous ? "true" : "false", r.solvable ? "true" : "false",
                static_cast<double>(r.p[0]), static_cast<double>(r.p[1]), static_cast<double>(r.p[2]),
                static_cast<double>(r.gdop), static_cast<double>(r.residualRms),
-               static_cast<double>(r.sigma), r.nUsed, r.nTotal, r.excluded);
+               static_cast<double>(r.sigma), r.nUsed, r.nTotal, r.redundancy, r.excluded);
 }
 
 /** ソルバの計算時間 [us]（esp_timer_get_time() の差分）。 */
@@ -366,7 +435,7 @@ static void printFixLine(double t, uint32_t cycleMs, const uwb::AnchorTable& tab
                        tAnchor);
         }
     }
-    jsonAppend(buf, JSON_BUF_SIZE, &off, "]}\n");
+    jsonAppendClose(buf, JSON_BUF_SIZE, &off); // 【修正7】末尾の閉じは必ず書く（jsonAppendClose() 冒頭コメント参照）
     std::fputs(buf, stdout);
 }
 
@@ -403,7 +472,7 @@ static void printStatsLine(double t, const uwb::AnchorTable& table, const uwb::R
                    (i == 0) ? "" : ",", id, static_cast<unsigned long>(s.attempts),
                    static_cast<unsigned long>(s.successes), static_cast<double>(s.successRate()));
     }
-    jsonAppend(buf, JSON_BUF_SIZE, &off, "]}\n");
+    jsonAppendClose(buf, JSON_BUF_SIZE, &off); // 【修正7】末尾の閉じは必ず書く（jsonAppendClose() 冒頭コメント参照）
     std::fputs(buf, stdout);
 }
 
@@ -612,6 +681,16 @@ extern "C" void app_main(void)
             if (tagapp::takePendingTable(g_workEntries, uwb::kMaxAnchors, &pendingCount)) {
                 if (applyAnchorTable(table, g_workEntries, pendingCount)) {
                     ESP_LOGI(TAG, "アンカー登録テーブルを更新しました（%zu 件）", pendingCount);
+                    // 【修正5】docs/archive/REVIEW_2026-08-21.md app層M-2:
+                    // RangingScheduler::stats_[] はアンカーテーブルの添字で
+                    // 引く成功率統計。テーブルを差し替えると台数・アドレス・
+                    // 座標が変わりうるのに、reset せずに使い続けると
+                    // 「新しいidx=2が指すアンカー」の成功率に「差し替え前の
+                    // idx=2が指していた別アンカー」の統計が混ざってしまう
+                    // （配列の添字が指す実体が変わっただけで、配列自体は
+                    // クラッシュせず動き続けてしまうため気付きにくい）。
+                    // テーブル差し替えが成功した直後に必ずリセットする。
+                    scheduler.resetStats();
 #if CONFIG_UWB_TAG_ENABLE_EKF
                     // 観測モデル（アンカー座標・台数）が変わったので EKF は組み直す。
                     pipeline.initEkf();

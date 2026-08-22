@@ -2,7 +2,7 @@
  * @file uwb_qm33120_units.hpp
  * @brief 実マイクロ秒(us) <-> UUS(UWB microseconds) の変換ヘルパと、SFD
  * タイムアウト自動計算式。docs/archive/REIMPL_PLAN.md の R1 / R8 で追加。
- * 詳細な単位リファレンスは docs/UNITS.md。
+ * 詳細な単位リファレンスは docs/GLOSSARY.md。
  *
  * このヘッダは ESP-IDF / Qorvo SDK のヘッダに一切依存しない（<cstdint> のみ）。
  * uwb_qm33120_types.hpp は uwb_port.h 経由で driver/spi_master.h (ESP-IDF)

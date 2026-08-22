@@ -1,4 +1,4 @@
-# 遅延プリセットとバージョン不一致検出（設計、2026-08-21）
+# 遅延プリセットとバージョン不一致検出（設計）
 
 `docs/IRQ_POLICY.md` §実装要件 2 / 3 の実装仕様。**実装前の設計ノートであり、
 実機検証は済んでいない**（本リポジトリの他の数値と同じ扱い）。
@@ -26,7 +26,7 @@ DS-TWR（Double-Sided TWR、両側二方向測距）は**両側に遅延送信�
 ## 1. 締切がどこから来るか（数値の根拠）
 
 すべての `*Uus` は UUS（UWB microsecond）単位（1 UUS = 512/499.2 µs = 1.02564 µs）。**UUS とは何か、なぜ実 µs と
-違うのか、Qorvo 公式の `*_UUS` 定数がなぜそのまま使えないのかは `docs/UNITS.md` を必ず先に読むこと。**
+違うのか、Qorvo 公式の `*_UUS` 定数がなぜそのまま使えないのかは `docs/GLOSSARY.md` を必ず先に読むこと。**
 以下の導出は**実 µs** で行い、最後に UUS へ直す。
 
 ### 1.1 フレームの長さ
@@ -72,7 +72,7 @@ R − (frame_len − SHR) − SHR  =  R − frame_len  ≈  R − 179 µs
 ### 1.3.1 Qorvo 公式サンプルとの照合
 
 `docs/refs/qorvo_api/DW3XXX_API_rev9p3/API/Src/examples/` を `grep -a` で確認した実値
-（**Qorvo の `*_UUS` 定数は実マイクロ秒**。→ `docs/UNITS.md` §3）:
+（**Qorvo の `*_UUS` 定数は実マイクロ秒**。→ `docs/GLOSSARY.md` §3）:
 
 | 定数 | 値（実 µs） | 出典 |
 |---|---:|---|
@@ -241,14 +241,32 @@ choice UWB_TIMING_PROFILE
     default UWB_TIMING_PROFILE_POLLING_BOTH
     config UWB_TIMING_PROFILE_POLLING_BOTH   bool "両側ポーリング（31 Hz、実機未検証の既定）"
     config UWB_TIMING_PROFILE_ANCHOR_IRQ     bool "アンカーのみ IRQ（59 Hz、標準構成）"
-    config UWB_TIMING_PROFILE_BOTH_IRQ       bool "両側 IRQ（90 Hz、タグを別配線した場合）"
+    config UWB_TIMING_PROFILE_BOTH_IRQ       bool "両側 IRQ（90 Hz、タグ側にも IRQ が必要）"
 endchoice
 ```
 
-**既定は `PollingBoth`**。現在の既定値と同一で挙動が変わらないため。
-実機で Phase 1〜2 が通ってから `AnchorIrq` を既定に上げる。
+`BothIrq` はタグ側にも IRQ が必要な構成である。StampFly 搭載タグの接続経路が M5StampS3A
+背面の 12P FPC 経由になり、G16 の IRQ が実際に取れるようになったことで
+（`boards/stampfly.h`、`docs/IRQ_POLICY.md`）、`BothIrq` が実際に成立する構成になっている。
+
+**既定は `BothIrq`**（全ボードで IRQ が取れるため。`docs/IRQ_POLICY.md`）。
+**本ドキュメントの数値はいずれも実機未検証**であり、IRQ の極性も未検証なので、
+測距が成立しないときは `PollingBoth` へ落として切り分けること。
 
 `docs/GETTING_STARTED.md` に「**アンカーとタグは必ず同じプリセットで焼くこと**」を明記する。
+
+### 5.1 CI ビルド（`.github/workflows/build.yml`）
+CI の firmware マトリクスは**既定（`BothIrq` + IRQ 有効）で焼いた base variant** と、
+IRQ が動かなかったとき用の**フォールバック**の2系統を配布している:
+
+| variant | プリセット |
+|---|---|
+| `anchor-stamps3-ds` / `tag-stampfly-ds` ほか base | `BothIrq`（90 Hz、既定） |
+| `anchor-stamps3-ds-polling` / `tag-stampfly-ds-polling` | `PollingBoth`（31 Hz、フォールバック） |
+
+**どちらもタグとアンカーでセットを揃えること。** 片側だけ別のプリセットを焼くと、
+相手側は違う締切で待つことになり測距が成立しない（§0）。
+`AnchorIrq`（59 Hz）は CI では配布していないが、menuconfig で選べる。
 
 ---
 
@@ -268,7 +286,7 @@ endchoice
 
 ---
 
-## 7. 実装状況（2026-08-21 実装）
+## 7. 実装状況
 
 本ドキュメントの設計は**実装済み**。実際のシンボル名は以下の通り。
 

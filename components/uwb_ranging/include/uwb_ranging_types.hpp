@@ -133,6 +133,25 @@ struct PositionResult {
     unsigned long excluded = 0;
 
     SolverLevel levelUsed = SolverLevel::Lv2; //!< 実際に使われたレベル
+
+    /**
+     * @brief 冗長度（= nUsed - (dim+1)）。dim は測位の次元（2D=2、3D=3）。
+     * 末尾に追加（既存の公開APIを壊さないため。docs/archive/REVIEW_2026-08-21.md
+     * app層M-1）。
+     *
+     * Lv2のロバスト外れ値棄却（観測を1つずつ除いて再解を試し、最も残差の
+     * 小さい組み合わせを採用する方式）は、自由度（冗長な観測）が最低1つ
+     * 無いと原理的に機能しない。3DはminValid3d=4
+     * （PositioningConfig::minValid3d、dim+1と一致するちょうど最小値）
+     * なので、有効測距がちょうど4件のときはnUsed==4==dim+1で
+     * redundancy==0になり、外れ値棄却が効かないままok=trueを返しうる
+     * （1本の観測が数mずれていても検出できない）。この値を見れば、
+     * 呼び出し側が「この解は外れ値棄却が効いていない（少なくとも1本
+     * 壊れていても気付けない）解だ」と判断できる。fillResult()
+     * （uwb_ranging_pipeline.cpp）が埋める。solvable==falseのときは
+     * 0のまま（意味を持たない）。
+     */
+    int redundancy = 0;
 };
 
 } // namespace uwb

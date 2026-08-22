@@ -35,23 +35,39 @@ GitHub Actions が全ファームをビルドし、**そのまま書き込める
 | 2台で距離を測る | `twr-tag-ss` + `twr-anchor-ss` | 実験2 |
 | 同上（本番方式） | `twr-tag-ds` + `twr-anchor-ds` | 実験3 |
 | **5台のアンカー + タグで測位** | `anchor-*-ds` ×1（5台に同じものを書く）+ `tag-*-ds` | 実験5・6 |
-| 速くする（59 Hz） | `anchor-*-ds-fast` + `tag-*-ds-fast` | 実験7・8 |
+| **IRQ が動かないときのフォールバック（31 Hz）** | `anchor-stamps3-ds-polling` + `tag-stampfly-ds-polling` | 下記 |
 
 ### ボードの選び方
 
 | 手元のボード | 選ぶ variant |
 |---|---|
-| M5StampS3A | `*-stamps3` |
-| **AtomS3R（現行）** | `*-atoms3-pinoutB` |
-| 無印 AtomS3（在庫限り） | `*-atoms3-pinoutA` |
+| **M5StampS3A + StampS3 BreakOut（標準構成）** | `*-stamps3` |
+| AtomS3R（代替） | `*-atoms3-pinoutB` |
+| 無印 AtomS3（代替・在庫限り） | `*-atoms3-pinoutA` |
 | StampFly に載せる | `*-stampfly` |
 
 構成 A / B の違いは [`IRQ_POLICY.md`](IRQ_POLICY.md) を参照。
 **AtomS3R は G38/G39 が空いているので構成 B（ToF を Grove に挿すだけ）が綺麗**です。
 
-### `-fast` は必ずペアで使う
+> **例外: `twr-anchor-ss` / `twr-anchor-ds` はボード名を含みません。**
+> この2つは **M5StampS3A 用にビルドされたもの**です（標準構成が
+> M5StampS3A + StampS3 BreakOut になったため）。
+> AtomS3 をアンカー役にして実験2・3をやる場合は `firmware/twr` を自分で
+> ビルドしてください
+> （`CONFIG_UWB_TWR_BOARD_ATOMS3=y` + `CONFIG_UWB_TWR_ROLE_ANCHOR=y`）。
 
-`anchor-*-ds-fast` と `tag-*-ds-fast` は**必ず両方**書き込んでください。
+### 既定は IRQ（両側 IRQ、約 90 Hz）
+
+**上表の `anchor-*` / `tag-*` は IRQ 有効・遅延プリセット `BothIrq` で焼いてあります。**
+IRQ の極性は実機で未検証なので、**測距が全く出ないときはまずここを疑ってください。**
+起動ログの `irq=` 行が `polling` なのに遅延が `BothIrq` のままだと成立しません
+（[`IRQ_POLICY.md`](IRQ_POLICY.md)）。
+
+そのときは `*-polling` 版（IRQ 無効 + `PollingBoth`）に差し替えます。
+
+### `-polling` は必ずペアで使う
+
+`anchor-stamps3-ds-polling` と `tag-stampfly-ds-polling` は**必ず両方**書き込んでください。
 **遅延プリセットはタグとアンカーで一致していないと測距が成立しません**
 （[`TIMING_PRESETS.md`](TIMING_PRESETS.md)）。
 片方だけ焼くと起動ログに不一致の警告が出ます。
@@ -94,9 +110,12 @@ esptool.py --chip esp32s3 -p /dev/cu.usbmodemXXXX write_flash 0x0 merged-firmwar
 2. ファイルに `merged-firmware.bin`、**Flash Address に `0x0`** を指定
 3. **Program**
 
-> **書き込みモードに入れないとき**: M5StampS3A は中央のボタンを押しながら USB を挿す、
+> **書き込みモードに入れないとき**: **StampS3 BreakOut を使っている場合は
+> G0 ボタンを押しながら EN ボタンを押して離す**のが確実です（BreakOut は
+> G0 と EN にタクトスイッチを持っています）。
+> BreakOut 無しの M5StampS3A 単体では中央のボタンを押しながら USB を挿す、
 > AtomS3 は側面のリセットボタンを 2 秒ほど長押しします
-> （**この操作は本リポジトリでは実機確認していません**）。
+> （**BreakOut 以外の操作は本リポジトリでは実機確認していません**）。
 
 ### 出力を見る
 
@@ -107,7 +126,7 @@ esp-idf-monitor -p /dev/cu.usbmodemXXXX
 ```
 `screen /dev/cu.usbmodemXXXX 115200` でも読めます（抜けるのは `Ctrl-A` `K`）。
 
-期待される出力は [`BRINGUP.md`](BRINGUP.md) と [`GETTING_STARTED.md`](GETTING_STARTED.md) を参照。
+期待される出力は [`GETTING_STARTED.md`](GETTING_STARTED.md) と [`GETTING_STARTED.md`](GETTING_STARTED.md) を参照。
 
 ---
 
@@ -133,7 +152,7 @@ esp-idf-monitor -p /dev/cu.usbmodemXXXX
 
 - **ピン割り当て**（`boards/*.h`）
 - ボードの種類、SS-TWR / DS-TWR の別
-- **IRQ の有効/無効、遅延プリセット**（`-fast` 版として別に用意してあります）
+- **IRQ の有効/無効、遅延プリセット**（既定は IRQ 有効 + `BothIrq`。`*-polling` 版も配布しています）
 - SPI クロック、EKF の有効化、2D フォールバックの挙動
 
 これらを触るときは [`GETTING_STARTED.md` §2](GETTING_STARTED.md#setup) の手順で
@@ -146,9 +165,9 @@ ESP-IDF を入れて自分でビルドしてください。
 `.github/workflows/build.yml`:
 
 1. **ホスト側テスト**（`test_pipeline` / `test_survey` / `tests/host/loc`）を実行
-   ※ 上流 `uwb_localizer` は 2026-08-21 に凍結・最終取り込み済み。CI は上流を
+   ※ 上流 `uwb_localizer` は凍結・最終取り込み済み。CI は上流を
    clone せず、本リポジトリ内のソースだけでテストします
-2. **14 通りのファーム**を ESP-IDF v5.5.2 でビルドし、`idf.py merge-bin` で結合
+2. **15 通りのファーム**を ESP-IDF v5.5.2 でビルドし、`idf.py merge-bin` で結合
 3. artifact として保存し、**タグを打った時は Release に添付**
 
 各 artifact には `kconfig-used.txt`（そのバイナリに焼き込まれた設定）と
@@ -171,5 +190,5 @@ zip の中身一覧:
 ## 関連文書
 - [`EXPERIMENT_PLAN.md`](EXPERIMENT_PLAN.md) — どの順で試すか
 - [`GETTING_STARTED.md`](GETTING_STARTED.md) — 配線から測位までの完全手順
-- [`BRINGUP.md`](BRINGUP.md) — 実験1（SPI 疎通）の受入基準
-- [`TIMING_PRESETS.md`](TIMING_PRESETS.md) — `-fast` 版で何が変わるか
+- [`GETTING_STARTED.md`](GETTING_STARTED.md) — 実験1（SPI 疎通）の受入基準
+- [`TIMING_PRESETS.md`](TIMING_PRESETS.md) — 遅延プリセットで何が変わるか

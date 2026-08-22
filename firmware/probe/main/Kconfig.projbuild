@@ -15,10 +15,13 @@ menu "UWB Probe Configuration"
             bool "M5 AtomS3"
 
         config UWB_PROBE_BOARD_STAMPFLY
-            bool "StampFly (M5StampS3A on drone, GROVE x2 -> SPI)"
+            bool "StampFly (M5StampS3A on drone, rear 12P FPC)"
             help
-                GROVE 2系統4本を SPI に使い切るため IRQ / RST は無し。
-                ポーリング動作になる (docs/IRQ_POLICY.md, boards/stampfly.h)。
+                M5StampS3A 背面に予約されている 12P FPC (0.5mm) 経由で
+                接続する構成。SPI 4線に加えて RST / IRQ / WAKEUP がすべて
+                取れる (boards/stampfly.h)。電源も同じコネクタの VDD_3V3
+                から取るので降圧回路は要らない。
+                旧 GROVE 4線構成は廃案 (2026-08-22)。
 
     endchoice
 

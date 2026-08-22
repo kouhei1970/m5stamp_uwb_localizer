@@ -6,9 +6,57 @@
 
 ## 0. 次セッションの任務
 
-> **実機検証の前に追加で読む文書は無い。** `docs/REVIEW_2026-08-21.md` の Critical 1・High 6 は
-> 本日中に**全件対応済み**（§0 の表参照。#6 外れ値棄却・#7 ライセンス同梱も本セッションで解消した）。
-> 残っているのは実機でしか確認できない項目だけである。
+> 実機投入前レビュー（[`archive/REVIEW_2026-08-21.md`](archive/REVIEW_2026-08-21.md)）の
+> **Critical 1・High 6 は全件対応済み**。ただし**Medium 以下とテストの穴は未対応で残っている**
+> （下記「レビューから引き継いだ未対応項目」）。
+
+### レビューから引き継いだ項目は棚卸し・修正済み
+
+実機投入前レビューの着手順 7〜10 を全件コードと突き合わせ、**実際に未対応だった
+7 件を修正した**（5 件は後続コミットで既に解消済みだった）。
+
+修正した内容:
+
+| 層 | 直したもの |
+|---|---|
+| TWR | 折返し中の重い `ESP_LOGW` を、遅延送信の予約が済んだ後へ移した（予約が間に合わなくなるのを防ぐ） |
+| TWR | アンカーの Poll 待ちだけタイムアウトを 200ms に分離（10ms ごとに受信機を落として Poll を取りこぼしていた） |
+| port | `deca_sleep()` を `+1 tick` に。`CONFIG_FREERTOS_HZ < 1000` を `#error` で弾く |
+| app | `PositionResult::redundancy` を追加し JSON に出す。`0` なら外れ値棄却が原理的に効かない |
+| app | アンカーテーブル差し替え時に `resetStats()` を呼ぶ |
+| app | 同一ショートアドレスの重複登録を拒否 |
+| app | JSON の閉じを必ず書く（落ちると次行と連結して不正 JSON になっていた） |
+| テスト | `test_pipeline` にノイズ付き外れ値ゲート試験（200試行）と、欠測+`excluded` の添字検証を追加 |
+| ビルド | 4 つの Makefile に `-MMD -MP`。`sanitize` を全スイートに揃え、`tests/Makefile` に集約 |
+
+**実機が要るのは H2（IRQ プリセットの `finalTxDelay`）だけ。** レビュー自身が
+「実機の `dwt_starttx` 失敗回数を見て決める」としており、実機なしで数値を動かすと
+検証の基準が変わるので手を付けていない。実験7・8 で失敗率を見てから判断すること。
+
+### ブランチ `feat/stamps3-fpc-migration` での変更
+
+前回 HANDOFF 時点（HEAD `dffcde5`、main）から本ブランチで6コミット
+（`git log --oneline main..HEAD` で確認可能。一覧は §1）を積み、ハードウェア構成の
+既定を切り替えた:
+
+- **アンカー5台＋据置タグ1台を M5StampS3A + StampS3 BreakOut に統一**（`UWB_ANCHOR_BOARD_STAMPS3` /
+  `UWB_TAG_BOARD_STAMPS3` が既定）。**AtomS3(R) は削除せず代替として残す。**
+  UWB モジュールは S017-F を 0.5mm 12P FPC + FPC→DIP 変換基板で接続する（`docs/WIRING.md` 経路A）
+- **StampFly 搭載タグは M5StampS3A 背面の 12P FPC 経由に切り替え**（`UWB_TAG_BOARD_STAMPFLY`、
+  `boards/stampfly.h` 全面改訂）。**旧 GROVE 2系統4本構成は廃案**（RST/IRQ/WAKEUP が取れず、
+  GROVE が電池電圧直結・満充電約4.35V で絶対最大定格4.0Vを超えるため LDO が必須だった。
+  新経路は背面 FPC の VDD_3V3 に直結できるため LDO 不要）
+- RST/IRQ/WAKEUP が全構成で取れるようになったので、**IRQ を既定にした**。
+  遅延プリセットの既定も `PollingBoth` → **`BothIrq`（約90Hz）**。
+  **IRQ の極性は実機未検証なので、測距が出ないときは `*-polling` 版へ落として切り分ける**
+  （`docs/IRQ_POLICY.md`）
+- ドキュメントを 22 本 → 17 本に整理。廃案・訂正・経緯は
+  [`archive/DESIGN_HISTORY.md`](archive/DESIGN_HISTORY.md) へ退避し、現役文書には
+  「いま正しいこと」だけを残した。対応表は同文書 §5
+
+**このブランチは push 済み・`main` へは未マージ。** まず差分をレビューし、
+問題なければ `main` へマージすること。**CI は feature ブランチへの push では走らない**
+（トリガが `push: branches: [main]` と `pull_request`）ので、確認には PR が要る。
 
 **実機が届いたらこの順で進める**（詳細・判断基準は
 **[`docs/EXPERIMENT_PLAN.md`](EXPERIMENT_PLAN.md)**）:
@@ -27,10 +75,18 @@
    引き上げた効果の確認（レビュー H-1。残量が小さければ専用タスクへの分離を検討）
 3. `INIT_FAILED` が **出ないこと**（`dwt_checkidlerc()` 待ちタイムアウト。レビュー M-2 の対策確認）
 
-**実機到着前にできることは実質もう無い。** 旧版の「すぐ着手できる」項目 A〜F は前回セッションで
-すべて完了しており、本セッションでレビュー #6（外れ値棄却）・#7（ライセンス同梱）も解消し、
-すべてコミット・push 済み（`dffcde5`、CI green）。
-強いてやるなら以下の任意項目のみ:
+**実機到着前にできることはまだ残っている。** 旧版の「すぐ着手できる」項目 A〜F、レビュー #6
+（外れ値棄却）・#7（ライセンス同梱）は前々回・前回セッションで完了・コミット・push 済み
+（`dffcde5`、main、CI green）。その後 `feat/stamps3-fpc-migration` ブランチでハードウェア構成の
+既定を切り替えたことで、**実機を待たずに進められる作業が新たに生まれている**:
+
+- **FPC→DIP 変換基板の型番選定と接点面（同面／異面）の確認**（`docs/EXPERIMENT_PLAN.md` §10 #13）
+- **M5StampS3A 背面 12P FPC コネクタの入手**（HDGC/0.5K-HX-12PWB。出荷時は未実装で後付けが要る）
+- **StampS3 BreakOut の PinMap 確認**（3V3/GND のヘッダ位置。同 §10 #15）
+
+配線図（`docs/WIRING.md`）とピン定義（`boards/stamps3.h` / `boards/stampfly.h`）はすでに
+確定しているので、部材さえ揃えばこれらは実機（UWB モジュール本体）の到着を待たずに進められる。
+それ以外に強いてやるなら以下の任意項目のみ:
 
 - `uwb_math` の `uwb_sym3_solve_sphere` と Beck のλ探索の共通化（反復の形が同型。任意）
 - `v0.2.0` を切るかどうかの判断（§1 Release 参照。全件コミット済みなので
@@ -45,7 +101,7 @@
 
 | リポジトリ | 状態 |
 |---|---|
-| **m5stamp_uwb_localizer**（本体） | GitHub 公開済み `kouhei1970/m5stamp_uwb_localizer`（public）。HEAD は `dffcde5`。未コミットの変更なし（ワークツリーはクリーン、origin/main と一致） |
+| **m5stamp_uwb_localizer**（本体） | GitHub 公開済み `kouhei1970/m5stamp_uwb_localizer`（public）。`main` の HEAD は `dffcde5`。**現在の作業ブランチ `feat/stamps3-fpc-migration`（HEAD `9730d66`、main から6コミット、未マージ・未 push）で作業中**。ワークツリーには本ブランチの文書更新に伴う未コミットの差分がある |
 | **uwb_localizer**（上流） | **2026-08-21 に凍結・独立**（`42daea9`。上流 `667551e` を取り込み）。以後 `components/uwb_loc/` は本リポジトリで独立して開発する。**上流は見ない** |
 | stampfly_ecosystem | `third_party/stampfly_ecosystem` に読み取り専用クローンあり。**書き込み禁止** |
 | 一次資料（PDF/公式API） | `docs/refs/`。**`.gitignore` 済み**（再配布禁止文書を含む） |
@@ -76,8 +132,22 @@
    `uwb_survey_input.chirality`、`uwb_survey_result.outlier_ambiguous` / `chirality_margin` を追加。
 3. **`uwb_math` へ LDLᵀ・`solve_sphere`・`null_vector` 等を統合**
    `components/uwb_math/{include,src}` / `components/uwb_loc/src/{uwb_closed_form.c,uwb_internal.h,uwb_nls.c}` /
-   `docs/MATH_AUDIT_2026-08-21.md` / `tests/host/math/test_math.c`。
+   `docs/archive/MATH_AUDIT_2026-08-21.md` / `tests/host/math/test_math.c`。
    `uwb_loc` 側・`uwb_survey` 側とも新 API への差し替えが完了している。
+
+### `feat/stamps3-fpc-migration` ブランチのコミット（`main`=`dffcde5` から6コミット、HEAD `9730d66`。未 push）
+
+| コミット | 内容 |
+|---|---|
+| `bc92494` | StampS3A 用アンカーバイナリを配布（CI に `anchor-stamps3-ds` / `-fast` を追加）、旧 `BRINGUP.md` の FPC 番号誤記を修正 |
+| `5044f46` | アンカーを StampS3A 既定にし、StampFly を背面 12P FPC 接続へ切替（`boards/stampfly.h` 全面改訂、CI variant 14→18）。旧 GROVE 4線構成を廃案に |
+| `2f9d8df` | M5StampS3A の公式回路図（`assets/Sch_StampS3_v0.3.3.pdf`）を追加。`boards/stampfly.h` の一次資料 |
+| `6578065` | `BRINGUP.md` を `GETTING_STARTED.md` §3〜§4 へ統合 |
+| `7f84e2d` | `PLATFORM_TUNING.md` / `UNITS.md` を統合、`MATH_AUDIT_2026-08-21.md` を `docs/archive/` へ移動 |
+| `9730d66` | `SOLDER_PADS.md` を `WIRING.md` へ改組し配線の正本を1本化（経路A: FPC→DIP変換基板 / 経路B: 半田パッド直付け / 経路C: StampS3A背面12P FPC の新設を含む） |
+
+詳細は各コミットメッセージおよび `docs/EXPERIMENT_PLAN.md` / `docs/STAMPFLY_INTEGRATION.md` /
+`docs/WIRING.md` を参照。
 
 ### ホストテスト（`make -C tests all` = test / strict / float を再実行して確認。float ビルドの回帰は 591,184 件）
 
@@ -137,7 +207,7 @@ docs/archive/     経緯文書（PROGRESS / REIMPL_PLAN / CRITICAL_REVIEW / SURV
 **ハード依存は `uwb_port` と `uwb_ranging` のスケジューラ部分の2箇所だけ**に隔離。
 測位パイプラインと測量計算はホストで検証できる。**線形代数はすべて `uwb_math` に集約**
 されており、一般次元の LU 分解・Jacobi 法などは存在しない（設計根拠:
-`docs/MATH_AUDIT_2026-08-21.md`）。
+`docs/archive/MATH_AUDIT_2026-08-21.md`）。
 
 ---
 
@@ -147,55 +217,29 @@ docs/archive/     経緯文書（PROGRESS / REIMPL_PLAN / CRITICAL_REVIEW / SURV
 |---|---|---|
 | 対象 | **ESP32-S3 + M5Stamp UWB Module 専用**。プラットフォーム最適化してよい。ただし StampFly には非依存 | `docs/PLAN.md` |
 | **ハード方針** | **StampFly 非依存。ただしタグの配線だけは StampFly 互換を維持する**（GROVE 2系統4本で成立 ＝ IRQ/RST 不要）。想定利用者は本リポジトリを単体で試す人 | `docs/PLAN.md` §1 |
-| 役割 | **タグ = M5StampS3A ×1 / アンカー = AtomS3(R) ×5** | `docs/archive/PROGRESS.md` |
-| 接続 | **FPC ではなく半田パッド**（1.27mm キャステレーション）。J1（FPC 用番号）と PINMAP（パッド用番号）は**別の番号体系**で両方正しい | `docs/SOLDER_PADS.md` §5.5 |
-| 電源 | パッド2（VCC_3V3）は QM33120W の VDD1/VDD2 に直結。動作上限 3.6V・絶対最大 4.0V。5V や StampFly GROVE（満充電 ~4.35V）は不可 | `docs/SOLDER_PADS.md` §5.4 |
+| 役割 | **タグ = M5StampS3A ×1（既定は据置＝StampS3 BreakOut 経由。StampFly 搭載時は機体の M5StampS3A を背面 12P FPC 経由で流用） / アンカー = M5StampS3A + StampS3 BreakOut ×5（既定、`UWB_ANCHOR_BOARD_STAMPS3`）。AtomS3(R) は代替として残る** | `docs/archive/PROGRESS.md`、本ブランチ `feat/stamps3-fpc-migration`（§0・§1） |
+| 接続 | **FPC ではなく半田パッド**（1.27mm キャステレーション）。J1（FPC 用番号）と PINMAP（パッド用番号）は**別の番号体系**で両方正しい | `docs/WIRING.md` §7.3 |
+| 電源 | パッド2（VCC_3V3）は QM33120W の VDD1/VDD2 に直結。動作上限 3.6V・絶対最大 4.0V。5V や StampFly GROVE（満充電 ~4.35V）は不可 | `docs/WIRING.md` §5.1 |
 | **IRQ** | **アンカーは積極使用。タグは不使用。StampFly の別配線可能性は残す** | **`docs/IRQ_POLICY.md`** |
-| 資料 | **一次資料 = Qorvo SDK/UM/APS。M5Stack ラッパは二次資料で信頼しない** | **`docs/SOURCE_POLICY.md`** |
+| 資料 | **一次資料 = Qorvo SDK/UM/APS。M5Stack ラッパは二次資料で信頼しない** | **`docs/PLAN.md` §5** |
 | 測量 | 高さのみ実測(4点以上) + キラリティ1ビット入力（`uwb_survey_input.chirality`）。タグも6台目として参加。外れ値リンクは leave-one-out で棄却。計算は実機上（呼び出し元はまだ無い） | `docs/SURVEY_SPEC.md` |
 | StampFly統合 | **案B-2 疎結合**: Lv2 で位置を出し `EskfCore::vectorUpdate3()` で POS_X/Y 観測 | `docs/STAMPFLY_INTEGRATION.md` |
-| **数値計算方針** | **一般次元の行列計算（LU/Jacobi/一般コレスキー）は置かない。** 対称3x3/2x2の閉形式と nb≤8 のブロックコレスキーに集約し `uwb_math` に一本化する。ESP32-S3 特化（スカラー展開・単精度FPU前提の最適化）は OK | `docs/MATH_AUDIT_2026-08-21.md` |
+| **数値計算方針** | **一般次元の行列計算（LU/Jacobi/一般コレスキー）は置かない。** 対称3x3/2x2の閉形式と nb≤8 のブロックコレスキーに集約し `uwb_math` に一本化する。ESP32-S3 特化（スカラー展開・単精度FPU前提の最適化）は OK | `docs/archive/MATH_AUDIT_2026-08-21.md` |
 | **上流の扱い** | `uwb_localizer` は 2026-08-21 に凍結・独立（`42daea9`）。以後 `components/uwb_loc/` は本リポジトリで独立開発する。**上流は見ない**（孵化器は役目を終えた） | — |
 | **float の検証** | clang に加え **gcc-16 と `-ffp-contract=off` でも**通すこと（FMA 縮約に助けられて clang だけ通っていた事故があった） | `tests/Makefile` |
 | **ブラウザ自動化** | 使わない（§4 参照） | — |
 
 ---
 
-## 4. 【最重要】私が犯した誤りと、そこから得た教訓
+## 4. 過去の誤りと運用ルール
 
-**同じ失敗を繰り返さないこと。パターンは1つに集約される:
-「二次的な指標を、直接証拠より優先した」「確認せずに断定した」。**
+**同じ失敗を繰り返さないために記録がある。**
+パターンは1つに集約される:
+**「二次的な指標を、直接証拠より優先した」「確認せずに断定した」。**
 
-| # | 誤り | 正解 | 原因 |
-|---|---|---|---|
-| 1 | フレームフィルタ未設定は欠陥 | **Qorvo 公式 TWR 4例も使っていない** | 公式サンプルを見ずに断定 |
-| 2 | アンテナ遅延 16385 は EVB からのコピー | **APS014 が定める正規の初期値 (~513ns)** | 同上 |
-| 3 | `PGcount=0` は欠陥 | **Qorvo 公式も 0** | 同上 |
-| 4 | 操作対象はこの Mac の Chrome | **リモート接続元の別マシンだった** | API の `isLocal:true` を検証せず信用 |
-| 5 | 「同期された履歴が見えているだけ」 | 実際に別マシンへダウンロードされていた | **矛盾する直接証拠（ファイルが無い）を握りながら辻褄合わせ** |
-| 6 | StampFly の空きGPIO は G5/G10/G41/G42 | **4本ともモータPWM**（`vehicle/main/config.hpp:63-66`） | 古い M5StampFly を見て現行 vehicle を見なかった |
-| 7 | 高さ実測で鏡像が決まる | **原理的に不可能**（線形汎関数はキラリティを検出できない） | 数学を検証せず仕様に書いた |
-| 8 | `uwb_sym_eig()` が使える | **未マージ上流にしか無い** | 自分が書いた別ブランチの成果と混同 |
-| 9 | 高さ3点で傾きが決まる | **4点以上必要** | 同上 |
-| 10 | 単位を `Uus`→`Us` にリネームすべき | **M5Stack の単位系は正しかった。誤称は Qorvo 側** | SDK の記述を読む前に計画を書いた |
-| 11 | 公式ピンマップと文書が8箇所違う | **パッドと FPC で並びが違うだけ。両方正しい** | 番号付きの帯をパッド番号と決めつけた |
-| 12 | **5V を入れると壊れる、と根拠なく断定していた** | **結論（5V不可）自体は正しかったが、当初は公式の「DC 3.3V」記載（消費電流の測定条件）を絶対定格と読み違えただけで、回路構成やデータシートの裏付けが無かった** | 二次的な指標（それらしい数字）を検証せず、直接証拠（回路図・データシート）より優先した |
-| 13 | 公式回路図の `J1` シンボルがピン番号として誤りだと判断しかけた | **`J1`（FPC 用番号）と `PINMAP`（パッド用番号）は別の番号体系で、どちらも正しい**（教訓11 の再確認） | パッド番号と FPC 番号が食い違う事実だけを見て、回路図側が誤りだと決めつけかけた |
-
-### 運用ルール（`docs/SOURCE_POLICY.md` に詳細）
-1. **フラグ・メタデータより直接観測できる事実を優先する**
-2. **矛盾する証拠が出たら辻褄を合わせず前提を疑う**
-3. **`grep` が0件なら、まずファイルが読めているか疑う**
-   （**Qorvo 公式サンプルの `.c` は非UTF-8。`grep -a` か `iconv` 必須**。この罠で誤結論を出しかけた）
-4. **「SDK に API があるのに使っていない」は、それだけでは欠陥の根拠にならない**
-5. **入手資料は独立経路で再取得してハッシュ照合する**（実施済み、主要6件一致）
-
-### ブラウザ自動化は使わない
-セッション中、`mcp__claude-in-chrome__*` がユーザの意図しない**リモート接続元マシンの
-Chrome** を操作する事故を起こした。**本プロジェクトでは以後一切使わない。**
-Web 取得は `WebFetch` / `curl` に限定し、サブエージェントにも明示的に禁止すること。
-
----
+- **誤り 15 件の一覧と詳細** → [`archive/DESIGN_HISTORY.md` §3](archive/DESIGN_HISTORY.md)
+- **調査の運用ルール**（直接証拠を優先／矛盾したら前提を疑う／`grep` 0 件はファイルを疑う／
+  資料はハッシュ照合／**ブラウザ自動化は使わない**）→ [`PLAN.md` §5](PLAN.md)
 
 ## 5. 文書の地図
 
@@ -209,22 +253,21 @@ docs/GLOSSARY.md              用語集（略語の正式名称と意味）。�
 docs/UWB_PRIMER.md            UWB 入門。なぜ電波で cm が測れるのか（最初に読む）
 docs/UWB_ALGORITHMS.md        測位アルゴリズムの導出（上流からの移植・改訂版）
 docs/EXPERIMENT_PLAN.md       実機到着後の実験計画とフラグ有効化の順序。実機でしか潰せない前提12件
-docs/SOURCE_POLICY.md         資料の格付けと、過去の誤りの記録
 docs/IRQ_POLICY.md            IRQ 方針（確定版）
-docs/UNITS.md                 UUS/DTU/実µs の単位リファレンス（遅延値を触る前に必読）
+docs/GLOSSARY.md                 UUS/DTU/実µs の単位リファレンス（遅延値を触る前に必読）
 docs/TIMING_PRESETS.md        遅延プリセットとバージョン不一致検出（設計）
-docs/SURVEY_SPEC.md           自動測量の仕様（外れ値 leave-one-out・キラリティ入力を追記）
+docs/SURVEY_SPEC.md           自動測量の仕様（外れ値 leave-one-out・キラリティ入力）
 docs/STAMPFLY_INTEGRATION.md  StampFly 位置制御への統合（1127行）
 docs/PERF_ANALYSIS.md         測位計算の性能分析と上流最適化の結果
-docs/PLATFORM_TUNING.md       ESP32-S3 の浮動小数点・コンパイル設定
-docs/MATH_AUDIT_2026-08-21.md 行列計算の残存箇所の監査とスカラー化の設計根拠。uwb_math の仕様の元
+docs/PERF_ANALYSIS.md       ESP32-S3 の浮動小数点・コンパイル設定
+docs/archive/MATH_AUDIT_2026-08-21.md 行列計算の残存箇所の監査とスカラー化の設計根拠。uwb_math の仕様の元
 docs/ANCHOR_PLACEMENT.md      アンカー配置ルール
-docs/SOLDER_PADS.md           パッド仕様と配線（公式回路図でのネットリスト確認込み）
-docs/BRINGUP.md               Phase 1 受入確認
+docs/WIRING.md           パッド仕様と配線（公式回路図でのネットリスト確認込み）
+docs/GETTING_STARTED.md               Phase 1 受入確認
 docs/PLAN.md                  全体設計・フェーズ計画
 docs/GETTING_STARTED.md       BOM から測位まで11章
 docs/PREBUILT_BINARIES.md     ビルド済みバイナリの入手と書き込み。ライセンス条件込み
-docs/REVIEW_2026-08-21.md     実機投入前の最終レビュー。Critical 1・High 6、全件対応済み
+docs/archive/REVIEW_2026-08-21.md  実機投入前の最終レビュー。Critical/High は対応済み、Medium 以下は §0 へ引き継ぎ
 docs/refs/README.md           一次資料の索引
 docs/archive/                 経緯文書（現役8本 + archive自身のREADME.md）
   CRITICAL_REVIEW.md            M5Stack ラッパの批判的レビュー
@@ -263,7 +306,7 @@ docs/archive/                 経緯文書（現役8本 + archive自身のREADME
 1. **Qorvo 公式サンプルの `.c` は latin-1。`grep -a` を使うこと**
 2. **`UUS_TO_DWT_TIME` は DW1000=65536 / DW3000公式=63898。**
    Qorvo の `*_UUS` 定数は実は実マイクロ秒。そのまま流用すると2.5%ずれる
-   → **`docs/UNITS.md`**
+   → **`docs/GLOSSARY.md`**
 3. **ESP-IDF ビルドとホスト `make strict` は警告設定が違う。**
    `uwb_survey.c` が `-Werror=maybe-uninitialized` で落ちた実例あり。
    **新規コンポーネントは必ず `idf.py build` も通すこと**

@@ -55,6 +55,18 @@ void PositioningPipeline::fillResult(const uwb_fix& fix, const size_t* usedAncho
     out->nUsed  = fix.n_used;
     out->nTotal = fix.n_total;
 
+    // 【修正4】docs/archive/REVIEW_2026-08-21.md app層M-1: 冗長度
+    // (= 採用観測数 - (次元数+1))。table_.isDimension2D() は
+    // applyAnchorTable()/setDimension2D()/setDimension3D() が切り替える
+    // 実行時の次元設定で、solve() 側が minRequired の算出に使っているのと
+    // 同じ判定（PositioningConfig::minValid2d/minValid3d 参照）。
+    // redundancy==0（3DでnUsed==4等）は、Lv2のロバスト外れ値棄却に
+    // 自由度が無く原理的に効いていない解であることを呼び出し側が
+    // 判断できるようにするための値（詳細は uwb_ranging_types.hpp の
+    // PositionResult::redundancy コメント参照）。
+    const int dim  = table_.isDimension2D() ? 2 : 3;
+    out->redundancy = out->nUsed - (dim + 1);
+
     // uwb_fix.excluded はソルバへ渡した観測配列（measBuf_）の添字基準。
     // 呼び出し側が扱いやすいよう、アンカーテーブルの添字基準へ変換する。
     out->excluded = 0;

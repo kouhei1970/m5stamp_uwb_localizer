@@ -31,7 +31,7 @@ namespace uwb {
  * default values.
  *
  * --- 単位について（docs/archive/REIMPL_PLAN.md R1） ---
- * 詳細は docs/UNITS.md。
+ * 詳細は docs/GLOSSARY.md。
  * `*Uus` フィールドの単位は UUS (UWB microsecond)。
  * 1 UUS = 512/499.2 us = 1.02564... us
  * (`deca_device_api.h:2681` dwt_setrxaftertxdelay() 「The delay is in UWB
@@ -89,6 +89,32 @@ struct RangeConfig {
      * requestRange() 内のコメント参照。
      */
     bool enableClockOffsetCorrection    = true;
+
+    /**
+     * 【修正2】docs/archive/REVIEW_2026-08-21.md TWR層M2。ms。
+     * respondRange()（Anchor）が **最初のフレーム（Poll）を待つ**
+     * 受信ループだけに使うホスト側タイムアウト。requestRange()
+     * （Tag、Response待ち）は hostTimeoutMs の方を使い続け、この
+     * フィールドの影響を受けない（末尾に追加。既存の公開APIは壊さない）。
+     *
+     * firmware/anchor/main/main.cpp の runRole() は、respondRange() が
+     * Error::RxTimeout（まだPollが来ていないだけ）を返すたびに即
+     * continue して respondRange() を呼び直す。呼び直しの都度
+     * dwt_rxenable(DWT_START_RX_IMMEDIATE) するまでの一瞬、受信機が
+     * 実質「聞いていない」窓ができる。hostTimeoutMs（既定10ms）のように
+     * 短い値だと、この「聞いていない窓」が来る頻度が上がり、Poll を
+     * 取りこぼす確率が無視できなくなる（Anchorはどのタイミングで
+     * Pollが来るか分からず待つ側なので、Response/Final待ちのように
+     * 「既にシーケンスに入っていて次のフレームの到着時刻がほぼ予測できる」
+     * 局面とは事情が異なる）。既定を200msへ伸ばし、呼び直しの頻度を
+     * 下げることで取りこぼしを減らす。
+     *
+     * 【測距の遅延プリセット（UUS値）は一切変更していない】これは
+     * ホスト側（ESP32側）のポーリングループの上限時間であり、
+     * SDK APIには渡らない（hostTimeoutMs と同じ性質。フィールド
+     * コメント参照）。responseTxDelayUus等のUUS値は不変。
+     */
+    uint32_t pollHostTimeoutMs          = 200;
 };
 
 /**
@@ -97,7 +123,7 @@ struct RangeConfig {
  * default values.
  *
  * --- 単位について（docs/archive/REIMPL_PLAN.md R1。RangeConfig と同じ規則） ---
- * 詳細は docs/UNITS.md。
+ * 詳細は docs/GLOSSARY.md。
  * `*Uus` フィールドの単位は UUS。1 UUS = 512/499.2 us = 1.02564... us。
  * `responseTxDelayUus` / `finalTxDelayUus` の2つだけが
  * `uwb::detail::kUusToDwtTime`(=65536) 倍されて DTU に変換され
@@ -182,13 +208,34 @@ struct DSRangeConfig {
     //!< resultRepeatCount>1のときのみ意味を持つ（R3-1で既定1になったため
     //!< 既定構成では未使用）。
     uint32_t resultRepeatGapMs              = 3;
+
+    /**
+     * 【修正2】docs/archive/REVIEW_2026-08-21.md TWR層M2。ms。
+     * respondDSRange()（Anchor）が **最初のフレーム（Poll）を待つ**
+     * 受信ループ（本関数冒頭のループ。finalStartMs から始まる
+     * Final待ちループとは別物）だけに使うホスト側タイムアウト。
+     * requestDSRange()（Tag、Response/Final・結果フレーム待ち）と
+     * respondDSRange() 自身のFinal待ちは引き続き hostTimeoutMs を使い、
+     * このフィールドの影響を受けない（既にシーケンスに入っていて次の
+     * フレームの到着時刻がほぼ予測できる局面は変更しない。末尾に追加。
+     * 既存の公開APIは壊さない）。
+     *
+     * RangeConfig::pollHostTimeoutMs と同じ理由・同じ既定値（200ms）。
+     * 詳細はそちらのフィールドコメント参照。
+     *
+     * 【測距の遅延プリセット（UUS値）は一切変更していない】これは
+     * ホスト側（ESP32側）のポーリングループの上限時間であり、
+     * SDK APIには渡らない（hostTimeoutMs と同じ性質）。
+     */
+    uint32_t pollHostTimeoutMs              = 200;
 };
 
 /**
  * @brief RangeConfig（SS-TWR）へ遅延プリセットを適用する（docs/TIMING_PRESETS.md、
  * タスクB）。responseTxDelayUus/responseRxAfterTxDelayUus/rxTimeoutUus の
  * 3フィールドだけを書き換える。panId/initiatorAddress/responderAddress/
- * hostTimeoutMs/enableClockOffsetCorrection には一切触れない
+ * hostTimeoutMs/enableClockOffsetCorrection/pollHostTimeoutMs（修正2で追加）
+ * には一切触れない
  * （呼び出し側がこれらを設定した後に呼ぶこと。RangeConfig単体にはプリセット
  * 適用の有無を記録するフィールドは無いため、呼び出す順序は呼び出し側の責務）。
  */
@@ -205,7 +252,8 @@ inline void applyTimingProfile(RangeConfig& cfg, TimingProfile p)
  * タスクB）。responseTxDelayUus/responseRxAfterTxDelayUus/finalTxDelayUus/
  * finalRxAfterResponseTxDelayUus/resultRxAfterFinalTxDelayUus/rxTimeoutUus の
  * 6フィールドだけを書き換える。panId/initiatorAddress/responderAddress/
- * hostTimeoutMs/resultRepeatCount/resultRepeatGapMs には一切触れない。
+ * hostTimeoutMs/resultRepeatCount/resultRepeatGapMs/pollHostTimeoutMs
+ * （修正2で追加）には一切触れない。
  */
 inline void applyTimingProfile(DSRangeConfig& cfg, TimingProfile p)
 {

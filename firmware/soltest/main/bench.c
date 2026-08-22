@@ -634,7 +634,7 @@ static void bench_scalar_ops(double overhead_per_trip, double ns_per_cycle)
 
     ESP_LOGI(TAG, "--- 1c. この結果から機械的に言えること ---");
     /* 「加減乗算+FMA はハード、除算・sqrt はソフト」という事前情報
-     * (docs/PERF_ANALYSIS.md, docs/PLATFORM_TUNING.md)を、実測比率で
+     * (docs/PERF_ANALYSIS.md, docs/PERF_ANALYSIS.md)を、実測比率で
      * 裏付けられるかを閾値判定で機械的に出す。閾値は「大きな差」を
      * 大まかに切り分けるための目安であり、精密な統計検定ではない。 */
     double hw_ratio_avg = (r_add_d.lat_cycles / r_add_f.lat_cycles + r_mul_d.lat_cycles / r_mul_f.lat_cycles +
