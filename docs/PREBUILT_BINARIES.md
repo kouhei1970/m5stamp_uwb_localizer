@@ -36,25 +36,26 @@ GitHub Actions が全ファームをビルドし、**そのまま書き込める
 | 同上（本番方式） | `twr-tag-ds` + `twr-anchor-ds` | 実験3 |
 | **5台のアンカー + タグで測位** | `anchor-*-ds` ×1（5台に同じものを書く）+ `tag-*-ds` | 実験5・6 |
 | 速くする（59 Hz） | `anchor-*-ds-fast` + `tag-*-ds-fast` | 実験7・8 |
+| もっと速くする（90 Hz） | `anchor-stamps3-ds-bothirq` + `tag-stampfly-ds-bothirq` | 実験7・8 の発展 |
 
 ### ボードの選び方
 
 | 手元のボード | 選ぶ variant |
 |---|---|
-| M5StampS3A | `*-stamps3` |
-| **AtomS3R（現行）** | `*-atoms3-pinoutB` |
-| 無印 AtomS3（在庫限り） | `*-atoms3-pinoutA` |
+| **M5StampS3A + StampS3 BreakOut（標準構成）** | `*-stamps3` |
+| AtomS3R（代替） | `*-atoms3-pinoutB` |
+| 無印 AtomS3（代替・在庫限り） | `*-atoms3-pinoutA` |
 | StampFly に載せる | `*-stampfly` |
 
 構成 A / B の違いは [`IRQ_POLICY.md`](IRQ_POLICY.md) を参照。
 **AtomS3R は G38/G39 が空いているので構成 B（ToF を Grove に挿すだけ）が綺麗**です。
 
 > **例外: `twr-anchor-ss` / `twr-anchor-ds` はボード名を含みません。**
-> この2つは **AtomS3（構成 A）用にビルドされたものだけ**を配布しています。
-> M5StampS3A をアンカー役にして実験2・3をやる場合は、この variant は使わずに
-> `firmware/twr` を自分でビルドしてください
-> （`CONFIG_UWB_TWR_BOARD_STAMPS3=y` + `CONFIG_UWB_TWR_ROLE_ANCHOR=y`）。
-> **実験5・6（本番）用の `anchor-stamps3-ds` は配布しています。**
+> この2つは **M5StampS3A 用にビルドされたもの**です（標準構成が
+> M5StampS3A + StampS3 BreakOut になったため）。
+> AtomS3 をアンカー役にして実験2・3をやる場合は `firmware/twr` を自分で
+> ビルドしてください
+> （`CONFIG_UWB_TWR_BOARD_ATOMS3=y` + `CONFIG_UWB_TWR_ROLE_ANCHOR=y`）。
 
 ### `-fast` は必ずペアで使う
 
@@ -101,9 +102,12 @@ esptool.py --chip esp32s3 -p /dev/cu.usbmodemXXXX write_flash 0x0 merged-firmwar
 2. ファイルに `merged-firmware.bin`、**Flash Address に `0x0`** を指定
 3. **Program**
 
-> **書き込みモードに入れないとき**: M5StampS3A は中央のボタンを押しながら USB を挿す、
+> **書き込みモードに入れないとき**: **StampS3 BreakOut を使っている場合は
+> G0 ボタンを押しながら EN ボタンを押して離す**のが確実です（BreakOut は
+> G0 と EN にタクトスイッチを持っています）。
+> BreakOut 無しの M5StampS3A 単体では中央のボタンを押しながら USB を挿す、
 > AtomS3 は側面のリセットボタンを 2 秒ほど長押しします
-> （**この操作は本リポジトリでは実機確認していません**）。
+> （**BreakOut 以外の操作は本リポジトリでは実機確認していません**）。
 
 ### 出力を見る
 
@@ -155,7 +159,7 @@ ESP-IDF を入れて自分でビルドしてください。
 1. **ホスト側テスト**（`test_pipeline` / `test_survey` / `tests/host/loc`）を実行
    ※ 上流 `uwb_localizer` は 2026-08-21 に凍結・最終取り込み済み。CI は上流を
    clone せず、本リポジトリ内のソースだけでテストします
-2. **14 通りのファーム**を ESP-IDF v5.5.2 でビルドし、`idf.py merge-bin` で結合
+2. **18 通りのファーム**を ESP-IDF v5.5.2 でビルドし、`idf.py merge-bin` で結合
 3. artifact として保存し、**タグを打った時は Release に添付**
 
 各 artifact には `kconfig-used.txt`（そのバイナリに焼き込まれた設定）と

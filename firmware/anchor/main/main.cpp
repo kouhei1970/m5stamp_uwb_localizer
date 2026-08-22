@@ -15,6 +15,9 @@
  * Kconfig で選ぶ2軸 (main/Kconfig.projbuild):
  *   - ボード: M5StampS3A / M5 AtomS3        (boards ディレクトリ配下の
  *     stamps3.h / atoms3.h でピン定義切替。firmware/twr と同じ作法)
+ *     既定は M5StampS3A。標準構成は M5StampS3A + StampS3 BreakOut に
+ *     UWB モジュールを 0.5mm 12P FPC→DIP 変換基板で接続するもので、
+ *     AtomS3 は「手元にあるなら使える代替」の位置づけ (docs/WIRING.md)。
  *   - 方式  : SS-TWR / DS-TWR (既定はDS-TWR。本プロジェクトの本番運用は
  *     DS-TWRを優先する判断のため)
  *

@@ -73,7 +73,7 @@ jobs:
           - name: twr-anchor-ss
             app: twr
             kconfig: |
-              CONFIG_UWB_TWR_BOARD_ATOMS3=y
+              CONFIG_UWB_TWR_BOARD_STAMPS3=y
               CONFIG_UWB_TWR_ROLE_ANCHOR=y
               CONFIG_UWB_TWR_METHOD_SS=y
           - name: twr-tag-ds
@@ -85,7 +85,7 @@ jobs:
           - name: twr-anchor-ds
             app: twr
             kconfig: |
-              CONFIG_UWB_TWR_BOARD_ATOMS3=y
+              CONFIG_UWB_TWR_BOARD_STAMPS3=y
               CONFIG_UWB_TWR_ROLE_ANCHOR=y
               CONFIG_UWB_TWR_METHOD_DS=y
 
@@ -142,6 +142,24 @@ jobs:
               CONFIG_UWB_TAG_BOARD_STAMPS3=y
               CONFIG_UWB_TAG_METHOD_DS=y
               CONFIG_UWB_TIMING_PROFILE_ANCHOR_IRQ=y
+
+          # --- 両側 IRQ (90 Hz)。タグ側にも IRQ が要る構成でのみ使える。
+          #     StampFly は背面 12P FPC で IRQ を取れるようになった
+          #     (boards/stampfly.h)。**このペアも必ず両方セットで使うこと** ---
+          - name: anchor-stamps3-ds-bothirq
+            app: anchor
+            kconfig: |
+              CONFIG_UWB_ANCHOR_BOARD_STAMPS3=y
+              CONFIG_UWB_ANCHOR_METHOD_DS=y
+              CONFIG_UWB_ENABLE_IRQ=y
+              CONFIG_UWB_TIMING_PROFILE_BOTH_IRQ=y
+          - name: tag-stampfly-ds-bothirq
+            app: tag
+            kconfig: |
+              CONFIG_UWB_TAG_BOARD_STAMPFLY=y
+              CONFIG_UWB_TAG_METHOD_DS=y
+              CONFIG_UWB_ENABLE_IRQ=y
+              CONFIG_UWB_TIMING_PROFILE_BOTH_IRQ=y
 
     steps:
       - uses: actions/checkout@v4

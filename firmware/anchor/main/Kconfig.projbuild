@@ -2,18 +2,22 @@ menu "UWB Anchor Configuration"
 
     choice UWB_ANCHOR_BOARD
         prompt "Target host board"
-        default UWB_ANCHOR_BOARD_ATOMS3
+        default UWB_ANCHOR_BOARD_STAMPS3
         help
             Select which host board's pin definitions (boards/stamps3.h or
             boards/atoms3.h, at the repo root) main.cpp uses to configure
-            uwb::Qm33120. StampFly is a tag-only configuration
-            (docs/IRQ_POLICY.md) and is intentionally not offered here.
+            uwb::Qm33120. The standard anchor build is M5StampS3A on a
+            StampS3 BreakOut with the UWB module attached through a
+            0.5mm 12P FPC to DIP adapter; AtomS3 is kept as an alternative
+            for anyone who already has one. StampFly is a tag-only
+            configuration (docs/IRQ_POLICY.md) and is intentionally not
+            offered here.
 
         config UWB_ANCHOR_BOARD_STAMPS3
-            bool "M5StampS3A"
+            bool "M5StampS3A (+ StampS3 BreakOut)"
 
         config UWB_ANCHOR_BOARD_ATOMS3
-            bool "M5 AtomS3"
+            bool "M5 AtomS3 (alternative)"
 
     endchoice
 
