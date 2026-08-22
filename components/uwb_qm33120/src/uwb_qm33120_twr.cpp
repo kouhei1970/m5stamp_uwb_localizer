@@ -144,12 +144,41 @@ static const char* const kTimingLogTag = "uwb_qm33120_twr";
 static constexpr uint8_t kMaxWarnedPeers = 8;
 
 /**
+ * @brief checkTimingTag() が返す不一致の種別。ESP_LOGW を出さずに
+ * 「何を検出したか」だけを呼び出し側へ持ち帰らせるための型（修正1、
+ * 下記 checkTimingTag() コメント参照）。
+ */
+enum class TimingMismatchKind : uint8_t {
+    None = 0,         //!< 不一致なし（または既に警告済みで再検出不要）。
+    NoVersionTag,      //!< 相手が版情報を持たない旧ファーム。
+    VersionMismatch,   //!< プリセット表の版が違う。
+    ProfileMismatch,   //!< プリセットの種別（TimingProfile）が違う。
+};
+
+/**
  * @brief 相手（peerAddr）から受け取ったフレームのタイミングプリセット
- * 版/種別を検査し、不一致なら1回だけ警告する
- * （docs/TIMING_PRESETS.md §3.3、タスクC-3）。測距は続行する（拒否すると
- * 切り分けが難しくなるため。docs/IRQ_POLICY.md「不一致を検出したら警告する」）。
+ * 版/種別を検査する（docs/TIMING_PRESETS.md §3.3、タスクC-3）。
  *
- * 記録・あふれ対策の方針は uwb_qm33120_impl.hpp の warned_peers コメント参照。
+ * 【修正1】docs/archive/REVIEW_2026-08-21.md TWR層M1: 以前はこの関数の中で
+ * 直接 ESP_LOGW() していたが、ESP_LOGW は数百バイトの日本語文字列を
+ * 同期的にUART出力するため遅く（実測でmsオーダーになりうる）、これを
+ * `dwt_setdelayedtrxtime()` で遅延送信を予約する**前**に呼んでいる
+ * 呼び出し箇所（respondRange/requestDSRange/respondDSRange）では、
+ * ログ出力の間に予約すべき時刻を過ぎてしまい遅延送信そのものが
+ * 失敗しうる。そこでこの関数は「不一致の検出」と「一度警告した相手の
+ * 記録（warnedPeers/warnedCount、あふれ対策含む）」だけを行い、
+ * ESP_LOGW は一切呼ばない。実際のログ出力は logTimingMismatch() に
+ * 分離し、呼び出し側が**遅延送信の予約が完全に終わったあと**（各関数の
+ * dwt_starttx(DWT_START_TX_DELAYED...) 成功確認より後）に呼ぶ。
+ * 検出（本関数）自体はメモリ比較のみで時間制約が無いため、フレーム照合
+ * 直後という従来と同じ位置で呼んでよい。
+ *
+ * 一度警告した相手は以後スキップする（相手の版が変わればまた警告する
+ * ため、warnedPeers に入っているかどうかだけを見る。版が変わった場合の
+ * 再警告は「相手のアドレスは同じだが版が変わった」ケースを区別しない
+ * 従来仕様のまま——warnedPeers はアドレスだけで管理しており、これは
+ * 修正1で変えていない）。記録・あふれ対策の方針は
+ * uwb_qm33120_impl.hpp の warned_peers コメント参照。
  *
  * 【Qm33120::Impl& を取らない理由】Implはprivateなネスト型
  * (uwb_qm33120.hpp)のため、クラスの外に定義するこの無名namespace内の
@@ -160,50 +189,83 @@ static constexpr uint8_t kMaxWarnedPeers = 8;
  * @param warnedPeers  Qm33120::Impl::warned_peers（呼び出し側が渡す）。
  * @param warnedCount  Qm33120::Impl::warned_count（呼び出し側が渡す）。
  * @param myProfile    自分の config.timing_profile。
- * @param context      ログに出す短い文脈（どの関数からの呼び出しか）。
  * @param peerAddr     相手のショートアドレス。
  * @param extended     detail::readTimingTag() の戻り値
  *                      （true=拡張ペイロード=版/種別が読めた、false=旧ファーム）。
  * @param peerVersion  extended==true のときだけ有効。
  * @param peerProfile  extended==true のときだけ有効（TimingProfile の raw値）。
+ * @return 検出した不一致の種別（None なら警告不要）。
  */
-void checkTimingTagAndWarn(uint16_t* warnedPeers, uint8_t& warnedCount, TimingProfile myProfile,
-                            const char* context, uint16_t peerAddr, bool extended, uint8_t peerVersion,
-                            uint8_t peerProfile)
+TimingMismatchKind checkTimingTag(uint16_t* warnedPeers, uint8_t& warnedCount, TimingProfile myProfile,
+                                   uint16_t peerAddr, bool extended, uint8_t peerVersion, uint8_t peerProfile)
 {
     for (uint8_t i = 0; i < warnedCount; ++i) {
         if (warnedPeers[i] == peerAddr) {
-            return; // 既に警告済み。
+            return TimingMismatchKind::None; // 既に警告済み。
         }
     }
 
-    bool mismatch = false;
+    TimingMismatchKind kind = TimingMismatchKind::None;
     if (!extended) {
+        kind = TimingMismatchKind::NoVersionTag;
+    } else if (peerVersion != kTimingPresetVersion) {
+        kind = TimingMismatchKind::VersionMismatch;
+    } else if (peerProfile != static_cast<uint8_t>(myProfile)) {
+        kind = TimingMismatchKind::ProfileMismatch;
+    }
+
+    if ((kind != TimingMismatchKind::None) && (warnedCount < kMaxWarnedPeers)) {
+        warnedPeers[warnedCount++] = peerAddr;
+    }
+    return kind;
+}
+
+/**
+ * @brief checkTimingTag() が検出した不一致を実際にログへ出す（修正1）。
+ *
+ * 呼び出し側は、遅延送信の予約が絡む関数（respondRange/requestDSRange/
+ * respondDSRange）では**遅延送信の予約(dwt_setdelayedtrxtime +
+ * dwt_starttx)が成功した後**に呼ぶこと。予約が絡まない requestRange()
+ * だけは検出直後に呼んでよい（本関数の呼び出し自体は測距シーケンスの
+ * 続行可否に影響しない。docs/TIMING_PRESETS.md §3.3「測距は続行する」）。
+ *
+ * @param kind         checkTimingTag() の戻り値。None なら何もしない。
+ * @param context      ログに出す短い文脈（どの関数からの呼び出しか）。
+ * @param peerAddr     相手のショートアドレス。
+ * @param myProfile    自分の config.timing_profile。
+ * @param peerVersion  checkTimingTag() に渡したのと同じ値。
+ * @param peerProfile  checkTimingTag() に渡したのと同じ値。
+ */
+void logTimingMismatch(TimingMismatchKind kind, const char* context, uint16_t peerAddr, TimingProfile myProfile,
+                        uint8_t peerVersion, uint8_t peerProfile)
+{
+    switch (kind) {
+    case TimingMismatchKind::NoVersionTag:
         ESP_LOGW(kTimingLogTag,
                  "%s: peer=0x%04X は版情報を持たないファーム（旧長のフレーム）を送ってきました。"
                  "タイミングプリセットが一致している保証がありません。"
                  "タグとアンカーを同じプリセットで焼き直すこと（docs/TIMING_PRESETS.md）。",
                  context, static_cast<unsigned>(peerAddr));
-        mismatch = true;
-    } else if (peerVersion != kTimingPresetVersion) {
+        break;
+    case TimingMismatchKind::VersionMismatch:
         ESP_LOGW(kTimingLogTag,
                  "%s: peer=0x%04X とプリセット表の版が違います (mine=%u peer=%u)。"
                  "タグとアンカーを同じプリセットで焼き直すこと（docs/TIMING_PRESETS.md）。",
                  context, static_cast<unsigned>(peerAddr), static_cast<unsigned>(kTimingPresetVersion),
                  static_cast<unsigned>(peerVersion));
-        mismatch = true;
-    } else if (peerProfile != static_cast<uint8_t>(myProfile)) {
+        break;
+    case TimingMismatchKind::ProfileMismatch: {
         const char* peerName =
             timingProfileValid(peerProfile) ? timingProfileName(static_cast<TimingProfile>(peerProfile)) : "?";
         ESP_LOGW(kTimingLogTag,
                  "%s: peer=0x%04X とタイミングプリセットの種別が違います (mine=%s peer=%s)。"
                  "タグとアンカーを同じプリセットで焼き直すこと（docs/TIMING_PRESETS.md）。",
                  context, static_cast<unsigned>(peerAddr), timingProfileName(myProfile), peerName);
-        mismatch = true;
+        break;
     }
-
-    if (mismatch && (warnedCount < kMaxWarnedPeers)) {
-        warnedPeers[warnedCount++] = peerAddr;
+    case TimingMismatchKind::None:
+    default:
+        break;
     }
 }
 
@@ -279,13 +341,19 @@ RangeResult Qm33120::requestRange(const RangeConfig& range)
             if (detail::frameMatchesExpectation(summary, expect)) {
                 // 【タスクC-3】相手(Anchor)のプリセット版/種別を読み、
                 // 不一致なら警告する（測距は続行する）。
+                // 【修正1】requestRange() はResponse受信で完結し、この後に
+                // 遅延送信の予約が無いため、ログ出力を後回しにする必要が
+                // 無い（checkTimingTag()/logTimingMismatch() コメント参照）。
+                // ここで直ちに検出・ログ出力する。
                 {
                     uint8_t peerVersion = 0, peerProfile = 0;
                     const bool extended =
                         detail::readTimingTag(rawFrame, frameLen, /*lenLegacy=*/11, peerVersion, peerProfile);
-                    checkTimingTagAndWarn(_impl->warned_peers, _impl->warned_count, _impl->config.timing_profile,
-                                           "requestRange: Response<-ANCHOR", range.responderAddress, extended,
-                                           peerVersion, peerProfile);
+                    const TimingMismatchKind mismatchKind =
+                        checkTimingTag(_impl->warned_peers, _impl->warned_count, _impl->config.timing_profile,
+                                       range.responderAddress, extended, peerVersion, peerProfile);
+                    logTimingMismatch(mismatchKind, "requestRange: Response<-ANCHOR", range.responderAddress,
+                                       _impl->config.timing_profile, peerVersion, peerProfile);
                 }
 
                 const uint32_t pollTxTs = dwt_readtxtimestamplo32();
@@ -396,8 +464,15 @@ ResponderResult Qm33120::respondRange(const RangeConfig& range)
     // (本ファイル冒頭コメント参照)。IRQが無効なら何もしない。
     uwb_port_irq_clear_pending();
 
+    // 【修正2】docs/archive/REVIEW_2026-08-21.md TWR層M2: このループは
+    // respondRange() が Poll（最初のフレーム）を待つ唯一の受信ループなので
+    // range.hostTimeoutMs ではなく range.pollHostTimeoutMs（既定200ms）を
+    // 使う。呼び出し側（firmware/anchor/main/main.cpp の runRole()）は
+    // RxTimeoutで即continueしてこの関数を呼び直すため、短いタイムアウトだと
+    // 「呼び直しの合間の受信機が実質聞いていない一瞬」が頻発しPollを
+    // 取りこぼす（RangeConfig::pollHostTimeoutMs のコメント参照）。
     const uint32_t startMs = detail::nowMs();
-    while ((detail::nowMs() - startMs) < range.hostTimeoutMs) {
+    while ((detail::nowMs() - startMs) < range.pollHostTimeoutMs) {
         const uint32_t status = dwt_readsysstatuslo();
         if ((status & DWT_INT_RXFCG_BIT_MASK) != 0) {
             uint8_t pollFrame[32] = {0};
@@ -424,13 +499,23 @@ ResponderResult Qm33120::respondRange(const RangeConfig& range)
             if (detail::frameMatchesExpectation(summary, expect)) {
                 // 【タスクC-3】相手(Tag)のプリセット版/種別を読み、
                 // 不一致なら警告する（測距は続行する）。
+                // 【修正1】docs/archive/REVIEW_2026-08-21.md TWR層M1: ここでは
+                // 検出だけ行い、実際の ESP_LOGW（logTimingMismatch()）は
+                // このあとの dwt_setdelayedtrxtime()/dwt_starttx(DELAYED) に
+                // よる遅延送信の予約が完全に終わってから呼ぶ（下記）。
+                // 検出をここで先に済ませておくのは、フレーム内容
+                // (pollFrame/frameLen/parsed) がこの時点でしか手元に無い
+                // ためで、検出自体（メモリ比較のみ）はESP_LOGWと違って
+                // 遅くないので予約前でも問題ない。
+                TimingMismatchKind timingMismatchKind = TimingMismatchKind::None;
+                uint8_t timingPeerVersion              = 0;
+                uint8_t timingPeerProfile              = 0;
                 {
-                    uint8_t peerVersion = 0, peerProfile = 0;
-                    const bool extended =
-                        detail::readTimingTag(pollFrame, frameLen, /*lenLegacy=*/3, peerVersion, peerProfile);
-                    checkTimingTagAndWarn(_impl->warned_peers, _impl->warned_count, _impl->config.timing_profile,
-                                           "respondRange: Poll<-TAG", parsed.src, extended, peerVersion,
-                                           peerProfile);
+                    const bool extended = detail::readTimingTag(pollFrame, frameLen, /*lenLegacy=*/3,
+                                                                  timingPeerVersion, timingPeerProfile);
+                    timingMismatchKind =
+                        checkTimingTag(_impl->warned_peers, _impl->warned_count, _impl->config.timing_profile,
+                                       parsed.src, extended, timingPeerVersion, timingPeerProfile);
                 }
 
                 uint8_t ts[5] = {0};
@@ -467,6 +552,13 @@ ResponderResult Qm33120::respondRange(const RangeConfig& range)
                     setError(result.error);
                     return result;
                 }
+
+                // 【修正1】遅延送信の予約（dwt_setdelayedtrxtime()〜
+                // dwt_starttx(DELAYED)成功）が完全に終わった後なので、ここで
+                // 初めてタイミング不一致のログを出す。数百バイトの日本語
+                // ESP_LOGWが遅くても、もう予約時刻に影響しない。
+                logTimingMismatch(timingMismatchKind, "respondRange: Poll<-TAG", parsed.src,
+                                   _impl->config.timing_profile, timingPeerVersion, timingPeerProfile);
 
                 const uint32_t txStartMs = detail::nowMs();
                 while ((detail::nowMs() - txStartMs) < 20) {
@@ -575,6 +667,13 @@ DSRangeResult Qm33120::requestDSRange(const DSRangeConfig& range)
     RxResult parsed;
     bool respMatched          = false;
     bool respMismatchSeen     = false; // R2診断用: hostTimeoutMs内で不一致フレームを1回以上見たか
+    // 【修正1】docs/archive/REVIEW_2026-08-21.md TWR層M1: checkTimingTag()の
+    // 検出結果をここに持ち帰り、下の dwt_setdelayedtrxtime()/
+    // dwt_starttx(DELAYED) による Final 遅延送信の予約が終わった後に
+    // logTimingMismatch() でログ出力する（詳細は両関数のコメント参照）。
+    TimingMismatchKind timingMismatchKind = TimingMismatchKind::None;
+    uint8_t timingPeerVersion              = 0;
+    uint8_t timingPeerProfile              = 0;
     const uint32_t startMs    = detail::nowMs();
     while ((detail::nowMs() - startMs) < range.hostTimeoutMs) {
         const uint32_t status = dwt_readsysstatuslo();
@@ -600,12 +699,14 @@ DSRangeResult Qm33120::requestDSRange(const DSRangeConfig& range)
                 respMatched = true;
                 // 【タスクC-3】相手(Anchor)のプリセット版/種別を読み、
                 // 不一致なら警告する（測距は続行する）。
-                uint8_t peerVersion = 0, peerProfile = 0;
+                // 【修正1】検出だけ行い、ログ出力(logTimingMismatch())は
+                // 後段のFinal遅延送信予約が終わってから行う（上のコメント
+                // 参照）。
                 const bool extended =
-                    detail::readTimingTag(respFrame, respLen, /*lenLegacy=*/11, peerVersion, peerProfile);
-                checkTimingTagAndWarn(_impl->warned_peers, _impl->warned_count, _impl->config.timing_profile,
-                                       "requestDSRange: Response<-ANCHOR", range.responderAddress, extended,
-                                       peerVersion, peerProfile);
+                    detail::readTimingTag(respFrame, respLen, /*lenLegacy=*/11, timingPeerVersion, timingPeerProfile);
+                timingMismatchKind =
+                    checkTimingTag(_impl->warned_peers, _impl->warned_count, _impl->config.timing_profile,
+                                   range.responderAddress, extended, timingPeerVersion, timingPeerProfile);
             } else {
                 // 【R2】不一致 -> エラーにせず受信継続（本ファイル冒頭コメント参照）。
                 respMismatchSeen = true;
@@ -669,6 +770,13 @@ DSRangeResult Qm33120::requestDSRange(const DSRangeConfig& range)
         setError(result.error);
         return result;
     }
+
+    // 【修正1】Final の遅延送信予約（dwt_setdelayedtrxtime()〜
+    // dwt_starttx(DELAYED)成功）が完全に終わった後なので、ここで初めて
+    // Response受信時に検出したタイミング不一致のログを出す。
+    logTimingMismatch(timingMismatchKind, "requestDSRange: Response<-ANCHOR", range.responderAddress,
+                       _impl->config.timing_profile, timingPeerVersion, timingPeerProfile);
+
     // DWT_RESPONSE_EXPECTED によりTX完了後ただちにRXが開始される。受信待ち
     // ループへ入る直前に、取りこぼした通知を捨てる（本ファイル冒頭コメント
     // 参照）。IRQが無効なら何もしない。
@@ -769,8 +877,22 @@ DSResponderResult Qm33120::respondDSRange(const DSRangeConfig& range)
     RxResult parsed;
     bool pollMatched       = false;
     bool pollMismatchSeen  = false; // R2診断用（他の受信ループと同じ意味）
+    // 【修正1】docs/archive/REVIEW_2026-08-21.md TWR層M1: checkTimingTag()の
+    // 検出結果をここに持ち帰り、下の dwt_setdelayedtrxtime()/
+    // dwt_starttx(DELAYED) による Response 遅延送信の予約が終わった後に
+    // logTimingMismatch() でログ出力する（詳細は両関数のコメント参照）。
+    TimingMismatchKind timingMismatchKind = TimingMismatchKind::None;
+    uint8_t timingPeerVersion              = 0;
+    uint8_t timingPeerProfile              = 0;
+    // 【修正2】docs/archive/REVIEW_2026-08-21.md TWR層M2:
+    // このループは respondDSRange() が Poll（最初のフレーム）を待つ
+    // 唯一の受信ループなので range.hostTimeoutMs ではなく
+    // range.pollHostTimeoutMs（既定200ms）を使う。この後の Final 待ち
+    // ループ（finalStartMs から始まる方）は「既にシーケンスに入っている」
+    // 局面なので変更しない（引き続き range.hostTimeoutMs）。理由の詳細は
+    // DSRangeConfig::pollHostTimeoutMs のコメント参照。
     const uint32_t startMs = detail::nowMs();
-    while ((detail::nowMs() - startMs) < range.hostTimeoutMs) {
+    while ((detail::nowMs() - startMs) < range.pollHostTimeoutMs) {
         const uint32_t status = dwt_readsysstatuslo();
         if ((status & DWT_INT_RXFCG_BIT_MASK) != 0) {
             uint8_t rangingBit = 0;
@@ -796,12 +918,14 @@ DSResponderResult Qm33120::respondDSRange(const DSRangeConfig& range)
                 pollMatched = true;
                 // 【タスクC-3】相手(Tag)のプリセット版/種別を読み、
                 // 不一致なら警告する（測距は続行する）。
-                uint8_t peerVersion = 0, peerProfile = 0;
+                // 【修正1】検出だけ行い、ログ出力(logTimingMismatch())は
+                // 後段のResponse遅延送信予約が終わってから行う（上のコメント
+                // 参照）。
                 const bool extended =
-                    detail::readTimingTag(pollFrame, pollLen, /*lenLegacy=*/3, peerVersion, peerProfile);
-                checkTimingTagAndWarn(_impl->warned_peers, _impl->warned_count, _impl->config.timing_profile,
-                                       "respondDSRange: Poll<-TAG", parsed.src, extended, peerVersion,
-                                       peerProfile);
+                    detail::readTimingTag(pollFrame, pollLen, /*lenLegacy=*/3, timingPeerVersion, timingPeerProfile);
+                timingMismatchKind =
+                    checkTimingTag(_impl->warned_peers, _impl->warned_count, _impl->config.timing_profile,
+                                   parsed.src, extended, timingPeerVersion, timingPeerProfile);
             } else {
                 // 【R2】不一致 -> 受信継続（本ファイル冒頭コメント参照）。
                 pollMismatchSeen = true;
@@ -874,6 +998,13 @@ DSResponderResult Qm33120::respondDSRange(const DSRangeConfig& range)
         setError(result.error);
         return result;
     }
+
+    // 【修正1】Response の遅延送信予約（dwt_setdelayedtrxtime()〜
+    // dwt_starttx(DELAYED)成功）が完全に終わった後なので、ここで初めて
+    // Poll受信時に検出したタイミング不一致のログを出す。
+    logTimingMismatch(timingMismatchKind, "respondDSRange: Poll<-TAG", parsed.src, _impl->config.timing_profile,
+                       timingPeerVersion, timingPeerProfile);
+
     // DWT_RESPONSE_EXPECTED によりTX完了後ただちにRXが開始される。受信待ち
     // ループへ入る直前に、取りこぼした通知を捨てる（本ファイル冒頭コメント
     // 参照）。IRQが無効なら何もしない。

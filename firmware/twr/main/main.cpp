@@ -165,7 +165,7 @@ static uwb::Config makeConfigFromBoard()
 #endif
     // Timing preset (docs/TIMING_PRESETS.md, task D). Carried to the peer in
     // the Poll/Response frames and used for mismatch detection
-    // (uwb_qm33120_twr.cpp checkTimingTagAndWarn()).
+    // (uwb_qm33120_twr.cpp checkTimingTag()/logTimingMismatch()).
     cfg.timing_profile = TIMING_PROFILE;
     return cfg;
 }

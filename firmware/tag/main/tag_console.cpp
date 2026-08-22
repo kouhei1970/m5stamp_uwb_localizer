@@ -232,6 +232,22 @@ int cmdAnchor(int argc, char** argv)
         if (!lock()) {
             return 1;
         }
+        // 【修正6】docs/archive/REVIEW_2026-08-21.md app層M-3: 自タグの
+        // アドレスとの一致（上のチェック）だけでは、既に登録済みの「他の
+        // スロット」と同じアドレスを別スロットへ入れることを防げない。
+        // 同一の物理アンカーを別座標の2観測として測位に混ぜてしまうため、
+        // 自スロット(idx)以外に同じアドレスが無いか確認してから拒否する。
+        // 件数を伸ばす（下の extended 処理）より前、まだ g_edit を書き換えて
+        // いない時点でチェックする（拡張で作る空きスロットは short_addr=0の
+        // プレースホルダなので、ここでは既存の実体のあるスロットだけを見る）。
+        for (size_t i = 0; i < g_editCount; ++i) {
+            if ((i != idx) && (g_edit[i].short_addr == addr)) {
+                unlock();
+                std::printf("アドレス 0x%04X は既に anchor[%u] で使われています\n",
+                            static_cast<unsigned>(addr), static_cast<unsigned>(i));
+                return 1;
+            }
+        }
         // idx が現在の件数以上なら、そこまで件数を伸ばす。間のスロットは
         // 「未設定（enabled=false）」のプレースホルダになる。
         bool extended = false;

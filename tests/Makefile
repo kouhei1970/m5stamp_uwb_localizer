@@ -10,6 +10,8 @@
 #   make test     全サブディレクトリで `make test`
 #   make strict   全サブディレクトリで `make strict`（-Werror 系）
 #   make float    `float` ターゲットを持つサブディレクトリだけで `make float`
+#   make sanitize `sanitize` ターゲットを持つサブディレクトリだけで
+#                 `make sanitize`（ASan/UBSan。遅いので `all` には含めない）
 #   make clean    全サブディレクトリで `make clean`
 #   make all      test → strict → float の順で実行
 #
@@ -25,7 +27,7 @@ SHELL := /bin/bash
 
 DIRS := $(patsubst host/%/Makefile,%,$(wildcard host/*/Makefile))
 
-.PHONY: all test strict float clean
+.PHONY: all test strict float sanitize clean
 
 test:
 	@set -euo pipefail; \
@@ -56,6 +58,17 @@ float:
 			$(MAKE) -C host/$$d float; \
 		else \
 			echo "=== float: $$d (float ターゲット無し。skip) ==="; \
+		fi; \
+	done
+
+sanitize:
+	@set -euo pipefail; \
+	for d in $(DIRS); do \
+		if grep -q '^sanitize:' host/$$d/Makefile; then \
+			echo "=== sanitize: $$d ==="; \
+			$(MAKE) -C host/$$d sanitize; \
+		else \
+			echo "=== sanitize: $$d (sanitize ターゲット無し。skip) ==="; \
 		fi; \
 	done
 

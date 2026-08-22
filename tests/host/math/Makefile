@@ -12,7 +12,7 @@
 #   make clean
 
 CC      ?= cc
-CFLAGS  ?= -O2 -g
+CFLAGS  ?= -O2 -g -MMD -MP
 WARN     = -Wall -Wextra -pedantic -Wshadow -Wconversion
 LDLIBS   = -lm
 
@@ -25,6 +25,12 @@ INCLUDES = -I$(UWB_MATH_DIR)/include
 BUILD    = build
 OBJ      = $(BUILD)/uwb_math.o
 TEST_BIN = $(BUILD)/test_math
+
+# -MMD -MP (CFLAGS) が $(BUILD)/*.d にヘッダ依存を書き出す。ヘッダだけ
+# 直してもここで拾って再コンパイルされるので、古い .o のまま
+# 「通ってはいけないものが通る」事故を防ぐ（初回ビルドでは .d が無いので
+# 空リストになるだけで問題ない）。
+-include $(wildcard $(BUILD)/*.d)
 
 .PHONY: all test strict float sanitize clean
 

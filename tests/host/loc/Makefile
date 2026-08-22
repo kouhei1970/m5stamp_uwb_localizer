@@ -21,10 +21,11 @@
 #   make strict     -Wall -Wextra -Werror -pedantic で通るか見る
 #                   (UWB_MAX_ANCHORS=8 / UWB_MAX_MEAS=8)
 #   make float      float 版で作り直して試す (マイコン想定)
+#   make sanitize   ASan/UBSan 付きでビルドして実行
 #   make clean
 
 CC      ?= cc
-CFLAGS  ?= -O2 -g
+CFLAGS  ?= -O2 -g -MMD -MP
 WARN     = -Wall -Wextra -pedantic -Wshadow -Wconversion -Wno-sign-conversion
 LDLIBS   = -lm
 
@@ -73,7 +74,15 @@ REF_WARN ?= $(WARN)
 
 DEFS ?= $(ANCHORS8_DEFS)
 
-.PHONY: all test regress test-upstream-defaults strict float clean
+# -MMD -MP (CFLAGS) が $(BUILD)/*.d / $(BUILD)/ref/*.d にヘッダ依存を
+# 書き出す。ヘッダだけ直してもここで拾って再コンパイルされるので、
+# 古い .o のまま「通ってはいけないものが通る」事故を防ぐ（初回ビルドでは
+# .d が無いので空リストになるだけで問題ない）。TEST_BIN/TEST_REGRESS_BIN は
+# $(TEST_SRC)/$(TEST_REGRESS_SRC) をリンク時に直接コンパイルするので、
+# その .d (build/test_uwb.d 等、-o の出力名基準で作られる) も同じく拾う。
+-include $(wildcard $(BUILD)/*.d) $(wildcard $(BUILD)/ref/*.d)
+
+.PHONY: all test regress test-upstream-defaults strict float sanitize clean
 
 all: $(LIB) $(REF_LIB)
 
@@ -137,6 +146,13 @@ strict:
 float:
 	$(MAKE) clean
 	$(MAKE) CFLAGS="-O2 -g -DUWB_USE_FLOAT" WARN="-Wall -Wextra -pedantic -Wshadow" test
+
+# ASan/UBSan で未定義動作・メモリ破壊を検出する。CFLAGS はコンパイルと
+# リンクの両方の recipe に載るので、-fsanitize は自動的に両方に付く。
+sanitize:
+	$(MAKE) clean
+	$(MAKE) CFLAGS="-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer" test
+	$(MAKE) clean
 
 clean:
 	rm -rf $(BUILD)

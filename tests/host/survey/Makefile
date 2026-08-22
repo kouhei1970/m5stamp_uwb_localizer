@@ -16,7 +16,7 @@
 #   make clean
 
 CC     ?= cc
-CFLAGS ?= -O2 -g
+CFLAGS ?= -O2 -g -MMD -MP
 WARN    = -Wall -Wextra -pedantic -Wshadow -Wconversion -Wno-sign-conversion
 LDLIBS  = -lm
 
@@ -37,6 +37,12 @@ BUILD    = build
 OBJ      = $(BUILD)/uwb_survey.o $(BUILD)/uwb_math.o
 TEST_OBJ = $(BUILD)/test_survey.o
 TEST_BIN = $(BUILD)/test_survey
+
+# -MMD -MP (CFLAGS) が $(BUILD)/*.d にヘッダ依存を書き出す。ヘッダだけ
+# 直してもここで拾って再コンパイルされるので、古い .o のまま
+# 「通ってはいけないものが通る」事故を防ぐ（初回ビルドでは .d が無いので
+# 空リストになるだけで問題ない）。
+-include $(wildcard $(BUILD)/*.d)
 
 .PHONY: all test strict float sanitize clean
 

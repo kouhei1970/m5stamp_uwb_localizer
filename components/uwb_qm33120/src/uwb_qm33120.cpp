@@ -551,12 +551,18 @@ bool Qm33120::init(const PhyConfig& phy)
         //
         // 待ち時間: SDKのull_softreset()内部でもdeca_sleep(2)を呼んでいる
         // （dw3720_device.c、softreset後の「DW3720 needs 1.5ms to initialise」
-        // コメント付近）が、deca_sleep()（uwb_port.c）はvTaskDelay(pdMS_TO_TICKS(ms))を
-        // そのまま呼ぶだけで、tick境界をまたぐと実待ち時間が最短(ms-1)tickになる
-        // 既知の問題がある（docs/REVIEW_2026-08-21.md §1 M-1）。ここでの待ちは
-        // SDK内部のdeca_sleep(2)に追加してhost側でさらに保証を積み増すためのもので、
-        // M-1の修正案と同様に+1して「pdMS_TO_TICKS(2)+1」にすることでtick境界の
-        // 落とし穴を避ける。
+        // コメント付近）。【M-1 は修正済み】以前はdeca_sleep()（uwb_port.c）が
+        // vTaskDelay(pdMS_TO_TICKS(ms))をそのまま呼ぶだけで、tick境界をまたぐと
+        // 実待ち時間が最短(ms-1)tickになる問題があった
+        // （docs/REVIEW_2026-08-21.md §1 M-1）が、deca_sleep()本体を
+        // vTaskDelay(pdMS_TO_TICKS(ms) + 1)へ直した（uwb_port.c）ので、
+        // SDK内部のdeca_sleep(2)自体が既にtick境界の落とし穴から保護されている。
+        // したがってここでの「+1」はもうその対策としては不要であり、これは
+        // deca_sleep()を経由しない独立したvTaskDelay()呼び出しなので
+        // M-1の修正と二重に積み増しているわけでもない。それでもこの行を
+        // 残しているのは、softreset直後にSDK内部の待ちだけに頼らずhost側で
+        // さらにマージンを積んでおきたいという元々の意図が今も有効なため
+        // （値そのもの pdMS_TO_TICKS(2)+1 は変更しない）。
         vTaskDelay(pdMS_TO_TICKS(2) + 1);
 
         // dwt_checkidlerc()が1を返すまで待つ（公式サンプルのwhile(!dwt_checkidlerc());

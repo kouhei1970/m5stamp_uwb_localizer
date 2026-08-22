@@ -203,7 +203,7 @@ static uwb::Config makeConfigFromBoard()
 #endif
     // タイミングプリセット(docs/TIMING_PRESETS.md、タスクD)。相手(Tag)へ
     // Poll/Response フレームで伝わり、不一致検出に使われる
-    // (uwb_qm33120_twr.cpp checkTimingTagAndWarn())。
+    // (uwb_qm33120_twr.cpp checkTimingTag()/logTimingMismatch())。
     cfg.timing_profile = TIMING_PROFILE;
     return cfg;
 }
