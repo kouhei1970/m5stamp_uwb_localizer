@@ -241,14 +241,33 @@ choice UWB_TIMING_PROFILE
     default UWB_TIMING_PROFILE_POLLING_BOTH
     config UWB_TIMING_PROFILE_POLLING_BOTH   bool "両側ポーリング（31 Hz、実機未検証の既定）"
     config UWB_TIMING_PROFILE_ANCHOR_IRQ     bool "アンカーのみ IRQ（59 Hz、標準構成）"
-    config UWB_TIMING_PROFILE_BOTH_IRQ       bool "両側 IRQ（90 Hz、タグを別配線した場合）"
+    config UWB_TIMING_PROFILE_BOTH_IRQ       bool "両側 IRQ（90 Hz、タグ側にも IRQ が必要）"
 endchoice
 ```
 
+**2026-08-22 更新**: `BothIrq` はタグ側にも IRQ が必要な構成で、以前は「タグを別配線できた
+場合」という条件付きの扱いだった。プリセット値・版不一致検出・Kconfig の切り替え自体は
+`docs/TIMING_PRESETS.md` 初版の時点から全部入っており、**単に対応するハードが存在しなかった
+だけ**である。StampFly 搭載タグの接続経路が M5StampS3A 背面の 12P FPC 経由に変更され、G16 の
+IRQ が実際に取れるようになったことで（`boards/stampfly.h`、`docs/IRQ_POLICY.md`）、`BothIrq`
+は条件付きの選択肢ではなく実際に成立する構成になった。
+
 **既定は `PollingBoth`**。現在の既定値と同一で挙動が変わらないため。
-実機で Phase 1〜2 が通ってから `AnchorIrq` を既定に上げる。
+実機で Phase 1〜2 が通ってから `AnchorIrq` を既定に上げる。`BothIrq` を試す場合も同様に
+実機検証を経てから選ぶこと（本ドキュメントの数値はいずれも実機未検証）。
 
 `docs/GETTING_STARTED.md` に「**アンカーとタグは必ず同じプリセットで焼くこと**」を明記する。
+
+### 5.1 CI ビルド（`.github/workflows/build.yml`）
+CI の firmware マトリクスには `AnchorIrq`（`-fast`）と同様に `BothIrq` のペアも追加されている:
+
+| ペア | 用途 |
+|---|---|
+| `anchor-stamps3-ds-fast` / `tag-stamps3-ds-fast` | `AnchorIrq`（59 Hz） |
+| `anchor-stamps3-ds-bothirq` / `tag-stampfly-ds-bothirq` | `BothIrq`（90 Hz、タグは StampFly 背面 FPC 前提） |
+
+`-fast` のペアと同じく、**`-bothirq` のペアも必ずセットで焼くこと**。片側だけ `BothIrq` の
+遅延値を焼くと、相手側は別のプリセットの締切で待つことになり測距が成立しない（§0）。
 
 ---
 

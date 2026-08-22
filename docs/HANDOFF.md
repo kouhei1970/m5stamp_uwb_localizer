@@ -10,6 +10,29 @@
 > 本日中に**全件対応済み**（§0 の表参照。#6 外れ値棄却・#7 ライセンス同梱も本セッションで解消した）。
 > 残っているのは実機でしか確認できない項目だけである。
 
+### 【追記 2026-08-22】ブランチ `feat/stamps3-fpc-migration` での変更
+
+前回 HANDOFF 時点（HEAD `dffcde5`、main）から本ブランチで6コミット
+（`git log --oneline main..HEAD` で確認可能。一覧は §1）を積み、ハードウェア構成の
+既定を切り替えた:
+
+- **アンカー5台＋据置タグ1台を M5StampS3A + StampS3 BreakOut に統一**（`UWB_ANCHOR_BOARD_STAMPS3` /
+  `UWB_TAG_BOARD_STAMPS3` が既定）。**AtomS3(R) は削除せず代替として残す。**
+  UWB モジュールは S017-F を 0.5mm 12P FPC + FPC→DIP 変換基板で接続する（`docs/WIRING.md` 経路A）
+- **StampFly 搭載タグは M5StampS3A 背面の 12P FPC 経由に切り替え**（`UWB_TAG_BOARD_STAMPFLY`、
+  `boards/stampfly.h` 全面改訂）。**旧 GROVE 2系統4本構成は廃案**（RST/IRQ/WAKEUP が取れず、
+  GROVE が電池電圧直結・満充電約4.35V で絶対最大定格4.0Vを超えるため LDO が必須だった。
+  新経路は背面 FPC の VDD_3V3 に直結できるため LDO 不要）
+- RST/IRQ/WAKEUP が全構成で取れるようになり、**`uwb::TimingProfile::BothIrq`（90Hz）が
+  初めて成立する**。CI に `anchor-stamps3-ds-bothirq` / `tag-stampfly-ds-bothirq` を追加済み。
+  **既定は引き続き `PollingBoth` のまま**（実機で Phase 1〜2 が通ってから段階的に上げる方針は不変）
+- ドキュメント構成を整理: `SOLDER_PADS.md`→`WIRING.md`、`BRINGUP.md`→`GETTING_STARTED.md` §3〜§4
+  に統合、`UNITS.md`→`GLOSSARY.md` に統合、`PLATFORM_TUNING.md`→`PERF_ANALYSIS.md` の付録に統合、
+  `MATH_AUDIT_2026-08-21.md`→`docs/archive/` へ移動
+
+**このブランチはまだ `main` に未マージ・未 push。** 次セッションはまず差分をレビューし、
+問題なければ `main` へマージすること。
+
 **実機が届いたらこの順で進める**（詳細・判断基準は
 **[`docs/EXPERIMENT_PLAN.md`](EXPERIMENT_PLAN.md)**）:
 
@@ -27,10 +50,18 @@
    引き上げた効果の確認（レビュー H-1。残量が小さければ専用タスクへの分離を検討）
 3. `INIT_FAILED` が **出ないこと**（`dwt_checkidlerc()` 待ちタイムアウト。レビュー M-2 の対策確認）
 
-**実機到着前にできることは実質もう無い。** 旧版の「すぐ着手できる」項目 A〜F は前回セッションで
-すべて完了しており、本セッションでレビュー #6（外れ値棄却）・#7（ライセンス同梱）も解消し、
-すべてコミット・push 済み（`dffcde5`、CI green）。
-強いてやるなら以下の任意項目のみ:
+**実機到着前にできることはまだ残っている。** 旧版の「すぐ着手できる」項目 A〜F、レビュー #6
+（外れ値棄却）・#7（ライセンス同梱）は前々回・前回セッションで完了・コミット・push 済み
+（`dffcde5`、main、CI green）。その後 `feat/stamps3-fpc-migration` ブランチでハードウェア構成の
+既定を切り替えたことで、**実機を待たずに進められる作業が新たに生まれている**:
+
+- **FPC→DIP 変換基板の型番選定と接点面（同面／異面）の確認**（`docs/EXPERIMENT_PLAN.md` §10 #13）
+- **M5StampS3A 背面 12P FPC コネクタの入手**（HDGC/0.5K-HX-12PWB。出荷時は未実装で後付けが要る）
+- **StampS3 BreakOut の PinMap 確認**（3V3/GND のヘッダ位置。同 §10 #15）
+
+配線図（`docs/WIRING.md`）とピン定義（`boards/stamps3.h` / `boards/stampfly.h`）はすでに
+確定しているので、部材さえ揃えばこれらは実機（UWB モジュール本体）の到着を待たずに進められる。
+それ以外に強いてやるなら以下の任意項目のみ:
 
 - `uwb_math` の `uwb_sym3_solve_sphere` と Beck のλ探索の共通化（反復の形が同型。任意）
 - `v0.2.0` を切るかどうかの判断（§1 Release 参照。全件コミット済みなので
@@ -45,7 +76,7 @@
 
 | リポジトリ | 状態 |
 |---|---|
-| **m5stamp_uwb_localizer**（本体） | GitHub 公開済み `kouhei1970/m5stamp_uwb_localizer`（public）。HEAD は `dffcde5`。未コミットの変更なし（ワークツリーはクリーン、origin/main と一致） |
+| **m5stamp_uwb_localizer**（本体） | GitHub 公開済み `kouhei1970/m5stamp_uwb_localizer`（public）。`main` の HEAD は `dffcde5`。**現在の作業ブランチ `feat/stamps3-fpc-migration`（HEAD `9730d66`、main から6コミット、未マージ・未 push）で作業中**。ワークツリーには本ブランチの文書更新に伴う未コミットの差分がある |
 | **uwb_localizer**（上流） | **2026-08-21 に凍結・独立**（`42daea9`。上流 `667551e` を取り込み）。以後 `components/uwb_loc/` は本リポジトリで独立して開発する。**上流は見ない** |
 | stampfly_ecosystem | `third_party/stampfly_ecosystem` に読み取り専用クローンあり。**書き込み禁止** |
 | 一次資料（PDF/公式API） | `docs/refs/`。**`.gitignore` 済み**（再配布禁止文書を含む） |
@@ -78,6 +109,20 @@
    `components/uwb_math/{include,src}` / `components/uwb_loc/src/{uwb_closed_form.c,uwb_internal.h,uwb_nls.c}` /
    `docs/archive/MATH_AUDIT_2026-08-21.md` / `tests/host/math/test_math.c`。
    `uwb_loc` 側・`uwb_survey` 側とも新 API への差し替えが完了している。
+
+### `feat/stamps3-fpc-migration` ブランチのコミット（`main`=`dffcde5` から6コミット、HEAD `9730d66`。未 push）
+
+| コミット | 内容 |
+|---|---|
+| `bc92494` | StampS3A 用アンカーバイナリを配布（CI に `anchor-stamps3-ds` / `-fast` を追加）、旧 `BRINGUP.md` の FPC 番号誤記を修正 |
+| `5044f46` | アンカーを StampS3A 既定にし、StampFly を背面 12P FPC 接続へ切替（`boards/stampfly.h` 全面改訂、CI variant 14→18）。旧 GROVE 4線構成を廃案に |
+| `2f9d8df` | M5StampS3A の公式回路図（`assets/Sch_StampS3_v0.3.3.pdf`）を追加。`boards/stampfly.h` の一次資料 |
+| `6578065` | `BRINGUP.md` を `GETTING_STARTED.md` §3〜§4 へ統合 |
+| `7f84e2d` | `PLATFORM_TUNING.md` / `UNITS.md` を統合、`MATH_AUDIT_2026-08-21.md` を `docs/archive/` へ移動 |
+| `9730d66` | `SOLDER_PADS.md` を `WIRING.md` へ改組し配線の正本を1本化（経路A: FPC→DIP変換基板 / 経路B: 半田パッド直付け / 経路C: StampS3A背面12P FPC の新設を含む） |
+
+詳細は各コミットメッセージおよび `docs/EXPERIMENT_PLAN.md` / `docs/STAMPFLY_INTEGRATION.md` /
+`docs/WIRING.md` を参照。
 
 ### ホストテスト（`make -C tests all` = test / strict / float を再実行して確認。float ビルドの回帰は 591,184 件）
 
@@ -147,7 +192,7 @@ docs/archive/     経緯文書（PROGRESS / REIMPL_PLAN / CRITICAL_REVIEW / SURV
 |---|---|---|
 | 対象 | **ESP32-S3 + M5Stamp UWB Module 専用**。プラットフォーム最適化してよい。ただし StampFly には非依存 | `docs/PLAN.md` |
 | **ハード方針** | **StampFly 非依存。ただしタグの配線だけは StampFly 互換を維持する**（GROVE 2系統4本で成立 ＝ IRQ/RST 不要）。想定利用者は本リポジトリを単体で試す人 | `docs/PLAN.md` §1 |
-| 役割 | **タグ = M5StampS3A ×1 / アンカー = AtomS3(R) ×5** | `docs/archive/PROGRESS.md` |
+| 役割 | **タグ = M5StampS3A ×1（既定は据置＝StampS3 BreakOut 経由。StampFly 搭載時は機体の M5StampS3A を背面 12P FPC 経由で流用） / アンカー = M5StampS3A + StampS3 BreakOut ×5（既定、`UWB_ANCHOR_BOARD_STAMPS3`）。AtomS3(R) は代替として残る** | `docs/archive/PROGRESS.md`、本ブランチ `feat/stamps3-fpc-migration`（§0・§1） |
 | 接続 | **FPC ではなく半田パッド**（1.27mm キャステレーション）。J1（FPC 用番号）と PINMAP（パッド用番号）は**別の番号体系**で両方正しい | `docs/WIRING.md` §5.5 |
 | 電源 | パッド2（VCC_3V3）は QM33120W の VDD1/VDD2 に直結。動作上限 3.6V・絶対最大 4.0V。5V や StampFly GROVE（満充電 ~4.35V）は不可 | `docs/WIRING.md` §5.4 |
 | **IRQ** | **アンカーは積極使用。タグは不使用。StampFly の別配線可能性は残す** | **`docs/IRQ_POLICY.md`** |

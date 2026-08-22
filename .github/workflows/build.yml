@@ -34,6 +34,15 @@ jobs:
       - name: host tests (tests/host/*)
         run: make -C tests test strict float
 
+      # 文書とコードの整合チェック。同じ表を複数の文書に置いた結果、訂正が
+      # 片方だけに入って食い違う事故（docs/HANDOFF.md の D-2）を機械的に防ぐ。
+      # リンク切れ・削除済み文書への参照・パッド↔FPC 対応表の重複・
+      # Kconfig シンボルの実在・配線表と boards/*.h の一致を見る。
+      - name: docs consistency (tools/docs_check)
+        run: |
+          pip install --quiet pyyaml
+          python3 tools/docs_check/verify_docs.py
+
   # ---------------------------------------------------------------- #
   # ファームウェアのビルド → 書き込み可能なバイナリを artifact に
   # ---------------------------------------------------------------- #

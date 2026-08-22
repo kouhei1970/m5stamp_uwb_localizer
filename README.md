@@ -20,7 +20,7 @@
 
 ## 📖 どこから読むか
 
-ドキュメントは現役 21 本（+ 経緯を記録した archive 8 本）あります。**全部読む必要はありません。**
+ドキュメントは現役 17 本（+ 経緯を記録した archive 9 本）あります。**全部読む必要はありません。**
 下から自分に合う入口を選んでください。索引は **[`docs/README.md`](docs/README.md)**。
 
 | あなたは | 入口 | その次 |
@@ -130,7 +130,7 @@ I (xxx) uwb_probe: === L1: PASS / L2: PASS ===
 読めないときの切り分けは
 [`docs/GETTING_STARTED.md` §4.3](docs/GETTING_STARTED.md#probe-troubleshoot)。
 
-> **M5 AtomS3 で動かす場合**は `idf.py menuconfig` →
+> **M5 AtomS3 で動かす場合**（手元にある場合の代替ホスト）は `idf.py menuconfig` →
 > `UWB Probe Configuration` → `Target host board` → `M5 AtomS3` に切り替えてください
 > （`firmware/probe` の既定は M5StampS3A）。
 
@@ -174,22 +174,37 @@ I (xxx) uwb_probe: === L1: PASS / L2: PASS ===
 
 ## 必要なもの
 
-### ハードウェア（検証構成: タグ 1 + アンカー 5）
+### ハードウェア（標準構成: タグ 1 + アンカー 5、据置機）
 
 | 品目 | 数量 | 役割 |
 |---|---:|---|
-| [M5Stamp UWB Module (QM33120W)](https://docs.m5stack.com/en/stamp/Stamp_UWB) （SKU `S017`）<br>または [M5Stamp UWB Module with FPC (QM33120W)](https://docs.m5stack.com/en/stamp/Stamp_UWB_F) （SKU `S017-F`） | **6** | UWB モジュール。**半田パッドを使うのでどちらでもよい** |
-| [M5StampS3A](https://docs.m5stack.com/en/core/M5StampS3A) | **1** | タグ（移動体）のホスト。**旧 M5StampS3（A 無し）と完全互換**（電源とアンテナが改良された現行版） |
-| [M5 AtomS3](https://docs.m5stack.com/en/core/AtomS3) | **5** | アンカー（固定局）のホスト **AtomS3R（現行）/ 無印 AtomS3（在庫限り）のどちらでも可**（IMU/地磁気を使わないため互換と推定。**実機未検証**） |
+| [M5Stamp UWB Module with FPC (QM33120W)](https://docs.m5stack.com/en/stamp/Stamp_UWB_F) （SKU `S017-F`） | **6** | UWB モジュール。**0.5mm 12P FPC ケーブルが標準付属** |
+| [M5StampS3A](https://docs.m5stack.com/en/core/M5StampS3A) | **6** | タグ（移動体）・アンカー（固定局）共通のホスト。**旧 M5StampS3（A 無し）と完全互換**（電源とアンテナが改良された現行版） |
+| [StampS3 BreakOut](https://docs.m5stack.com/en/stamp/StampS3BreakOut) | **6** | M5StampS3A を 2.54mm ピッチへ変換する基板。**StampS3 本体（M5StampS3A）は同梱されません**、別途用意すること |
+| 0.5mm 12P FPC→DIP 変換基板 | **6** | FPC ケーブルを BreakOut の 2.54mm ヘッダへ繋ぐための変換基板。**型番は未定** |
+| USB-C ケーブル（データ通信対応） | 1〜 | 充電専用ケーブルでは書き込めない |
+| USB 電源（アンカー給電用） | 5 | モバイルバッテリ・USB ハブ等 |
 
-**モジュールとホストは半田付けで接続します**（1.27mm ピッチのキャステレーションホール）。
-FPC コネクタ経由でも構いませんが、0.5mm 12P の変換基板が別途必要です。
+**モジュールとホストは FPC ケーブル + 変換基板で接続します。モジュール側の半田付けは不要**です
+（`S017-F` の FPC コネクタ → 変換基板 → BreakOut の 2.54mm ヘッダ）。
+無印 `S017` しか無い場合や変換基板が手元に無い場合は、1.27mm ピッチの
+キャステレーションホールへ直付けする代替経路もあります → [`docs/WIRING.md`](docs/WIRING.md) §0.1。
+
+> **アンカーのホストは [M5 AtomS3](https://docs.m5stack.com/en/core/AtomS3) でも代替できます。**
+> 手元にある場合はそのまま使えます（AtomS3R（現行）/ 無印 AtomS3（在庫限り）のどちらでも可。
+> IMU/地磁気を使わないため互換と推定。**実機未検証**）。上表は M5StampS3A に統一した
+> 標準構成です。
 
 ### 工具・材料
 
-**AWG30 相当の細線**、**1.6mm C 型以下のこて先**、フラックス、拡大鏡、
-**テスター（向きの確認に必須）**、線の根元を固定する接着剤、
+**BreakOut への 2.54mm ピンヘッダの半田付け**（通常のはんだごて・はんだで可。
+モジュール側の微細な半田付けが無くなったため、AWG30 相当の細線・1.6mm 以下の
+こて先・フラックス・拡大鏡は**不要**になった）、**テスター（FPC の向きの確定に必須）**、
 **巻尺（アンカー座標の実測用）**、USB-C ケーブル。
+
+> 半田パッドへ直付けする代替経路（[`docs/WIRING.md`](docs/WIRING.md) §0.1 経路B）を選ぶ場合は、
+> AWG30 相当の細線・1.6mm 以下のこて先・フラックス・拡大鏡が別途必要です
+> （同文書 §4.1〜§4.3）。
 
 > 詳細な BOM は [`docs/GETTING_STARTED.md` §1](docs/GETTING_STARTED.md#bom)。
 
@@ -215,7 +230,7 @@ m5stamp_uwb_localizer/
 │   ├── UWB_ALGORITHMS.md    測位アルゴリズムの導出（上流からの移植・改訂版）
 │   ├── GLOSSARY.md          用語集（略語の正式名称と意味）
 │   ├── GLOSSARY.md             UUS / DTU / 実µs の単位リファレンス
-│   ├── WIRING.md       半田パッドの寸法・配線・アンテナ禁止領域
+│   ├── WIRING.md            配線の正本。3つの接続経路とピン対応・向きの確定
 │   ├── GETTING_STARTED.md           Phase 1（SPI 疎通）の受入確認手順
 │   ├── ANCHOR_PLACEMENT.md  アンカー配置ルール（実測にもとづく）
 │   ├── IRQ_POLICY.md        IRQ を使うかどうかの方針
@@ -228,11 +243,11 @@ m5stamp_uwb_localizer/
 │   ├── REVIEW_2026-08-21.md 実機投入前の最終レビュー（2026-08-21）
 │   ├── PERF_ANALYSIS.md     測位ソルバの性能分析
 │   ├── PERF_ANALYSIS.md   ESP32-S3 固有の最適化調査
-│   ├── MATH_AUDIT_2026-08-21.md  行列計算の残存箇所の監査とスカラー化の設計根拠
 │   └── archive/             経緯文書（設計当時の調査・検討。現役の仕様ではない）
 │       ├── PROGRESS.md          開発進捗ログ（何がどこまで検証済みか）
 │       ├── REIMPL_PLAN.md       TWR 層の課題一覧（R1〜R12）
 │       ├── CRITICAL_REVIEW.md   移植元コードの問題点の詳細分析
+│       ├── MATH_AUDIT_2026-08-21.md  行列計算の残存箇所の監査とスカラー化の設計根拠
 │       └── SURVEY_*.md          事前調査資料
 │
 ├── assets/                  製品写真・公式ピンマップ・SNS カード
@@ -240,7 +255,7 @@ m5stamp_uwb_localizer/
 ├── boards/                  ホストボードのピン定義（※ 暫定値。実配線で要検証）
 │   ├── stamps3.h            M5StampS3A（タグ単体構成）
 │   ├── atoms3.h             M5 AtomS3 / AtomS3R（アンカー。構成 A/B を Kconfig で切替）
-│   └── stampfly.h           StampFly 搭載時のタグ（GROVE 2系統4本 = SPI）
+│   └── stampfly.h           StampFly 搭載時のタグ（M5StampS3A 背面の 12P FPC 経由）
 │
 ├── components/
 │   ├── qm33120w_sdk/        Qorvo 提供の QM33120W/DW3720 チップドライバ SDK
@@ -299,7 +314,7 @@ firmware/tag ──┬─ uwb_ranging ─┬─ uwb_loc          （ハード非
 | **電源** | **公式仕様 DC 3.3V。パッド 2 はチップ直結（動作 2.4〜3.6V、絶対最大定格 4.0V）。5V は不可（壊れます）** |
 | 消費電流 | スリープ 75.9µA / アンカー動作 5.23mA / **タグ動作 58.0mA** @3.3V |
 | チャネル | **ch9 固定**（中心周波数 7987.2MHz） |
-| 接続 | 0.5mm 12P FPC コネクタ（`S017-F` のみ） / **1.27mm キャステレーションホール 12 個**（両方） |
+| 接続 | **接続経路は3通り**（[`docs/WIRING.md`](docs/WIRING.md) §0.1）: ① 0.5mm 12P FPC（`S017-F` のみ）→ 変換基板で BreakOut へ　② 1.27mm キャステレーションホール 12 個（両方に対応）へ直付け　③ M5StampS3A 背面の 12P FPC（StampFly 搭載タグ用） |
 | 外形 | 11.5 × 12.0 × 1.6mm（`S017`）/ × 2.8mm（`S017-F`） |
 
 > **M5Stack の別製品「Unit UWB」(SKU U100) とは別物です。**
@@ -324,8 +339,9 @@ firmware/tag ──┬─ uwb_ranging ─┬─ uwb_loc          （ハード非
 **このリポジトリを単体で試す人**で、StampFly を用意する必要は一切ありません。
 
 > ただし**タグ側のハードウェア構成だけは、StampFly にそのまま載せられるよう
-> 互換性を意図的に維持**しています（GROVE 2系統4本だけで動く ＝ IRQ / RST 無しの
-> ポーリングで成立する）。方針の詳細は [`docs/PLAN.md` §1](docs/PLAN.md)。
+> 互換性を意図的に維持**しています。StampFly も同じ M5StampS3A をタグのホストに使い、
+> 背面の 12P FPC（0.5mm。出荷時は未実装のため後付け半田が必要）経由で UWB モジュールに
+> 繋ぐ構成です（旧 GROVE 2系統4本の構成は廃案）。方針の詳細は [`docs/PLAN.md` §1](docs/PLAN.md)。
 
 ---
 

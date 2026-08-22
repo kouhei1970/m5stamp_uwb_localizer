@@ -192,17 +192,43 @@ n=6 では 15 本中 14 本で落ちる（残る 1 本は別の局所解が 4cm 
 
 ### [3.5] 高さの自動計測（オプション）
 
-**AtomS3 に I2C（Inter-Integrated Circuit）の ToF 距離センサ（Time-of-Flight 方式の測距センサ）を付けると、高さ実測も不要になる。**
+**M5StampS3A + StampS3 BreakOut に I2C（Inter-Integrated Circuit）の ToF 距離センサ
+（Time-of-Flight 方式の測距センサ）を付けると、高さ実測も不要になる。**（2026-08-22、
+既定ホストを AtomS3 から M5StampS3A + StampS3 BreakOut へ切り替えたことに伴い本節を書き直し。
+AtomS3 を使う場合の構成は本節末尾「代替: AtomS3 の場合」を参照）
 
-#### GPIO の空き（ユーザ確認済み）
+#### GPIO の空き（M5StampS3A + StampS3 BreakOut の場合）
+
+`boards/stamps3.h` の UWB 用ピン割り当て（既定 `BOARD_STAMPS3_UWB_PORT_CONFIG`）:
+
+| 場所 | ピン | 用途 |
+|---|---|---|
+| BreakOut ヘッダ | G12 / G11 / G13 / G10 | SPI（SCK/MOSI/MISO/CS） |
+| BreakOut ヘッダ | G6 / G7 / G8 | RST / IRQ / WAKEUP |
+| **BreakOut の Grove ポート** | **G13 / G15** | **G13 は上記 MISO と衝突するため使用不可** |
+| BreakOut ヘッダ（空き） | G1〜G5 など | I2C（SDA/SCL）を手配線する候補 |
+
+**⚠ 「Grove に挿すだけ」にはならない。** BreakOut の Grove ポートは G13/G15 に配線されて
+いるが、**G13 は `pin_miso`（SPI MISO）と衝突する**（`boards/stamps3.h` 冒頭コメント）。
+ToF センサを増設する場合は Grove コネクタを使わず、**空いている G1〜G5 あたりへ
+SDA/SCL を手配線する**こと（具体的な2本の割り当ては未確定。実験0〜1で決める）。
+
+I2C はバスなのでアドレスが衝突しなければ増設できる（VL53L1X 系 = 0x29）。
+M5StampS3A 自体はオンボード IMU・地磁気センサを持たないため、AtomS3 のような
+IMU との共用問題は発生しない。
+**SPI（Serial Peripheral Interface）/ RST / IRQ（Interrupt ReQuest、割り込み要求）/ WAKEUP を
+一切削らずに済む。** IRQ はアンカー側の折り返し時間（R5/R6）に効くので、これを失わないのは重要。
+
+#### 代替: AtomS3 の場合
+
+AtomS3 はアンカーの既定構成から代替に格下げされたが、削除はされていない
+（`UWB_ANCHOR_BOARD_ATOMS3` として選択可）。AtomS3 を使う場合は以下の構成が使える。
+
 | 場所 | ピン | 用途 |
 |---|---|---|
 | 底面ヘッダ | G5 / G6 / G7 / G8 | SPI（MISO/MOSI/SCK/CS） |
 | **底面ヘッダ** | **G38 / G39** | **I2C（オンボード MPU6886 と共用）← ToF はここ** |
 | Grove ポート | G1 / G2 | RST / IRQ |
-
-I2C はバスなのでアドレスが衝突しなければ増設できる
-（MPU6886 = 0x68、VL53L1X 系 = 0x29）。
 
 **無印 AtomS3 と AtomS3R で事情が違う（AtomS3R が現行版、無印は在庫限り）:**
 | | 無印 AtomS3 | AtomS3R |
@@ -214,8 +240,6 @@ I2C はバスなのでアドレスが衝突しなければ増設できる
 本リポジトリは IMU も地磁気も使わないので**どちらでも成立する**。
 **AtomS3R の方がバスを専有できるので条件が良い。**
 ただし**互換性は推定であり実機未検証**。
-**SPI（Serial Peripheral Interface）/ RST / IRQ（Interrupt ReQuest、割り込み要求）を一切削らずに済む。**
-IRQ はアンカー側の折り返し時間（R5/R6）に効くので、これを失わないのは重要。
 
 #### センサ選定
 | 候補 | 上限 | 判断 |

@@ -31,7 +31,7 @@
 |---|---|---|
 | **UWB** | **U**ltra-**W**ide**b**and（超広帯域無線） | 500 MHz 以上の広い帯域に極短パルスを撒く無線方式。帯域が広い＝時間分解能が高いので、**電波の飛行時間から距離を cm 級で測れる**。本プロジェクトが使う理由がこれ |
 | **タグ** (tag) | — | **位置を知りたい側**。動く。本プロジェクトでは 1 台（M5StampS3A / StampFly）。測距シーケンスを開始する側なので **initiator（イニシエータ）** とも呼ぶ |
-| **アンカー** (anchor) | — | **座標が既知の基準局**。動かさない。本プロジェクトでは 5 台（AtomS3(R)）。タグからの問い合わせに応える側なので **responder（レスポンダ）** とも呼ぶ |
+| **アンカー** (anchor) | — | **座標が既知の基準局**。動かさない。本プロジェクトでは 5 台（**既定は M5StampS3A + StampS3 BreakOut**。`UWB_ANCHOR_BOARD_STAMPS3` が既定。AtomS3(R) は代替として選択可）。タグからの問い合わせに応える側なので **responder（レスポンダ）** とも呼ぶ |
 
 3次元の位置を解くにはアンカーが最低4台要る（`docs/ANCHOR_PLACEMENT.md`）。
 
@@ -134,7 +134,10 @@
 | **Kconfig / menuconfig** | — | ESP-IDF のビルド設定機構。`idf.py menuconfig` で対話的に設定する |
 | **FPC** | **F**lexible **P**rinted **C**ircuit（フレキシブル基板） | 薄いフィルム状の配線。M5Stamp UWB Module の一部品種はこのコネクタを持つ |
 | **キャステレーション** | castellation | 基板の端の半円形の半田パッド。M5StampS3A の側面にある |
-| **LDO** | **L**ow **D**rop**o**ut regulator | 低損失の降圧レギュレータ。M5Stack 一般の GROVE は 5V 出力が多いが、**StampFly の GROVE は電池電圧（満充電 ~4.35V、チップの絶対最大 4.0V 超）**であり、いずれも 3.3V を作るのに要る |
+| **FPC→DIP 変換基板** | — | 0.5mm ピッチの FPC ケーブルを 2.54mm/DIP ヘッダへ変換する基板。据置機の標準経路（`docs/WIRING.md` 経路A）で、M5Stamp UWB Module with FPC (S017-F) を StampS3 BreakOut に繋ぐのに使う。**接点面（同面／異面）が合わないと 1 番と 12 番が入れ替わる**ので実物で要確認（`docs/WIRING.md` §4.0） |
+| **ロードスイッチ** | load switch | 電源レールを半導体で ON/OFF する IC。M5StampS3A では **AW35122FDR (U2)** が背面 FPC の **BL_3V3** 系統（バックライト・オンボード RGB LED 兼用）を切り替えており、EN が **G38 (DISP_BL)** に配線されている（`boards/stampfly.h`） |
+| **BL_3V3 / VDD_3V3 の区別** | — | M5StampS3A 背面 12P FPC にある2系統の3.3V。**BL_3V3**（位置5）はロードスイッチの出力で **G38 が Low になると落ちる**。**VDD_3V3**（位置11）はロードスイッチの**上流**で常時給電。**UWB モジュールの電源は必ず VDD_3V3 から取る**（`boards/stampfly.h`「■ 電源（重要）」、`docs/WIRING.md` §3.5） |
+| **LDO** | **L**ow **D**rop**o**ut regulator | 低損失の降圧レギュレータ。M5Stack 一般の GROVE は 5V 出力が多いが、**StampFly の GROVE は電池電圧（満充電 ~4.35V、チップの絶対最大 4.0V 超）**であり、いずれも 3.3V を作るのに要る。**StampFly 搭載タグの標準経路（背面 12P FPC の VDD_3V3 給電、旧 GROVE 4線構成は廃案）では LDO は不要**（`boards/stampfly.h`） |
 | **XSHUT** | — | ToF 距離センサのシャットダウン端子。同一 I2C アドレスの複数個を個別に初期化するのに使う |
 | **PWM** | **P**ulse **W**idth **M**odulation（パルス幅変調） | StampFly のモータ駆動信号 |
 
@@ -147,8 +150,9 @@
 | **M5Stamp UWB Module** | M5Stack の UWB モジュール（**通称 M5Stamp UWB**）。中身は Qorvo QM33120W。**本プロジェクトの対象**。FPC コネクタ付きの品種（**M5Stamp UWB Module with FPC**）もある |
 | **QM33120W** | Qorvo の UWB トランシーバ IC。**DW3720 系**。Device ID = `0xDECA0314` |
 | **DW3000 / DW3720 / DW1000** | Decawave（現 Qorvo）の UWB IC 系列。DW1000 が旧世代。**単位系の定数が世代で違うので混同注意**（`docs/GLOSSARY.md`） |
-| **M5StampS3A** | ESP32-S3 の小型ボード。**タグのホスト**。旧 M5StampS3 と互換 |
-| **AtomS3 / AtomS3R** | ESP32-S3 の小型ボード（LCD 付き）。**アンカーのホスト**。R が現行版で、IMU が G0/G45 に移っている分 G38/G39 が空く |
+| **M5StampS3A** | ESP32-S3 の小型ボード。**既定のホスト（タグ・アンカーとも）**。据置機は **StampS3 BreakOut** に載せて使う（`UWB_*_BOARD_STAMPS3` が既定）。StampFly 搭載タグは背面 12P FPC 経由（`UWB_TAG_BOARD_STAMPFLY`）。旧 M5StampS3 と互換 |
+| **AtomS3 / AtomS3R** | ESP32-S3 の小型ボード（LCD 付き）。**アンカーホストの代替**（`UWB_ANCHOR_BOARD_ATOMS3`。既定は M5StampS3A + StampS3 BreakOut に切り替わったが、削除はされていない）。R が現行版で、IMU が G0/G45 に移っている分 G38/G39 が空く |
+| **StampS3 BreakOut** | M5StampS3A の 1.27mm ピンを 2.54mm へ変換する M5Stack 純正の拡張基板。露出 IO 23本（G0-G15, G39-G44, G46）は M5StampS3A 単体と同じで、BreakOut を使っても使わなくてもピン定義は同一。Grove ポートは **G13/G15** に配線されており、**G13 は UWB の SPI MISO と衝突する**ので ToF 増設等は Grove に挿すだけでは済まない（`boards/stamps3.h`、`docs/SURVEY_SPEC.md` §3.5）。G0/EN のタクトスイッチ付きで書き込みモードに入りやすい |
 | **StampFly** | M5StampS3A を積んだマルチコプター機体。**本リポジトリは非依存だが、タグの配線だけ互換を保つ**（`docs/PLAN.md` §1） |
 | **ESP-IDF** | Espressif **I**o**T** **D**evelopment **F**ramework。ESP32 系の公式 SDK。本プロジェクトのビルド環境 |
 | **uwb_localizer** | 測位ソルバの上流リポジトリ（本プロジェクト作者のもの）。`components/uwb_loc/` として無改造で取り込んでいる |

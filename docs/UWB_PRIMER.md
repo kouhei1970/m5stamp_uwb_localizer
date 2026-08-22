@@ -275,4 +275,4 @@ A と B の時計が同期していないからです。しかも要求水準が
 - **置き方**: [`ANCHOR_PLACEMENT.md`](ANCHOR_PLACEMENT.md)
 - **手を動かす**: [`GETTING_STARTED.md`](GETTING_STARTED.md)
 - **実機が来たら**: [`EXPERIMENT_PLAN.md`](EXPERIMENT_PLAN.md)
-- **単位でつまずいたら**: [`GLOSSARY.md`](GLOSSARY.md) / [`GLOSSARY.md`](GLOSSARY.md)
+- **単位や略語でつまずいたら**: [`GLOSSARY.md`](GLOSSARY.md)（用語集 + 単位リファレンス）

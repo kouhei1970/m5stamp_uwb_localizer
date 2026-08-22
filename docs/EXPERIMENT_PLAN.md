@@ -156,7 +156,7 @@ DS-TWR は**両側に遅延送信の締切**があるので、タイミング設
 ### 5. アンカーを立てる（`firmware/anchor` × 5）
 | フラグ | 値 |
 |---|---|
-| `UWB_ANCHOR_BOARD_ATOMS3` + `UWB_BOARD_ATOMS3_PINOUT_A`/`_B` | 実物に合わせる |
+| `UWB_ANCHOR_BOARD_STAMPS3`（既定）/ `_ATOMS3`（代替、+ `UWB_BOARD_ATOMS3_PINOUT_A`/`_B`） | 実物に合わせる（標準構成は M5StampS3A + StampS3 BreakOut ×5） |
 | `UWB_ANCHOR_METHOD_DS` | **タグと同じ方式** |
 | `UWB_ANCHOR_SHORT_ADDR` | **5台とも別のアドレス** |
 | `UWB_ANCHOR_CONSOLE` | y（既定）。アドレスと座標をコンソールで直せる |
@@ -283,21 +283,51 @@ W ... respondDSRange: Poll<-TAG: peer=0x0001 とタイミングプリセット�
 **迷わず `PollingBoth` に全台戻す。** 戻せば実験 6 の状態に必ず帰れます
 （`PollingBoth` は現在の既定値と完全に同一の数値なので）。
 
-### `BothIrq` は当面使わない
-タグ側にも IRQ が要ります。StampFly では GROVE 4本を SPI で使い切るので**取れません**。
-単体の M5StampS3A なら G7 で取れますが、**タグは IRQ 非依存という方針**なので
-実験的な位置づけです。
+### 実験 8 の後 — `BothIrq`（90 Hz）を試す
+
+**2026-08-22 の方針変更で、タグ側にも IRQ が取れるようになった。** 以前はここに
+「StampFly では GROVE 4本を SPI で使い切るのでタグ側 IRQ は取れない」と書いてあったが、
+StampFly 搭載タグの接続経路が M5StampS3A 背面の 12P FPC 経由（`boards/stampfly.h`）に
+変わったことで解消した。IRQ=G16・RSTn=G33・WAKEUP=G17 がすべて取れる。据置タグ
+（単体の M5StampS3A + BreakOut）も元から IRQ=G7 で取れる。CI にも
+`anchor-stamps3-ds-bothirq` / `tag-stampfly-ds-bothirq` が追加済み（`docs/TIMING_PRESETS.md`）。
+
+**手順は実験 7・8 と同じ2段階**（IRQ を先に有効化 → プリセットを変更）で、
+**今度はタグを含めた6台全台に `UWB_ENABLE_IRQ=y` を入れ、6台全台を
+`UWB_TIMING_PROFILE_BOTH_IRQ` で焼き直す**（1台でも取り残すと version mismatch 警告が出る。
+§8 と同じ注意）。
+
+> **ただしレート面の必然性は無い。** `docs/STAMPFLY_INTEGRATION.md` §3.1 の通り、
+> 31 Hz の時点で既に位置ループ帯域（≈0.064 Hz）の約480倍あり、90 Hz にしても
+> 制御の観点でのご利益は薄い。**IRQ の本当の価値は「折返し時間が縮んでクロック
+> オフセット誤差が減る」「タイミングマージンが増えて成功率が上がる」ことにある**
+> （`boards/stampfly.h`「■ IRQ / RST が取れることの意味」）。90 Hz という数字自体を
+> 追いかける動機は無い。
+
+#### 合格条件
+| 見るもの | 合格 |
+|---|---|
+| `cycle_ms` | **11 ms 前後**（90 Hz。`docs/STAMPFLY_INTEGRATION.md` §2.2 (c1)） |
+| 不一致警告 | **出ない** |
+| `ok` の連続性・`residual_rms` | 実験 8 と同等かそれ以上 |
+
+既定は引き続き `PollingBoth` のまま変えない。**IRQ の極性（アクティブ HIGH 前提）が
+実機で未検証な間は、`AnchorIrq` → `BothIrq` と段階的にしか上げない**（§10 #6）。
+悪化したら §8 と同じく `PollingBoth` に全台戻せば実験 6 の状態へ必ず帰れる。
 
 ---
 
-## 9. フラグ有効化の順序（まとめ）
+## 9. フラグ有効化の順序（まとめ） — Kconfig 早見表
 
 **上から順に。前の段が合格するまで次に進まない。**
 
+**下表は probe/twr/anchor/tag/devtest の5ファームを横断する Kconfig シンボルを
+俯瞰できる、本書中唯一の早見表である。** 個々のシンボルの意味・条件は各実験の節を参照。
+
 | 順 | フラグ | 既定 → 変更後 | 対象 | 前提 |
 |---|---|---|---|---|
-| 1 | `UWB_*_BOARD_*` | 実物に合わせる | 全ファーム | — |
-| 2 | `UWB_BOARD_ATOMS3_PINOUT_A/_B` | 無印=A / R=B | AtomS3 のみ | — |
+| 1 | `UWB_*_BOARD_*` | 実物に合わせる（**既定は全ファーム共通で `STAMPS3`**。AtomS3 は代替として明示的に選ぶ） | 全ファーム | — |
+| 2 | `UWB_BOARD_ATOMS3_PINOUT_A/_B` | 無印=A / R=B（**`UWB_*_BOARD_ATOMS3` を選んだときだけ効く**） | AtomS3 選択時のみ | — |
 | 3 | `UWB_TWR_METHOD_SS` → `_DS` | SS で通してから DS | `twr` 2台 | 実験 1 合格 |
 | 4 | `UWB_ANCHOR_SHORT_ADDR` | 5台で別々 | `anchor` | 実験 3 合格 |
 | 5 | `UWB_TAG_METHOD_DS` / `UWB_ANCHOR_METHOD_DS` | **必ず一致** | tag + anchor | 実験 4 合格 |
@@ -305,7 +335,7 @@ W ... respondDSRange: Poll<-TAG: peer=0x0001 とタイミングプリセット�
 | **7** | **`UWB_ENABLE_IRQ`** | **n → y** | **アンカーのみ** | **実験 6 合格** |
 | **8** | **`UWB_TIMING_PROFILE_ANCHOR_IRQ`** | **PollingBoth → AnchorIrq** | **タグとアンカー全台** | **実験 7 合格** |
 | 9 | `UWB_TAG_ENABLE_EKF` | n → y | `tag` | 実験 8 合格 |
-| — | `UWB_TIMING_PROFILE_BOTH_IRQ` | 当面使わない | — | タグ側に IRQ 配線が要る |
+| — | `UWB_ENABLE_IRQ`（タグ側）+ `UWB_TIMING_PROFILE_BOTH_IRQ` | AnchorIrq が安定したら試してよい（90 Hz） | タグ + アンカー全台 | 実験 8 合格。タグ側 IRQ が取れるようになったため試せる（§8「実験 8 の後」参照） |
 
 ---
 
@@ -317,16 +347,20 @@ W ... respondDSRange: Poll<-TAG: peer=0x0001 とタイミングプリセット�
 |---|---|---|---|---|
 | 1 | **半田パッドの pin 1 の向き** | 実験 0 | **壊れる。ここだけは事前にテスターで確定** | 外部報告（XIAO ESP32-C6 + 公式ライブラリ）で整合。本リポジトリのコードでは未 |
 | 2 | `boards/*.h` のピン割り当て | 実験 1 | ヘッダを直す | |
-| 3 | AtomS3 の底面ヘッダに G38/G39 が出ているか | 実験 1（構成B） | 構成 A に切り替える | |
-| 4 | G38 が SDA か SCL か | 実験 9（ToF） | 入れ替える | |
-| 5 | 無印 AtomS3 と AtomS3R の互換性 | 実験 1 | ボード定義を分ける | |
+| 3 | AtomS3 の底面ヘッダに G38/G39 が出ているか | 実験 1（構成B） | 構成 A に切り替える | **優先度低。** AtomS3 は既定から代替に格下げ済み（既定は M5StampS3A + StampS3 BreakOut） |
+| 4 | G38 が SDA か SCL か | 実験 9（ToF） | 入れ替える | **優先度低。** 同上。既定構成（M5StampS3A + BreakOut）では ToF は G1〜G5 へ手配線するため G38 は関与しない（`docs/SURVEY_SPEC.md` §3.5） |
+| 5 | 無印 AtomS3 と AtomS3R の互換性 | 実験 1 | ボード定義を分ける | **優先度低。** 同上 |
 | 6 | **IRQ がアクティブ HIGH か** | 実験 7 | 極性を変える（`GPIO_INTR_NEGEDGE`） | |
 | 7 | `pin_rst` 未配線で `dwt_softreset` だけで復旧できるか | 実験 1（StampFly 構成） | RST 配線が必須になる | 外部報告（公式ライブラリ + XIAO ESP32-C6、`dwt_softreset()`+待ちで温間リセットの `CONFIG_FAILED` が解消）で裏付けあり。本リポジトリの `begin()` にも同様のソフトリセット + `dwt_checkidlerc()` 待ちを追加済み（`4de9c68`）。実機では未確認 |
 | 8 | アンテナ遅延の実値 | 実験 4 | 校正値を入れる | |
-| 9 | StampFly GROVE は電池電圧（~3.0〜4.35V）。供給能力と LDO 後の 3.3V で 60mA 取れるか | 実験 10 | 機体バッテリから直接取る | |
+| 9 | **VDD_3V3（背面 12P FPC・スイッチング DC-DC `MUN3CAD01-SC` の出力）のリップル・電流余裕。** M5Stack 推奨の「高 PSRR の LDO、またはリップル 12mVpp 以内」を満たすとは限らず、DC-DC の定格出力電流は公式資料に記載が無い（タグ動作は 58.0mA @3.3V） | 実験 10 | 位置1の VIN_5V から低ノイズ LDO を起こす構成に切り替える（`boards/stampfly.h`「■ 電源（重要）」） | 旧項目（StampFly GROVE 経由給電）は**廃案**。HW-4 は GROVE を使わず VDD_3V3 直結のため LDO 自体が不要（`docs/STAMPFLY_INTEGRATION.md` HW-4） |
 | 10 | 折返し時間の実測（プリセットの根拠） | 実験 8 | プリセットの数値を見直す（**版番号を上げること**） | |
 | 11 | **IRQ プルアップの影響**（SLEEP 中の張り付き） | — | SLEEP/WAKEUP を使う設計にするときは要再検討 | モジュール上に DW_IRQ の 10kΩ プルアップあり（`WIRING.md` §5.5(4)、公式回路図で確認）。現状の使い方（起床信号としてのみ使用、チップを能動的に SLEEP させない）では実害なし |
 | 12 | **起動直後に出るべきログ3行**: ① `spi: slow=… fast=… active=16000000`（SPI が 2MHz のまま止まっていないか）② メインタスクの `stack high-water mark`（12288B 化の効き目）③ `INIT_FAILED` が **出ないこと**（`dwt_checkidlerc()` 待ちタイムアウト） | 実験 1 | ①が出ない→SPI 切替の実装ミスを疑う／②が小さい→タスク分離を検討／③が出る→RST 未配線時のソフトリセットが効いていない | レビュー H-2・H-1・M-2（`docs/REVIEW_2026-08-21.md`）の修正がホスト検証止まりで、実機での動作は未確認。`docs/HANDOFF.md` §0 参照 |
+| 13 | **FPC→DIP 変換基板の型番と接点面（同面／異面）** が未定 | 実験 0（配線前） | 手持ちの基板に合わせて FPC ケーブルの向きを選び直す | 経路A（据置機標準）の要。反転すると FPC 1/2（3V3）と 11/12 が入れ替わり電源逆接になりうる（`docs/WIRING.md` §4.0） |
+| 14 | **S017-F 実物で、キャステレーションパッドへの半田付けが物理的に可能か**（FPC コネクタ実装済みのため） | 実験 0 | 経路B（半田パッド直付け）へのフォールバックを諦め、経路A（FPC→DIP 変換基板）専用にする | パッドの存在自体は公式資料で確定済み（`docs/WIRING.md` §0.1・§5.1）。未確認なのは連結後の半田付けアクセス性 |
+| 15 | **StampS3 BreakOut の 3V3 / GND がどのヘッダピンか** | 実験 0〜1 | テスターで確認してから配線する | `docs.m5stack.com/en/stamp/StampS3BreakOut` にピン配置図はあるが実物未突合 |
+| 16 | **StampFly 実装状態（機体に組み込み済み）で M5StampS3A 背面パッドに物理アクセスできるか** | 実験 10（StampFly 統合） | 専用基板の設計をコネクタ実装前提で見直す。最悪、機体の一部分解が要る | HW-4 の実装可否そのものを左右する。旧 HW-2 の同種の未確認事項を引き継いだもの（`docs/STAMPFLY_INTEGRATION.md` §7.5） |
 
 外部報告（GOROman 氏、<https://gist.github.com/GOROman/76c222768b042d35599d26192a25e829>）
 の詳細は [`docs/WIRING.md`](WIRING.md) 冒頭と

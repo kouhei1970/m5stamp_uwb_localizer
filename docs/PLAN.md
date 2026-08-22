@@ -46,19 +46,29 @@ StampFly への統合はその成果物を利用する下流作業。
 | **タグのハード** | **StampFly 互換を維持する**（意図的な制約）。本スタックの成果をそのまま StampFly の位置制御へ移植したいため（`docs/STAMPFLY_INTEGRATION.md` 案B-2） |
 | **アンカーのハード** | **この制約は無い**。据置きなので AtomS3(R) の IRQ を積極利用してよい（`docs/IRQ_POLICY.md`） |
 
-「タグのハードを StampFly 互換に保つ」の具体的な中身:
+「タグのハードを StampFly 互換に保つ」の具体的な中身（2026-08-22 更新: 制約が緩んだ）:
 
-1. **タグは GROVE 2系統4本 (G13/G15/G1/G2) だけで動くこと。** StampFly で外部に出せる
-   信号線はこれだけなので、これを超える配線を前提にした実装をタグ側に入れない
-   （`boards/stampfly.h`、`docs/STAMPFLY_INTEGRATION.md` §5.2）。
-2. **したがって IRQ（Interrupt ReQuest、割り込み要求）/ RST を必要としないポーリング経路を、常に第一級の実装として保つ**
-   （`docs/IRQ_POLICY.md`）。タグ単体構成の M5StampS3A では IRQ (G7) が取れるが、
-   **それを前提にした実装にはしない**。IRQ はあくまで「使えるなら使う」加点要素。
-3. **SPI（Serial Peripheral Interface）ホストは飛行系(SPI2_HOST)と分離できること**（`boards/stampfly.h` は SPI3_HOST）。
+1. **タグ（StampFly 搭載機体）は M5StampS3A 背面の 12P FPC 経由で接続する。**
+   2026-08-22 のユーザ決定により、旧案「GROVE 2系統4本 (G13/G15/G1/G2) だけで動くこと」
+   という制約は廃案になった（`boards/stampfly.h`）。背面 FPC 経由なら SPI3_HOST の4本
+   （SCK/MOSI/MISO/CS）に加えて RSTn(G33)/IRQ(G16)/WAKEUP(G17) が取れ、電源も同じ FPC の
+   VDD_3V3 から取れるので降圧回路（LDO）も不要になった。旧構成を廃した理由の詳細は
+   `boards/stampfly.h` 末尾「■ 旧構成（GROVE 4線）を廃した理由」、経緯は
+   `docs/STAMPFLY_INTEGRATION.md` §5.3 を参照。
+2. **それでも IRQ（Interrupt ReQuest、割り込み要求）/ RST を必要としないポーリング経路を、
+   常に第一級の実装として保つ**（`docs/IRQ_POLICY.md`）。制約が緩んでタグでも IRQ (G16) と
+   RST (G33) が使えるようになったが、既定は引き続きポーリングのままである。理由は
+   「タグが IRQ を取れないから」ではなく、**「IRQ の極性が実機で未検証だから」**
+   （`components/uwb_port/src/uwb_port.c` の `GPIO_INTR_POSEDGE` 周辺コメント）に変わった。
+   実機で Phase 1〜2 の検証が済んでから `AnchorIrq` → `BothIrq` の順に既定を上げる方針。
+3. **SPI（Serial Peripheral Interface）ホストは飛行系(SPI2_HOST)と分離できること**
+   （`boards/stampfly.h` は SPI3_HOST のまま。背面 FPC 経由でもこの分離は維持される）。
 
-**この制約があるからタグは 31 Hz 止まりで、アンカーだけ IRQ 化しても 59 Hz が上限になる**
-（`docs/TIMING_PRESETS.md`）。それでも StampFly の位置制御の実効帯域は約 0.064 Hz なので
-実用上の問題は無い、というのが `docs/STAMPFLY_INTEGRATION.md` §3.1 の結論である。
+**制約が緩んだことで、実機検証後に既定を上げれば `AnchorIrq`（59 Hz）だけでなく
+`BothIrq`（90 Hz）も射程に入るようになった**（`docs/TIMING_PRESETS.md`）。ただし
+実機未検証のうちは既定を `PollingBoth`（31 Hz）から動かさない。StampFly の位置制御の
+実効帯域は約 0.064 Hz なので、どのプリセットでも実用上の問題は無い、というのが
+`docs/STAMPFLY_INTEGRATION.md` §3.1 の結論である。
 
 ### 提供するもの
 | # | 成果物 | 内容 | 状態（2026-08-21） |
@@ -103,12 +113,18 @@ StampFly への統合はその成果物を利用する下流作業。
   → **試算 31.3 Hz**（5アンカー DS-TWR）、**アンカー IRQ 化で 59.4 Hz** 試算
   （`docs/TIMING_PRESETS.md`, `docs/STAMPFLY_INTEGRATION.md`）。実測は実機待ち
 - ~~ホストボードが6台あるかは未確認。不足する場合はアンカー台数を減らして段階的に検証する~~
-  **確定構成（`docs/archive/PROGRESS.md`）: タグ = M5StampS3A ×1、アンカー = AtomS3(R) ×5**
+  ~~確定構成（`docs/archive/PROGRESS.md`）: タグ = M5StampS3A ×1、アンカー = AtomS3(R) ×5~~
+  **確定構成（2026-08-22 更新）: タグ = StampFly（M5StampS3A 搭載機体、背面 12P FPC 経由）×1、
+  アンカー = M5StampS3A + StampS3 BreakOut ×5（既定 Kconfig `UWB_ANCHOR_BOARD_STAMPS3`）。
+  AtomS3(R) はアンカーの代替構成として引き続き選択できる（`docs/IRQ_POLICY.md`）**
 
 ### 対応ホストボード
-- **M5StampS3A**（ESP32-S3、GPIO 露出多い＝本命の開発ボード）
-- **M5 AtomS3**（ESP32-S3、GROVE 1系統 + 内部で LCD/ボタンが GPIO 消費）
-- （下流）StampFly = M5StampS3A
+- **M5StampS3A + StampS3 BreakOut**（ESP32-S3、GPIO 露出多い。アンカーの既定構成であり、
+  タグ単体構成（StampFly を持たない場合）にも使う。`boards/stamps3.h`）
+- **M5 AtomS3 / AtomS3R**（ESP32-S3、GROVE 1系統 + 内部で LCD/ボタンが GPIO 消費。
+  **アンカーの代替構成**。構成A/B の Kconfig は現役のまま残す。`boards/atoms3.h`）
+- （下流）**StampFly**（M5StampS3A を搭載したドローン機体本体。タグとして背面 12P FPC
+  経由で接続する。2026-08-22 確定、`boards/stampfly.h`）
 
 ---
 
@@ -220,40 +236,40 @@ m5stamp_uwb_localizer/
 
 ## 3. 配線設計
 
-**【2026-08-21 更新】** 接続は FPC ではなく半田パッドで確定（`docs/WIRING.md`）。
-以下の 12P 信号一覧は有効。
+**【2026-08-22 更新】** 接続は **FPC 経路が標準**になった（`docs/WIRING.md` §0.1）。
+経路は3通りある: 経路A = FPC→DIP 変換基板（据置機の標準）／経路B = 半田パッド直付け（代替）／
+経路C = M5StampS3A 背面 12P FPC（StampFly）。
 
-### モジュール側（12P FPC、固定）
-1:GND 2:VCC_3V3 3:DW_WAKEUP 4:DW_IRQ 5:DW_GP7 6:DW_RSTn
-7:DW_CDO(MISO) 8:GND 9:DW_CDI(MOSI) 10:DW_CSn 11:DW_CLK 12:GND
+> **【訂正 2026-08-22】** 本節は以前「モジュール側（12P FPC、固定）」という見出しで
+> 12 本の信号一覧を再掲していたが、並べていたのは**半田パッドの番号**であり、
+> FPC の番号とは違っていた（旧 `BRINGUP.md` で起きたのと同じ誤りが本節にも
+> あった。旧 BRINGUP.md は `GETTING_STARTED.md` へ統合済み）。**信号一覧は本文書では持たない。正本は `docs/WIRING.md` §2 の
+> パッド↔FPC 対応表のみ。** 同じ表を複数の文書に置くと、訂正が片方だけに
+> 入って食い違う。
 
-**必須: VCC_3V3, GND, CLK, CDI, CDO, CSn（6本）**
-**推奨: +IRQ, +RSTn（8本）／省電力運用なら +WAKEUP**
+**モジュール側 12 本の信号と番号 → [`docs/WIRING.md` §2](WIRING.md)（唯一の正本）**
+**ホスト側の GPIO 割当 → `boards/*.h`（`docs/WIRING.md` §3 に同じ値の表がある）**
 
-### 開発機（M5StampS3A / AtomS3）
-GPIO に余裕があるので **SPI4線 + IRQ + RSTn をフル配線**して開発する。
-ピン番号は `boards/*.h` で定義。3.3V はボードから直接取れる。
+必須は 6 本（VCC_3V3 / GND / CLK / CDI / CDO / CSn）、推奨は +IRQ +RSTn の 8 本、
+省電力運用なら +WAKEUP。
+
+### 開発機（M5StampS3A + StampS3 BreakOut）
+GPIO に余裕があるので **SPI4線 + IRQ + RSTn + WAKEUP をフル配線**して開発する。
+ピン番号は `boards/stamps3.h` で定義。3.3V はボードから直接取れる。
+AtomS3 は空き GPIO が少ないため WAKEUP を諦める（代替構成）。
 
 ### StampFly（下流・Phase 6）
-| 案 | 配線 | 長所 | 短所 |
-|---|---|---|---|
-| **A: GROVE 2系統併用** | G13,G15,G1,G2 → SCK/MOSI/MISO/CS | 半田付け無しに近い | IRQ/RST 無し（ポーリング）、I2C/UART 拡張を両方潰す、カスタムケーブル必須、**StampFly の GROVE は電池電圧（満充電 ~4.35V、チップの絶対最大 4.0V 超）→ LDO で 3.3V が必要** |
-| ~~B: 空きGPIO 直付け~~ | ~~G5,G10,G41,G42~~ | — | **【訂正 2026-08-21】成立しない。** この4本は現行ファームで**モータPWM**（`vehicle/main/config.hpp:63-66`）。当時の調査が古いリポジトリを見てモータピンを見落としていた |
-| C: 内蔵SPI2 相乗り | G14/G43/G44 + 新規CS | 線が3本節約 | これらはコネクタに出ていない＝直付け必須、BMI270 の 10MHz バスと競合 |
-
-→ **A を前提に設計**（IRQ 不要な作りにしておく）。~~B は実機のパッド有無を確認して判断。~~
-  **B は成立しない（R3 参照）。**
-→ **補強材料(調査5)**: M5Stack 公式ライブラリは `attachInterrupt` を一切使わない
-  **完全ポーリング方式**（`dwt_readsysstatuslo()` ループ監視）。
-  つまり **IRQ 線が無くても元の実装がそのまま動く**。案 A の最大の懸念が消えた。
-→ いずれも **StampFly の GROVE は電池電圧（満充電 ~4.35V、チップの絶対最大 4.0V 超）→
-   LDO（Low Dropout regulator、低損失レギュレータ）で 3.3V を作る変換（60mA 以上）を
-   載せた小さな変換基板が必要**。FPC 12P → 配線の変換も同基板でやるのが素直。
+**2026-08-22 のユーザ決定により、M5StampS3A 背面の 12P FPC 経由（`boards/stampfly.h`）に
+確定した。** GROVE 2系統併用（旧案）・内蔵SPI2への相乗り（HW-2）の比較検討は
+`docs/STAMPFLY_INTEGRATION.md` §5.3 を参照（結論はそのどちらでもなく背面 FPC 経由になった
+ため、いまは経緯としてのみ有効。廃案の理由は `boards/stampfly.h` 末尾「■ 旧構成（GROVE 4線）
+を廃した理由」）。
 
 ### 電力
-モジュールはタグ動作 58.0mA @3.3V。StampFly の GROVE は電池電圧（満充電 ~4.35V、
-チップの絶対最大 4.0V 超のため LDO 必須）で、供給能力および LDO 後の 3.3V での
-供給能力は**未公開**。
+モジュールはタグ動作 58.0mA @3.3V。背面 FPC 経由なら VDD_3V3（M5StampS3A のスイッチング
+DC-DC 出力の下流）から直接給電でき、GROVE 経由で必要だった LDO による降圧は不要になった
+（`boards/stampfly.h`）。ただし DC-DC の定格出力電流・リップル特性は公式資料に記載が無く、
+測距距離・精度が出ない場合はここを疑う対象として残る。
 → 実機で電流実測して確認する（Phase 6 の受入条件）。
 
 ---
