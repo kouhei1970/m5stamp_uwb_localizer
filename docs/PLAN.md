@@ -240,12 +240,8 @@ m5stamp_uwb_localizer/
 経路は3通りある: 経路A = FPC→DIP 変換基板（据置機の標準）／経路B = 半田パッド直付け（代替）／
 経路C = M5StampS3A 背面 12P FPC（StampFly）。
 
-> **【訂正 2026-08-22】** 本節は以前「モジュール側（12P FPC、固定）」という見出しで
-> 12 本の信号一覧を再掲していたが、並べていたのは**半田パッドの番号**であり、
-> FPC の番号とは違っていた（旧 `BRINGUP.md` で起きたのと同じ誤りが本節にも
-> あった。旧 BRINGUP.md は `GETTING_STARTED.md` へ統合済み）。**信号一覧は本文書では持たない。正本は `docs/WIRING.md` §2 の
-> パッド↔FPC 対応表のみ。** 同じ表を複数の文書に置くと、訂正が片方だけに
-> 入って食い違う。
+**信号一覧は本文書では持たない。正本は `docs/WIRING.md` §2 のパッド↔FPC 対応表のみ。**
+同じ表を複数の文書に置くと、片方だけ更新されて食い違う事故につながる。
 
 **モジュール側 12 本の信号と番号 → [`docs/WIRING.md` §2](WIRING.md)（唯一の正本）**
 **ホスト側の GPIO 割当 → `boards/*.h`（`docs/WIRING.md` §3 に同じ値の表がある）**
@@ -377,7 +373,7 @@ CI/Release 整備（`docs/PREBUILT_BINARIES.md`、Release zip への LICENSE 同
 ### 確定した前提（ユーザ回答 2026-08-19）
 - 保有ハード: **M5Stamp UWB Module / ホストボード ともに4台以上** → Phase 4（3D測位）まで実機検証可能
 - StampFly 統合先: **`firmware/vehicle`**（C++ ラッパはその流儀に合わせる）
-  - ※ユーザ指摘により訂正: 旧 `vehicle_new` が現 `vehicle` にリネーム済み。
-    旧 `vehicle` は `vehicle_old` になった。
+  - 注: `firmware/vehicle_new` は `firmware/vehicle` にリネーム済み。旧 `firmware/vehicle` は
+    `firmware/vehicle_old` になった（経緯は `docs/archive/SURVEY_stampfly_ecosystem.md`）。
     ~~ローカルクローンは 2026-05-09 時点で古い（Phase 6 着手前に更新が必要）~~
     **`third_party/stampfly_ecosystem` は 2026-08-19 時点のクローン（`e52cc04`）に更新済み**

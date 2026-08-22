@@ -52,7 +52,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # --- 実験1: SPI 疎通確認 ---
+          # 既定は「両側 IRQ（BothIrq、約90Hz）＋ IRQ 有効」。2026-08-22 に
+          # ポーリング主体をやめたため、下記の base variant がその既定で焼かれる。
+          # IRQ の極性は実機未検証なので、駄目だったとき用に *-polling がある。
+
+          # --- 実験1: SPI 疎通確認（遅延プリセットは無関係） ---
           - name: probe-stamps3
             app: probe
             kconfig: |
@@ -128,47 +132,23 @@ jobs:
               CONFIG_UWB_TAG_BOARD_STAMPFLY=y
               CONFIG_UWB_TAG_METHOD_DS=y
 
-          # --- 実験7/8: IRQ + AnchorIrq プリセット。
-          #     **この2つは必ずセットで使うこと**（片側だけ焼くと測距が成立しない） ---
-          - name: anchor-stamps3-ds-fast
+          # --- フォールバック: IRQ が実機で期待どおり動かなかった場合に使う。
+          #     **この2つは必ずセットで使うこと**（遅延プリセットが片側だけ
+          #     違うと測距が成立しない） ---
+          - name: anchor-stamps3-ds-polling
             app: anchor
             kconfig: |
               CONFIG_UWB_ANCHOR_BOARD_STAMPS3=y
               CONFIG_UWB_ANCHOR_METHOD_DS=y
-              CONFIG_UWB_ENABLE_IRQ=y
-              CONFIG_UWB_TIMING_PROFILE_ANCHOR_IRQ=y
-          - name: anchor-atoms3-pinoutB-ds-fast
-            app: anchor
-            kconfig: |
-              CONFIG_UWB_ANCHOR_BOARD_ATOMS3=y
-              CONFIG_UWB_BOARD_ATOMS3_PINOUT_B=y
-              CONFIG_UWB_ANCHOR_METHOD_DS=y
-              CONFIG_UWB_ENABLE_IRQ=y
-              CONFIG_UWB_TIMING_PROFILE_ANCHOR_IRQ=y
-          - name: tag-stamps3-ds-fast
-            app: tag
-            kconfig: |
-              CONFIG_UWB_TAG_BOARD_STAMPS3=y
-              CONFIG_UWB_TAG_METHOD_DS=y
-              CONFIG_UWB_TIMING_PROFILE_ANCHOR_IRQ=y
-
-          # --- 両側 IRQ (90 Hz)。タグ側にも IRQ が要る構成でのみ使える。
-          #     StampFly は背面 12P FPC で IRQ を取れるようになった
-          #     (boards/stampfly.h)。**このペアも必ず両方セットで使うこと** ---
-          - name: anchor-stamps3-ds-bothirq
-            app: anchor
-            kconfig: |
-              CONFIG_UWB_ANCHOR_BOARD_STAMPS3=y
-              CONFIG_UWB_ANCHOR_METHOD_DS=y
-              CONFIG_UWB_ENABLE_IRQ=y
-              CONFIG_UWB_TIMING_PROFILE_BOTH_IRQ=y
-          - name: tag-stampfly-ds-bothirq
+              CONFIG_UWB_ENABLE_IRQ=n
+              CONFIG_UWB_TIMING_PROFILE_POLLING_BOTH=y
+          - name: tag-stampfly-ds-polling
             app: tag
             kconfig: |
               CONFIG_UWB_TAG_BOARD_STAMPFLY=y
               CONFIG_UWB_TAG_METHOD_DS=y
-              CONFIG_UWB_ENABLE_IRQ=y
-              CONFIG_UWB_TIMING_PROFILE_BOTH_IRQ=y
+              CONFIG_UWB_ENABLE_IRQ=n
+              CONFIG_UWB_TIMING_PROFILE_POLLING_BOTH=y
 
     steps:
       - uses: actions/checkout@v4

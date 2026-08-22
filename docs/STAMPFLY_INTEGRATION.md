@@ -49,7 +49,7 @@
 （`SF/tasks/tasks.cpp:44-57` のコメントに、コア1へ優先度22を同居させた際に数十秒の飢餓が
 発生した実機バグの記録あり）。
 
-→ **UWB タスクをどのコア・どの優先度に置くかは、この非対称配置の制約を受ける**（§5.4）。
+→ **UWB タスクをどのコア・どの優先度に置くかは、この非対称配置の制約を受ける**（§5.2）。
 
 ## 1.2 姿勢制御と位置制御の階層 — **分離されていない**
 
@@ -682,7 +682,7 @@ R を小さく設定すると、ESKF が UWB を信用して**短期精度が悪
 | 5 | `components/sf_core/params.cpp` | `eskf.use_uwb`(既定 0), `eskf.obs.uwb_noise`, `eskf.gate.uwb_innov` を `:790-808` の並びに追加 |
 | 6 | `tasks/imu_task.cpp` | `processAsyncSensors()`（`:248`）に `while (sf::sensor_uwb.read(fix)) g_estimator->updateUwb(fix);` |
 | 7 | `components/sf_hal_uwb_qm33120/`（新規） | 本リポジトリの `uwb_*` コンポーネントを取り込む C++ ラッパ。命名は `sf_hal_<chip>` 流儀（`docs/archive/SURVEY_stampfly_ecosystem.md:39`） |
-| 8 | `tasks/uwb_task.cpp`（新規）+ `tasks/tasks.hpp` / `tasks.cpp` | 測距ループ。コア0（§5.4） |
+| 8 | `tasks/uwb_task.cpp`（新規）+ `tasks/tasks.hpp` / `tasks.cpp` | 測距ループ。コア0（§5.2） |
 | 9 | `main/config.hpp` | `PRIORITY_UWB` / `STACK_UWB` / GPIO 定義 |
 
 **⚠ `third_party/` は読み取り専用。上記は「統合するならこうなる」という設計であり、
@@ -692,121 +692,16 @@ R を小さく設定すると、ESKF が UWB を信用して**短期精度が悪
 
 # 5. ハードウェア構成
 
-## 5.1 【重要な訂正】`docs/archive/SURVEY_stampfly_grove.md` の「空きGPIO」は誤り
+## 5.1 配線
 
-`docs/archive/SURVEY_stampfly_grove.md:25-29` は **G5 / G10 / G41 / G42 を「未使用（＝空き）」**と
-記載し、`docs/PLAN.md:253` の R3 と `docs/archive/SURVEY_stampfly_grove.md:70` の代替案2 が
-これに依拠している。
-
-**現行ファームの実コードでは、この4本はすべてモータ PWM 出力である:**
-
-```
-SF/main/config.hpp:63:  GPIO_MOTOR_M1 = 42;  // FR, CCW
-SF/main/config.hpp:64:  GPIO_MOTOR_M2 = 41;  // RR, CW
-SF/main/config.hpp:65:  GPIO_MOTOR_M3 = 10;  // RL, CCW
-SF/main/config.hpp:66:  GPIO_MOTOR_M4 = 5;   // FL, CW
-```
-
-**→ `archive/SURVEY_stampfly_grove.md` の「代替案2（空きGPIOを使う）」は成立しない。**
-旧調査はモータのピン割当を見ていなかった（旧調査の対象は `M5StampFly` / `stampfly_hal` であり、
-`firmware/vehicle` ではない）。
-
-## 5.2 現行ファームでの GPIO 使用状況（実コード確認済み）
-
-`SF/main/config.hpp:45-73` から:
-
-| GPIO | 用途 | file:line |
-|---:|---|---|
-| 0 | ボタン | `config.hpp:73` |
-| 3 / 4 | I2C SDA / SCL | `config.hpp:53-54` |
-| **5** | **モータ M4** | `config.hpp:66` |
-| 7 | ToF XSHUT（底面） | `config.hpp:58` |
-| 9 | ToF XSHUT（前方、恒久リセット保持） | `config.hpp:59`, `SF/tasks/tof_task.cpp:96-105` |
-| **10** | **モータ M3** | `config.hpp:65` |
-| 12 | PMW3901 CS | `config.hpp:49` |
-| 14 / 43 / 44 | SPI MOSI / MISO / SCK | `config.hpp:45-47` |
-| 21 | M5StampS3A 内蔵 LED | `config.hpp:70` |
-| 39 | 機体 LED | `config.hpp:71` |
-| 40 | ブザー | `config.hpp:72` |
-| **41 / 42** | **モータ M2 / M1** | `config.hpp:64,63` |
-| 46 | BMI270 CS | `config.hpp:48` |
-
-**現行ファームで未使用の GPIO**（`GPIO_NUM_n` を `main/` `components/` `tasks/` で grep して0件）:
-
-| GPIO | 物理的な素性 | 使えるか |
-|---:|---|---|
-| **1 / 2** | **GROVE(黒/UART) RX/TX** | **○ コネクタに出ている** |
-| **13 / 15** | **GROVE(赤/I2C) SDA/SCL** | **○ コネクタに出ている** |
-| 6 / 8 | ToF INT（底面/前方） | **× VL53L3CX IC へ配線済み。コネクタに出ていない** |
-| 11 | BMI270 INT1 | **× BMI270 へ配線済み** |
-
-出典: GROVE / ToF INT / BMI270 INT の配線は
-`SF/components/sf_hal_bmi270/docs/M5StamFly_spec_ja.md:112-140`（同一ファイルが
-`sf_hal_vl53l3cx/docs/` にも重複配置）。
-
-**→ 外部に取り出せる信号線は GROVE 2系統の 4本（G13, G15, G1, G2）だけ。**
-
-## 5.3 接続案の比較
-
-M5Stamp UWB Module のホスト側必要信号:
+M5StampS3A 背面の 12P FPC を使う（2026-08-22 決定）。M5Stamp UWB Module のホスト側必要信号:
 **最低4本（SCK/MOSI/MISO/CS）、推奨 +2（IRQ/RSTn）、省電力なら +1（WAKEUP）**
 （`docs/archive/SURVEY_m5stamp_uwb_module.md:91-92`）。
 
-### HW-1: GROVE 2系統を4本すべて SPI に使う（`archive/SURVEY_stampfly_grove.md:64` の代替案1）【廃案】
-
-**2026-08-22 廃案。** RST/IRQ/WAKEUP が一切取れず、GROVE がバッテリ電圧直結（満充電約4.35V >
-QM33120W の絶対最大定格 4.0V）で LDO が必須、2系統にまたがるためカスタムケーブルが必須、
-GROVE を使い切ってしまう。**HW-4（背面 12P FPC。§5.3 末尾）はこれらを全て解消する**
-（電源は背面 FPC の VDD_3V3 から直接取れるため降圧回路そのものが不要）。以下は当時の
-検討記録として残す（`docs/README.md` 規則6「訂正は消さずに残す」）。
-
-```
-G13 → SCK,  G15 → MOSI,  G1 → MISO,  G2 → CS    （SPI3_HOST、GPIO マトリクス経由）
-IRQ / RSTn / WAKEUP  → 無し
-```
-
-| 項目 | 評価 |
-|---|---|
-| StampFly への半田付け | **不要**（カスタムケーブルのみ） |
-| SPI ホスト | **SPI3_HOST が空いている**（`docs/archive/SURVEY_stampfly_ecosystem.md:65`）→ 飛行系の SPI2 と完全分離 |
-| GPIO マトリクス | 16MHz なら問題なし（`archive/SURVEY_stampfly_grove.md:56-58`） |
-| **IRQ** | **取れない → R6 不可 → §2.2 の (c) は到達不能。Tag 側は永久にポーリング** |
-| **RSTn** | 取れない → `hard_reset_on_begin`（`uwb_qm33120_types.hpp:83`）が使えない。ソフトリセット (`dwt_softreset`) だけで復旧できるか**要検証** |
-| GROVE 拡張性 | **I2C 拡張・UART 拡張の両方を潰す** |
-| 配線 | 2コネクタが基板上の別位置 → 標準ケーブル1本では不可。**カスタムケーブル必須** |
-| 電源 | StampFly の GROVE は電池直結（満充電約 4.35V、プロジェクト設計者による実機確認 2026-08-21）で **QM33120W の絶対最大定格 4.0V を超える**。パッド 2 はチップ直結（`docs/WIRING.md` §5.4）のため → **LDO 必須**（または基板の 3.3V レールから取る） |
-
-### HW-2: SPI2_HOST に相乗り + GROVE を CS / IRQ / RST に使う【廃案】
-
-**2026-08-22 廃案。** 飛行制御の生命線である BMI270 と SPI バスを共有するリスクが残っていた
-（下表「リスク」行）。**HW-4（背面 12P FPC。§5.3 末尾）は G16/G17/G18/G33-G37 という
-StampFly が1本も使っていない専有線を使うため、バス共有が無い。** 以下は当時の検討記録
-として残す（`docs/README.md` 規則6「訂正は消さずに残す」）。
-
-```
-SCK/MOSI/MISO → M5StampS3A のパッド or 基板上の SPI2 配線から分岐（G44/G14/G43）
-G13 → CS,  G15 → IRQ,  G1 → RSTn,  G2 → WAKEUP（予備）
-```
-
-| 項目 | 評価 |
-|---|---|
-| **IRQ** | **取れる → R6 が Tag 側でも効く → §2.2 の (c1) 90 Hz が射程に入る** |
-| RSTn / WAKEUP | 取れる |
-| StampFly への半田付け | **必要**（M5StampS3A のキャステレーション or 基板上の配線に飛び線） |
-| SPI バス共有 | BMI270 (10MHz, `SF/components/sf_board/board.cpp` 経由) と PMW3901 (2MHz) と同居 |
-| バス共有のレイテンシ影響 | **問題にならない見込み**。BMI270 の 1バースト ≈ 16µs、PMW3901 ≈ 48µs（推定）に対し TWR の折返し予算は最小でも 276 µs（§2.1） |
-| バス初期化 | `sf_board` が `spi_bus_initialize()` を1回だけ実行し、各 HAL は `spi_bus_add_device()` のみ（`SF/components/sf_board/board.cpp:285-296`）。**本リポジトリの `Config::port_already_initialized`（`uwb_qm33120_types.hpp:93`）がまさにこの構成用に用意されている** |
-| **リスク** | **飛行制御の生命線（IMU）と同じバスを共有する。** UWB ドライバがバスをハングさせると IMU も止まる |
-| 実現性 | **M5StampS3A のパッドに物理的にアクセスできるか未確認**（StampFly 基板に実装済みのモジュールの側面キャステレーションに半田付けできるか） |
-
-### HW-3: 空き GPIO を使う → **不可能**（§5.1）
-
-### HW-4: M5StampS3A 背面の 12P FPC を使う（2026-08-22 決定・採用）
-
-**HW-1・HW-2 に代わって採用された経路。** M5StampS3A は背面に TFT 用の FPC インタフェースを
-予約しており、この 12P コネクタ（出荷時は未実装、後付けが要る）に UWB モジュールの SPI4本 +
-RSTn + IRQ + WAKEUP + 電源をすべて割り当てる。根拠の全文は `boards/stampfly.h` 冒頭コメント
-（一次資料: M5Stack 公式回路図 `assets/Sch_StampS3_v0.3.3.pdf`）。要約:
+M5StampS3A は背面に TFT 用の FPC インタフェースを予約しており、この 12P コネクタ（出荷時は
+未実装、後付けが要る）に UWB モジュールの SPI4本 + RSTn + IRQ + WAKEUP + 電源をすべて割り
+当てる。根拠の全文は `boards/stampfly.h` 冒頭コメント（一次資料: M5Stack 公式回路図
+`assets/Sch_StampS3_v0.3.3.pdf`）。要約:
 
 ```
 SCK    → G36（背面FPC 位置10 / DISP_SCK）
@@ -824,7 +719,7 @@ spi_host = SPI3_HOST（飛行系の SPI2_HOST とは別バス）
 |---|---|
 | StampFly への半田付け | **必要**（背面の 0.5mm 12P コネクタ HDGC/0.5K-HX-12PWB を後付け。8P 版では GPIO が5本 (G33-G37) しか取れないため 12P 版が必須） |
 | SPI ホスト | **SPI3_HOST**。飛行系(BMI270/PMW3901)が使う SPI2_HOST(G14/G43/G44/G46)とは別バスで、**一切共有しない** |
-| **IRQ** | **取れる → R6 が Tag 側でも効く → `uwb::TimingProfile::BothIrq`（90Hz）が初めて成立する** |
+| **IRQ** | **取れる → R6 が Tag 側でも効く → `uwb::TimingProfile::BothIrq`（90Hz）が成立する** |
 | **RSTn / WAKEUP** | **両方取れる**。`hard_reset_on_begin` が使える |
 | GPIO 本数 | **8本**（G16/G17/G18/G33-G37）。うち G16/G17/G18 は M5StampS3A 側面23ピンに出ておらず、この背面FPCでしか掴めない完全な空きGPIOで、StampFly の飛行制御ファームも使っていない |
 | GROVE への影響 | **一切使わない**。GROVE 2系統は丸ごと空く |
@@ -832,24 +727,19 @@ spi_host = SPI3_HOST（飛行系の SPI2_HOST とは別バス）
 | バス共有リスク | **無い**（G16/G17/G18/G33-G37 は StampFly が1本も使っていない専有線） |
 | 1番パッドの特定 | 実物でテスターにより一度だけ確定する（目的のパッドと M5StampS3A 側面の 5V パッド／3V3 パッドとの導通で VIN_5V 端・VDD_3V3 端が一意に決まる） |
 
-### 推奨
-
-**HW-4 を採用する（2026-08-22 決定）。** 地上検証・飛行統合を問わず HW-4 で統一する
-（HW-1 のような「地上検証だけ半田付け不要」という使い分けは無くなった。背面 FPC コネクタの
-後付け半田付け自体は地上検証の段階から必要）。
-
-RSTn/IRQ/WAKEUP が最初から全て取れるため、(a) 31Hz → `TimingProfile::BothIrq` 適用で
-(c1) 90Hz が初めて成立する。**ただし §3.1 の通りレート面の必然性は無い。** IRQ の本当の
-価値は「折返し時間が縮む → SS-TWR のクロックオフセット誤差が減る」「タイミングマージンが
-増えて成功率が上がる」の方である（既定は `PollingBoth` のままで、実機で Phase 1〜2 が通って
-から `AnchorIrq` → `BothIrq` と段階的に上げる。`docs/EXPERIMENT_PLAN.md`）。
+地上検証・飛行統合を問わず、この配線方式で統一する（背面 FPC コネクタの後付け半田付け
+自体は地上検証の段階から必要）。RSTn/IRQ/WAKEUP が最初から全て取れるため、(a) 31Hz →
+`TimingProfile::BothIrq` 適用で (c1) 90Hz が射程に入るが、**§3.1 の通りレート面の必然性は
+無い。** IRQ の本当の価値は「折返し時間が縮む → SS-TWR のクロックオフセット誤差が減る」
+「タイミングマージンが増えて成功率が上がる」の方である（既定は `PollingBoth` のままで、
+実機で Phase 1〜2 が通ってから `AnchorIrq` → `BothIrq` と段階的に上げる。
+`docs/EXPERIMENT_PLAN.md`）。
 
 **⚠ IRQ が取れるようになっても、ポーリング経路は必ず残すこと**
-（`docs/archive/REIMPL_PLAN.md:157`、`docs/PLAN.md:138`）。理由が「StampFly が IRQ を
-取れないから」から「IRQ の極性が実機で未検証だから」に変わっただけで、結論は変わらない
-（`boards/stampfly.h`）。
+（`docs/archive/REIMPL_PLAN.md:157`、`docs/PLAN.md:138`）。**IRQ の極性が実機で未検証**
+のため（`boards/stampfly.h`）。
 
-## 5.4 タスク配置（`sf_board` / FreeRTOS の制約）
+## 5.2 タスク配置（`sf_board` / FreeRTOS の制約）
 
 ### コアの選択 → **コア0 一択**
 
@@ -884,7 +774,7 @@ RSTn/IRQ/WAKEUP が最初から全て取れるため、(a) 31Hz → `TimingProfi
 `uwb_loc` はスタック上限 6.6 KB（`docs/PERF_ANALYSIS.md:152`。最適化済み上流を取り込めば
 約 3.1 KB 削減）。**`STACK_UWB = 8192` 以上**を推奨（`SF/main/config.hpp:107-122` の並びに合わせる）。
 
-## 5.5 電源
+## 5.3 電源
 
 | 項目 | 値 | 出典 |
 |---|---|---|
@@ -892,21 +782,17 @@ RSTn/IRQ/WAKEUP が最初から全て取れるため、(a) 31Hz → `TimingProfi
 | 消費電流（タグ動作） | **58.0 mA @3.3V** | `docs/archive/SURVEY_m5stamp_uwb_module.md:100` |
 | 消費電流（アンカー動作 / スリープ） | 5.23 mA / 75.9 µA | 同 `:100` |
 | TX 瞬時ピーク | **未公開** | 同 `:101` |
-| GROVE の供給 | **StampFly は電池直結**（満充電約 4.35V。絶対最大定格 4.0V を超えるため直結不可）。M5Stack 製品一般の GROVE は 5V | プロジェクト設計者による実機確認（2026-08-21）、`docs/archive/SURVEY_stampfly_grove.md:47`（一般 GROVE の 5V 部分） |
-| GROVE の供給電流定格 | **未公開** | 同 `:49` |
 | StampFly の 3.3V レギュレータ余裕 | **文書に一切記載なし**（`stampfly_ecosystem` 全体を検索して該当なし） | 未解決 |
 | バッテリ低電圧閾値 | 3.4 V（`safety.battery.low_v`） | `SF/components/sf_core/params.cpp:825` |
 | 電圧監視 | INA3221 ch1、PowerTask 10 Hz | `SF/main/config.hpp:302-311`, `SF/tasks/power_task.cpp:158` |
 
 **未解決の課題:**
-1. StampFly の GROVE（電池電圧、満充電約 4.35V）は QM33120W の絶対最大定格 4.0V を超えるため
-   **直結不可・LDO 必須**（重量・スペース増）。基板上の 3.3V レールから取れば LDO は不要だが、
-   **その電流余裕が文書化されていない**
-2. **TX 瞬時ピーク電流が不明。** 3.3V レールが瞬間的に落ちると **IMU / ToF まで巻き添えになる**
-   → デカップリング（数十〜100 µF）を UWB モジュール直近に入れることを推奨
-3. 58 mA は 4モータの消費（アンペアオーダー）に比べれば小さいが、**飛行時間には効く**
 
-## 5.6 重量・搭載位置
+1. **TX 瞬時ピーク電流が不明。** 3.3V レールが瞬間的に落ちると **IMU / ToF まで巻き添えになる**
+   → デカップリング（数十〜100 µF）を UWB モジュール直近に入れることを推奨
+2. 58 mA は 4モータの消費（アンペアオーダー）に比べれば小さいが、**飛行時間には効く**
+
+## 5.4 重量・搭載位置
 
 | 項目 | 値 | 出典 |
 |---|---:|---|
@@ -914,14 +800,9 @@ RSTn/IRQ/WAKEUP が最初から全て取れるため、(a) 31Hz → `TimingProfi
 | M5Stamp UWB Module (S017) | **0.5 g** | `docs/WIRING.md:25` |
 | M5Stamp UWB Module (S017-F、FPC コネクタ実装済) | 0.6 g | 同 |
 | モジュール外形 | 11.5 × 12.0 × 1.6 mm（S017）/ ×2.8 mm（S017-F） | 同 `:24` |
-| 配線 + LDO + 固定具（推定） | **+1.5〜3.5 g** | 未実測 |
-| **追加重量合計（推定）** | **2〜4 g = 全備の 5〜11%** | |
 
-**【2026-08-22 追記】接続経路が HW-4（背面 12P FPC + 専用基板方式）に変わったため、
-上表の内訳はもう前提が合わない。** LDO は不要になった（VDD_3V3 直結のため）一方、
-モジュールを固定・配線するための専用基板が新たに要る。**専用基板の設計は未着手**であり、
-重量を推測で書くと根拠のない数字が独り歩きするため、**現時点では再見積もりしない**。
-上表の「2〜4g」は HW-1/HW-2（LDO 前提）当時の推定値として、参考のためそのまま残す。
+追加重量（配線・固定具込み）は、モジュール固定用の専用基板の設計が未着手のため未確定
+（電源は VDD_3V3 直結のため LDO は不要）。
 
 ### 重量増が引き起こす問題 — **見落としやすい**
 
@@ -969,7 +850,7 @@ UWB 統合に進むこと**（§6 の Step 0）。
 
 | やること | 合格条件 |
 |---|---|
-| ダミーウェイト（UWB モジュール + 配線 + LDO 相当、2〜4 g）を搭載位置に付けて ALT_HOLD / POS_HOLD | 現状（±6〜7cm）と同等に飛ぶ。悪化するなら**先に PID を再調整** |
+| ダミーウェイト（UWB モジュール + 配線相当）を搭載位置に付けて ALT_HOLD / POS_HOLD | 現状（±6〜7cm）と同等に飛ぶ。悪化するなら**先に PID を再調整** |
 | 電流測定（`motor sweep` CLI が既にある：`SF/main/config.hpp:327-397`） | 推力余裕とホバリング電流の悪化幅を把握 |
 
 **→ ここを飛ばすと、後で「UWB のせいで飛ばない」のか「重いから飛ばない」のか切り分けられない。**
@@ -1124,12 +1005,11 @@ UWB という「たまに大きく外れる観測」をゲート付きで追加�
 | アンテナ遅延の実値 | 無校正。**Δ=1ns で 30cm の定常バイアス**（`docs/archive/CRITICAL_REVIEW.md:130`） |
 | 5アンカー構成の成功率 | R2/R3-1 適用後の実測なし |
 | NVS の実読み書き / USB-Serial JTAG REPL | `PROGRESS.md:903-906` |
-| **背面の 0.5mm 12P パッドに後付けでコネクタを半田付けできるか**（HW-4。実装済み StampFly 機体上での作業性） | 未確認 |
-| **GROVE の供給電流定格** | 未公開（`docs/archive/SURVEY_stampfly_grove.md:49`） |
+| **背面の 0.5mm 12P パッドに後付けでコネクタを半田付けできるか**（実装済み StampFly 機体上での作業性） | 未確認 |
 | **StampFly の 3.3V レギュレータ余裕** | `stampfly_ecosystem` に**記載が一切ない** |
 | **UWB モジュールの TX 瞬時ピーク電流** | 未公開（`docs/archive/SURVEY_m5stamp_uwb_module.md:101`） |
 | **UWB アンテナの指向性パターン** | 未調査 |
-| 重量増（2〜4 g）の飛行性能への影響 | 未評価（Step 0） |
+| 追加重量の飛行性能への影響 | 未評価。重量自体も未確定（Step 0、§5.4） |
 | ch9 の PLL 温度再校正（R10） | 未実装。**ch9 では 20°C 変化で再校正が必要**（`docs/archive/REIMPL_PLAN.md:189-193`） |
 
 ## 7.6 その他の未解決事項
@@ -1141,8 +1021,7 @@ UWB という「たまに大きく外れる観測」をゲート付きで追加�
 | 3 | **アンカー座標の機体側での保持。** 案A-2 に移行するときは機体の NVS にアンカーテーブルが要る。案B-2 なら UWB タスク内で完結する（これも案B-2 の利点） |
 | 4 | `components/uwb_loc/` は上流の最適化前バージョンと byte 一致（`docs/PERF_ANALYSIS.md:186-191`）。上流の最適化（Lv2 で 4.3倍、スタック 3.1KB 減）は**取り込み待ち**。組込みではスタック削減の方が効く可能性 |
 | 5 | **測量モードと運用モードが排他**（`docs/SURVEY_SPEC.md:14`、WiFi スタックのジッタが遅延送信を乱すため）。StampFly は ESP-NOW / WiFi を常用する（CommTask, ApiTask, TelemetryTask）。**飛行中の WiFi ジッタが TWR の遅延送信締切に影響しないか、Step 3.5 で実測が要る** |
-| 6 | **`hard_reset_on_begin`（`uwb_qm33120_types.hpp:83`）は既定 true。** HW-1（RST 線なし）では成立しない。ソフトリセット経路の検証が要る |
-| 7 | `IEstimator` への `updateUwb()` 追加は **`ComplementaryEstimator` にも波及する**（純粋仮想にした場合）。既定 no-op の非純粋仮想にすれば回避できる（§4.6-3） |
+| 6 | `IEstimator` への `updateUwb()` 追加は **`ComplementaryEstimator` にも波及する**（純粋仮想にした場合）。既定 no-op の非純粋仮想にすれば回避できる（§4.6-3） |
 
 ---
 
@@ -1165,7 +1044,7 @@ UWB という「たまに大きく外れる観測」をゲート付きで追加�
 | モジュール消費 | 58.0 mA @3.3V（タグ） | `docs/archive/SURVEY_m5stamp_uwb_module.md:100` |
 | モジュール重量 | 0.5 g / 機体 37 g | `docs/WIRING.md:25`, `SF/docs/poshold_journey.md:5` |
 | アンテナ禁止領域 | 面取り側から 3.556 mm × 全幅 | `docs/WIRING.md:194-197` |
-| 外部に出せる GPIO | **GROVE 4本のみ**（G13/G15/G1/G2） | §5.2 |
+| UWB 用に使う GPIO | G16/G17/G18, G33-G37（背面 12P FPC 経由、計8本） | §5.1 |
 
 ---
 

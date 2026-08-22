@@ -11,6 +11,7 @@
 
 | 文書 | 内容 |
 |---|---|
+| **[DESIGN_HISTORY.md](DESIGN_HISTORY.md)** | **廃案・訂正・方針変更の経緯の集約先。現役文書から外した経緯はここへ入れる** |
 | [REIMPL_PLAN.md](REIMPL_PLAN.md) | 移植元（M5Stack 版 Arduino ラッパ）の課題一覧 R1〜R12 と、それぞれの決着 |
 | [CRITICAL_REVIEW.md](CRITICAL_REVIEW.md) | 移植元コードの批判的レビュー（訂正ボックス入り） |
 | [SURVEY_m5stamp_uwb_module.md](SURVEY_m5stamp_uwb_module.md) | M5Stamp UWB Module のハードウェア仕様の事前調査 |

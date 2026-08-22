@@ -105,7 +105,7 @@ menu "UWB Anchor Configuration"
 
     choice UWB_TIMING_PROFILE
         prompt "TWR 遅延プリセット"
-        default UWB_TIMING_PROFILE_POLLING_BOTH
+        default UWB_TIMING_PROFILE_BOTH_IRQ
         help
             docs/TIMING_PRESETS.md で確定した、役割(タグ/アンカー) × IRQ有無の
             組み合わせごとの遅延パラメータ一式（応答遅延・受信タイムアウト等）
@@ -123,28 +123,31 @@ menu "UWB Anchor Configuration"
             （docs/TIMING_PRESETS.md §4(b)）。
 
         config UWB_TIMING_PROFILE_POLLING_BOTH
-            bool "両側ポーリング（約31Hz。現在の既定値と同一）"
+            bool "両側ポーリング（約31Hz。IRQ が使えないときのフォールバック）"
 
         config UWB_TIMING_PROFILE_ANCHOR_IRQ
-            bool "アンカーのみ IRQ（約59Hz。標準構成）"
+            bool "アンカーのみ IRQ（約59Hz。タグ側の IRQ だけ落とすとき）"
 
         config UWB_TIMING_PROFILE_BOTH_IRQ
-            bool "両側 IRQ（約90Hz。タグを別配線できた場合）"
+            bool "両側 IRQ（約90Hz。**既定**。全ボードで IRQ が取れる）"
 
     endchoice
 
     config UWB_ENABLE_IRQ
         bool "IRQ を起床信号として使う（未配線なら自動でポーリングへフォールバック）"
-        default n
+        default y
         help
             IRQ（割り込み要求）を、受信を待つループの「起床信号」としてだけ
             使う。ステータスレジスタの判読・フレーム照合・エラー処理は
             IRQ有効/無効に関わらず完全に同一のポーリング経路を通る
             （dwt_setcallbacks()/dwt_isr()は使わない。docs/IRQ_POLICY.md）。
 
-            アンカーは pin_irq が配線されている構成（AtomS3 の G2 または
-            G38/G39）なので積極的に使う方針だが、実機での極性検証がまだ
-            済んでいないため既定は n（無効）にしてある。
+            **2026-08-22 に既定を y（有効）へ変更した。** 全ボード
+            （M5StampS3A の G7、StampFly 背面 FPC の G16、AtomS3 の G2 または
+            G38/G39）で pin_irq が配線されるようになり、IRQ を使わない構成が
+            例外になったため。**ただし実機での極性検証はまだ済んでいない。**
+            測距が全く成立しない場合は、まずこれを n に、遅延プリセットを
+            PollingBoth に落として切り分けること（docs/IRQ_POLICY.md）。
 
             有効にしても pin_irq が未配線（M5StampS3A のうち IRQ を配線
             していない個体等）、または ISR 登録に失敗した場合は自動的に

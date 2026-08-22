@@ -252,22 +252,24 @@ endchoice
 IRQ が実際に取れるようになったことで（`boards/stampfly.h`、`docs/IRQ_POLICY.md`）、`BothIrq`
 は条件付きの選択肢ではなく実際に成立する構成になった。
 
-**既定は `PollingBoth`**。現在の既定値と同一で挙動が変わらないため。
-実機で Phase 1〜2 が通ってから `AnchorIrq` を既定に上げる。`BothIrq` を試す場合も同様に
-実機検証を経てから選ぶこと（本ドキュメントの数値はいずれも実機未検証）。
+**既定は `BothIrq`**（全ボードで IRQ が取れるため。`docs/IRQ_POLICY.md`）。
+**本ドキュメントの数値はいずれも実機未検証**であり、IRQ の極性も未検証なので、
+測距が成立しないときは `PollingBoth` へ落として切り分けること。
 
 `docs/GETTING_STARTED.md` に「**アンカーとタグは必ず同じプリセットで焼くこと**」を明記する。
 
 ### 5.1 CI ビルド（`.github/workflows/build.yml`）
-CI の firmware マトリクスには `AnchorIrq`（`-fast`）と同様に `BothIrq` のペアも追加されている:
+CI の firmware マトリクスは**既定（`BothIrq` + IRQ 有効）で焼いた base variant** と、
+IRQ が動かなかったとき用の**フォールバック**の2系統を配布している:
 
-| ペア | 用途 |
+| variant | プリセット |
 |---|---|
-| `anchor-stamps3-ds-fast` / `tag-stamps3-ds-fast` | `AnchorIrq`（59 Hz） |
-| `anchor-stamps3-ds-bothirq` / `tag-stampfly-ds-bothirq` | `BothIrq`（90 Hz、タグは StampFly 背面 FPC 前提） |
+| `anchor-stamps3-ds` / `tag-stampfly-ds` ほか base | `BothIrq`（90 Hz、既定） |
+| `anchor-stamps3-ds-polling` / `tag-stampfly-ds-polling` | `PollingBoth`（31 Hz、フォールバック） |
 
-`-fast` のペアと同じく、**`-bothirq` のペアも必ずセットで焼くこと**。片側だけ `BothIrq` の
-遅延値を焼くと、相手側は別のプリセットの締切で待つことになり測距が成立しない（§0）。
+**どちらもタグとアンカーでセットを揃えること。** 片側だけ別のプリセットを焼くと、
+相手側は違う締切で待つことになり測距が成立しない（§0）。
+`AnchorIrq`（59 Hz）は CI では配布していないが、menuconfig で選べる。
 
 ---
 

@@ -1,8 +1,12 @@
 # ドキュメント索引
 
-現役 17 本・約 9,000 行あります（他に、設計当時の調査・経緯を記録した
-[archive](archive/) が 9 本・約 2,600 行）。**全部読む必要はありません。**
+現役 17 本あります。**全部読む必要はありません。**
 下の「あなたはどれですか」から入ってください。
+
+**現役文書には「いま正しいこと」だけが書いてあります。**
+廃案・訂正・方針変更の経緯は
+[archive/DESIGN_HISTORY.md](archive/DESIGN_HISTORY.md) に退避してあるので、
+「なぜこうなっているのか」を知りたいときだけそちらを開いてください。
 
 ---
 
@@ -149,6 +153,7 @@ PLAN.md  →  各仕様書  →  archive/REIMPL_PLAN.md / archive/CRITICAL_REVIE
 
 | 文書 | 内容 |
 |---|---|
+| **[archive/DESIGN_HISTORY.md](archive/DESIGN_HISTORY.md)** | **廃案・訂正・方針変更の経緯を集約。現役文書から外したものはここにある** |
 | [archive/REIMPL_PLAN.md](archive/REIMPL_PLAN.md) | 移植元の課題一覧 R1〜R12 とその決着 |
 | [archive/CRITICAL_REVIEW.md](archive/CRITICAL_REVIEW.md) | 移植元コードの批判的レビュー |
 | [archive/SURVEY_m5stamp_uwb_module.md](archive/SURVEY_m5stamp_uwb_module.md) | モジュールのハードウェア仕様の事前調査 |
@@ -175,5 +180,5 @@ PLAN.md  →  各仕様書  →  archive/REIMPL_PLAN.md / archive/CRITICAL_REVIE
    実機で一度も動作確認していないので、これを省くと読者を誤解させる
 5. **`.gitignore` されているディレクトリ（`third_party/` / `docs/refs/`）へ
    Markdown リンクを張らない。** clone した人には切れる
-6. **訂正は消さずに残す。** 何を間違えたかが次の人の役に立つ
-   （[archive/CRITICAL_REVIEW.md](archive/CRITICAL_REVIEW.md) の訂正ボックスが例）
+6. **現に正しい内容だけを書く。訂正の経緯は残さない。** 読む量を減らすため、
+   最新の正しい結論だけを地の文に記す

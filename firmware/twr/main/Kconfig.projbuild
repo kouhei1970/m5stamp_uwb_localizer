@@ -129,7 +129,7 @@ menu "UWB TWR Configuration"
 
     choice UWB_TIMING_PROFILE
         prompt "TWR timing preset"
-        default UWB_TIMING_PROFILE_POLLING_BOTH
+        default UWB_TIMING_PROFILE_BOTH_IRQ
         help
             Selects the delay-parameter preset (role x IRQ-availability)
             fixed in docs/TIMING_PRESETS.md (response delay, RX timeout,
@@ -162,7 +162,7 @@ menu "UWB TWR Configuration"
 
     config UWB_ENABLE_IRQ
         bool "Use IRQ as a wakeup signal (falls back to polling automatically if unwired)"
-        default n
+        default y
         help
             Use the IRQ (interrupt request) line only as a "wakeup signal"
             for the receive-wait loops. Status-register decoding, frame
