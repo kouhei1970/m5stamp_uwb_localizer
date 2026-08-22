@@ -19,3 +19,4 @@
 | [SURVEY_stampfly_grove.md](SURVEY_stampfly_grove.md) | StampFly の GROVE 端子と GPIO 空き状況の事前調査（本文中に訂正あり） |
 | [SURVEY_uwb_localizer.md](SURVEY_uwb_localizer.md) | 上流測位ライブラリ（uwb_localizer）の事前調査 |
 | [PROGRESS.md](PROGRESS.md) | 開発進捗ログ（著者の作業記録。何がどこまで検証済みか） |
+| [MATH_AUDIT_2026-08-21.md](MATH_AUDIT_2026-08-21.md) | 行列計算の残存箇所とスカラー化の設計根拠の監査。指摘は全件対応済み（`components/uwb_math/` へ統合） |
