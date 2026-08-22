@@ -6,9 +6,23 @@
 
 ## 0. 次セッションの任務
 
-> **実機検証の前に追加で読む文書は無い。** `docs/REVIEW_2026-08-21.md` の Critical 1・High 6 は
-> 本日中に**全件対応済み**（§0 の表参照。#6 外れ値棄却・#7 ライセンス同梱も本セッションで解消した）。
-> 残っているのは実機でしか確認できない項目だけである。
+> 実機投入前レビュー（[`archive/REVIEW_2026-08-21.md`](archive/REVIEW_2026-08-21.md)）の
+> **Critical 1・High 6 は全件対応済み**。ただし**Medium 以下とテストの穴は未対応で残っている**
+> （下記「レビューから引き継いだ未対応項目」）。
+
+### レビューから引き継いだ未対応項目
+
+レビュー本体は archive へ移したが、**着手順 7〜9 は取り消し線が付いておらず未対応**である。
+**ただし後続のコミットで解消したものが混ざっている可能性があるので、着手前に現況を確認すること。**
+
+| # | 内容 |
+|---|---|
+| 7 | **TWR 周辺**: M1（折返し中のログ）、M2（Poll 待ちの周期的 RX 停止）、M-1（`deca_sleep` +1 tick）。※ M-2（`pin_rst` 無しの softreset）と M-3（RSTn プルアップ助言の削除）は解消済み |
+| 8 | **アプリ層**: M-1（有効測距が4件ちょうどのときの警告）、M-2（`resetStats`）、M-3（アドレス重複の拒否）、M-4（JSON 末尾の保証）、文書の `stats`/`t`/`cycle_ms` |
+| 9 | **テスト**: `test_pipeline`/`test_survey` の欠落ケース（ノイズ付き、δ≠0 の縮退、低冗長度の外れ値、欠測ありの `excluded`）、`-MMD -MP`、`sanitize` ターゲット。※ `make float` の CI 投入は解消済み |
+| 10 | H2（IRQ プリセットの `finalTxDelay`）は実機の `dwt_starttx` 失敗回数を見てから決める |
+
+いずれも**実機が無くても着手できる**（9 はホストテストのみ）。
 
 ### ブランチ `feat/stamps3-fpc-migration` での変更
 
@@ -23,15 +37,17 @@
   `boards/stampfly.h` 全面改訂）。**旧 GROVE 2系統4本構成は廃案**（RST/IRQ/WAKEUP が取れず、
   GROVE が電池電圧直結・満充電約4.35V で絶対最大定格4.0Vを超えるため LDO が必須だった。
   新経路は背面 FPC の VDD_3V3 に直結できるため LDO 不要）
-- RST/IRQ/WAKEUP が全構成で取れるようになり、**`uwb::TimingProfile::BothIrq`（90Hz）が
-  初めて成立する**。CI に `anchor-stamps3-ds-bothirq` / `tag-stampfly-ds-bothirq` を追加済み。
-  **既定は引き続き `PollingBoth` のまま**（実機で Phase 1〜2 が通ってから段階的に上げる方針は不変）
-- ドキュメント構成を整理: `SOLDER_PADS.md`→`WIRING.md`、`BRINGUP.md`→`GETTING_STARTED.md` §3〜§4
-  に統合、`UNITS.md`→`GLOSSARY.md` に統合、`PLATFORM_TUNING.md`→`PERF_ANALYSIS.md` の付録に統合、
-  `MATH_AUDIT_2026-08-21.md`→`docs/archive/` へ移動
+- RST/IRQ/WAKEUP が全構成で取れるようになったので、**IRQ を既定にした**。
+  遅延プリセットの既定も `PollingBoth` → **`BothIrq`（約90Hz）**。
+  **IRQ の極性は実機未検証なので、測距が出ないときは `*-polling` 版へ落として切り分ける**
+  （`docs/IRQ_POLICY.md`）
+- ドキュメントを 22 本 → 17 本に整理。廃案・訂正・経緯は
+  [`archive/DESIGN_HISTORY.md`](archive/DESIGN_HISTORY.md) へ退避し、現役文書には
+  「いま正しいこと」だけを残した。対応表は同文書 §5
 
-**このブランチはまだ `main` に未マージ・未 push。** 次セッションはまず差分をレビューし、
-問題なければ `main` へマージすること。
+**このブランチは push 済み・`main` へは未マージ。** まず差分をレビューし、
+問題なければ `main` へマージすること。**CI は feature ブランチへの push では走らない**
+（トリガが `push: branches: [main]` と `pull_request`）ので、確認には PR が要る。
 
 **実機が届いたらこの順で進める**（詳細・判断基準は
 **[`docs/EXPERIMENT_PLAN.md`](EXPERIMENT_PLAN.md)**）:
@@ -242,7 +258,7 @@ docs/GETTING_STARTED.md               Phase 1 受入確認
 docs/PLAN.md                  全体設計・フェーズ計画
 docs/GETTING_STARTED.md       BOM から測位まで11章
 docs/PREBUILT_BINARIES.md     ビルド済みバイナリの入手と書き込み。ライセンス条件込み
-docs/REVIEW_2026-08-21.md     実機投入前の最終レビュー。Critical 1・High 6、全件対応済み
+docs/archive/REVIEW_2026-08-21.md  実機投入前の最終レビュー。Critical/High は対応済み、Medium 以下は §0 へ引き継ぎ
 docs/refs/README.md           一次資料の索引
 docs/archive/                 経緯文書（現役8本 + archive自身のREADME.md）
   CRITICAL_REVIEW.md            M5Stack ラッパの批判的レビュー

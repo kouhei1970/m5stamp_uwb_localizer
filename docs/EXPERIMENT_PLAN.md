@@ -338,7 +338,7 @@ W ... respondDSRange: Poll<-TAG: peer=0x0001 とタイミングプリセット�
 | 9 | **VDD_3V3（背面 12P FPC・スイッチング DC-DC `MUN3CAD01-SC` の出力）のリップル・電流余裕。** M5Stack 推奨の「高 PSRR の LDO、またはリップル 12mVpp 以内」を満たすとは限らず、DC-DC の定格出力電流は公式資料に記載が無い（タグ動作は 58.0mA @3.3V） | 実験 10 | 位置1の VIN_5V から低ノイズ LDO を起こす構成に切り替える（`boards/stampfly.h`「■ 電源（重要）」） | 旧項目（StampFly GROVE 経由給電）は**廃案**。HW-4 は GROVE を使わず VDD_3V3 直結のため LDO 自体が不要（`docs/STAMPFLY_INTEGRATION.md` HW-4） |
 | 10 | 折返し時間の実測（プリセットの根拠） | 実験 8 | プリセットの数値を見直す（**版番号を上げること**） | |
 | 11 | **IRQ プルアップの影響**（SLEEP 中の張り付き） | — | SLEEP/WAKEUP を使う設計にするときは要再検討 | モジュール上に DW_IRQ の 10kΩ プルアップあり（`WIRING.md` §7.3、公式回路図で確認）。現状の使い方（起床信号としてのみ使用、チップを能動的に SLEEP させない）では実害なし |
-| 12 | **起動直後に出るべきログ3行**: ① `spi: slow=… fast=… active=16000000`（SPI が 2MHz のまま止まっていないか）② メインタスクの `stack high-water mark`（12288B 化の効き目）③ `INIT_FAILED` が **出ないこと**（`dwt_checkidlerc()` 待ちタイムアウト） | 実験 1 | ①が出ない→SPI 切替の実装ミスを疑う／②が小さい→タスク分離を検討／③が出る→RST 未配線時のソフトリセットが効いていない | レビュー H-2・H-1・M-2（`docs/REVIEW_2026-08-21.md`）の修正がホスト検証止まりで、実機での動作は未確認。`docs/HANDOFF.md` §0 参照 |
+| 12 | **起動直後に出るべきログ3行**: ① `spi: slow=… fast=… active=16000000`（SPI が 2MHz のまま止まっていないか）② メインタスクの `stack high-water mark`（12288B 化の効き目）③ `INIT_FAILED` が **出ないこと**（`dwt_checkidlerc()` 待ちタイムアウト） | 実験 1 | ①が出ない→SPI 切替の実装ミスを疑う／②が小さい→タスク分離を検討／③が出る→RST 未配線時のソフトリセットが効いていない | レビュー H-2・H-1・M-2（`docs/archive/REVIEW_2026-08-21.md`）の修正がホスト検証止まりで、実機での動作は未確認。`docs/HANDOFF.md` §0 参照 |
 | 13 | **FPC→DIP 変換基板の型番と接点面（同面／異面）** が未定 | 実験 0（配線前） | 手持ちの基板に合わせて FPC ケーブルの向きを選び直す | 経路A（据置機標準）の要。反転すると FPC 1/2（3V3）と 11/12 が入れ替わり電源逆接になりうる（`docs/WIRING.md` §2） |
 | 14 | **S017-F 実物で、キャステレーションパッドへの半田付けが物理的に可能か**（FPC コネクタ実装済みのため） | 実験 0 | 経路B（半田パッド直付け）へのフォールバックを諦め、経路A（FPC→DIP 変換基板）専用にする | パッドの存在自体は公式資料で確定済み（`docs/WIRING.md` §1・§5.1）。未確認なのは連結後の半田付けアクセス性 |
 | 15 | **StampS3 BreakOut の 3V3 / GND がどのヘッダピンか** | 実験 0〜1 | テスターで確認してから配線する | `docs.m5stack.com/en/stamp/StampS3BreakOut` にピン配置図はあるが実物未突合 |
@@ -346,7 +346,7 @@ W ... respondDSRange: Poll<-TAG: peer=0x0001 とタイミングプリセット�
 
 外部報告（GOROman 氏、<https://gist.github.com/GOROman/76c222768b042d35599d26192a25e829>）
 の詳細は [`docs/WIRING.md`](WIRING.md) 冒頭と
-[`docs/REVIEW_2026-08-21.md`](REVIEW_2026-08-21.md) §1 M-2 を参照。
+[`docs/archive/REVIEW_2026-08-21.md`](archive/REVIEW_2026-08-21.md) §1 M-2 を参照。
 
 ---
 

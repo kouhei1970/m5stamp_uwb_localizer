@@ -237,7 +237,6 @@ m5stamp_uwb_localizer/
 │   ├── STAMPFLY_INTEGRATION.md  StampFly 位置制御への統合検討
 │   ├── HANDOFF.md           次セッションへの申し送り
 │   ├── PLAN.md              全体設計・フェーズ計画
-│   ├── REVIEW_2026-08-21.md 実機投入前の最終レビュー
 │   ├── PERF_ANALYSIS.md     測位ソルバの性能分析
 │   ├── PERF_ANALYSIS.md   ESP32-S3 固有の最適化調査
 │   └── archive/             経緯文書（設計当時の調査・検討。現役の仕様ではない）
@@ -375,4 +374,4 @@ firmware/tag ──┬─ uwb_ranging ─┬─ uwb_loc          （ハード非
 | 進捗ログ | [`docs/archive/PROGRESS.md`](docs/archive/PROGRESS.md) |
 | 全体設計・フェーズ計画 | [`docs/PLAN.md`](docs/PLAN.md) |
 | 既知の課題（経緯） | [`docs/archive/REIMPL_PLAN.md`](docs/archive/REIMPL_PLAN.md) / [`docs/archive/CRITICAL_REVIEW.md`](docs/archive/CRITICAL_REVIEW.md) |
-| 最終レビュー（実機投入前） | [docs/REVIEW_2026-08-21.md](docs/REVIEW_2026-08-21.md) |
+| 最終レビュー（実機投入前） | [docs/REVIEW_2026-08-21.md](docs/archive/REVIEW_2026-08-21.md) |

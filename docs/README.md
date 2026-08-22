@@ -65,7 +65,7 @@ PLAN.md  →  各仕様書  →  archive/REIMPL_PLAN.md / archive/CRITICAL_REVIE
 | [STAMPFLY_INTEGRATION.md](STAMPFLY_INTEGRATION.md) | StampFly の位置制御へ載せる設計検討 |
 | [PERF_ANALYSIS.md](PERF_ANALYSIS.md) | ESP32-S3 固有の最適化調査 |
 | [PERF_ANALYSIS.md](PERF_ANALYSIS.md) | 測位ソルバの性能分析 |
-| [REVIEW_2026-08-21.md](REVIEW_2026-08-21.md) | 実機投入前の最終レビュー。Critical 1・High 6 を含む全指摘と根拠、対応状況、着手順 |
+| [REVIEW_2026-08-21.md](archive/REVIEW_2026-08-21.md) | 実機投入前の最終レビュー。Critical 1・High 6 を含む全指摘と根拠、対応状況、着手順 |
 | [archive/REIMPL_PLAN.md](archive/REIMPL_PLAN.md) | 【経緯】移植元の課題一覧 R1〜R12 と、それぞれの決着 |
 | [archive/CRITICAL_REVIEW.md](archive/CRITICAL_REVIEW.md) | 【経緯】移植元コードの批判的レビュー（**訂正ボックス入り**） |
 | [archive/MATH_AUDIT_2026-08-21.md](archive/MATH_AUDIT_2026-08-21.md) | 【経緯】行列計算の残存箇所の監査とスカラー化の設計根拠。`components/uwb_math/` の仕様の元（指摘は全件対応済み） |
@@ -75,7 +75,7 @@ PLAN.md  →  各仕様書  →  archive/REIMPL_PLAN.md / archive/CRITICAL_REVIE
 | 文書 | 何が分かるか |
 |---|---|
 | **[HANDOFF.md](HANDOFF.md)** | **最初に読む。** 現在地・確定事項・落とし穴・次の一手 |
-| [REVIEW_2026-08-21.md](REVIEW_2026-08-21.md) | 実機投入前の最終レビュー。Critical 1・High 6 を含む全指摘と根拠、対応状況、着手順 |
+| [REVIEW_2026-08-21.md](archive/REVIEW_2026-08-21.md) | 実機投入前の最終レビュー。Critical 1・High 6 を含む全指摘と根拠、対応状況、着手順 |
 | [EXPERIMENT_PLAN.md](EXPERIMENT_PLAN.md) | 実機が来てからやること |
 | **[archive/DESIGN_HISTORY.md](archive/DESIGN_HISTORY.md)** | **なぜこうなっているのか。** 廃案・訂正 15 件・方針変更の経緯。**同じ失敗を繰り返さないための記録** |
 
@@ -133,7 +133,7 @@ PLAN.md  →  各仕様書  →  archive/REIMPL_PLAN.md / archive/CRITICAL_REVIE
 ### 経緯・分析
 | 文書 | 内容 |
 |---|---|
-| [REVIEW_2026-08-21.md](REVIEW_2026-08-21.md) | 実機投入前の最終レビュー。Critical 1・High 6、**全件対応済み**（実機確認のみ残る） |
+| [REVIEW_2026-08-21.md](archive/REVIEW_2026-08-21.md) | 実機投入前の最終レビュー。Critical 1・High 6、**全件対応済み**（実機確認のみ残る） |
 | [PERF_ANALYSIS.md](PERF_ANALYSIS.md) | 測位ソルバの性能分析と上流最適化の結果 |
 ### 引き継ぎ
 | 文書 | 内容 |
