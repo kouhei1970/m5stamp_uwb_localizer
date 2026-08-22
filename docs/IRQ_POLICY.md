@@ -148,7 +148,7 @@ sleep」＝ active は HIGH）だが、実機で確かめてはいない。
 
 **M5Stamp UWB Module 上に DW_IRQ を VCC_3V3 へプルアップする抵抗 R2（10kΩ）が
 実装されている**（出典: 公式回路図 `assets/SCH_UWB_MODULE_SCH_main_V0.2_...pdf`。
-詳細は `docs/WIRING.md` §5.5(4)）。
+詳細は `docs/WIRING.md` §7.3）。
 
 - **動作中は問題にならない**: QM33120W の IRQ は既定でアクティブ HIGH の
   push-pull 出力なので、チップ自身がピンを能動的に駆動している間はこの

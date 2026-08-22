@@ -1,4 +1,4 @@
-# StampFly への UWB 測位統合 設計検討 (2026-08-21)
+# StampFly への UWB 測位統合 設計検討
 
 本リポジトリ（`m5stamp_uwb_localizer`）の UWB 測位を、StampFly の位置制御に使うための設計検討。
 
@@ -666,10 +666,10 @@ R を小さく設定すると、ESKF が UWB を信用して**短期精度が悪
 
 | # | 欠落 | 該当 | 対処 |
 |---|---|---|---|
-| 1 | ~~**`RangingSample` に絶対タイムスタンプが無い**~~ | **解決済 (2026-08-21)**: `int64_t t_us` を追加（`components/uwb_ranging/include/uwb_ranging_types.hpp:62`）。測距開始の直前に `esp_timer_get_time()` を刻む | — |
+| 1 | ~~**`RangingSample` に絶対タイムスタンプが無い**~~ | **解決済**: `int64_t t_us` を追加（`components/uwb_ranging/include/uwb_ranging_types.hpp:62`）。測距開始の直前に `esp_timer_get_time()` を刻む | — |
 | 2 | **`PositionResult` にタイムスタンプが無い** | 同 `:110-131` | 周の中央時刻を持たせる |
 | 3 | `Config::port_already_initialized` は既にある | `components/uwb_qm33120/include/uwb_qm33120_types.hpp:93` | **StampFly 統合を見越して用意済み**。`sf_board` が SPI を初期化する構成にそのまま乗る |
-| 4 | ~~IRQ 未使用（R6 未実装）~~ | **解決済 (2026-08-21)**: アンカー側の IRQ 経路は実装済み（`UWB_ENABLE_IRQ`、既定は無効・極性は実機未検証）。**タグ側は方針として IRQ 非依存のまま**（`docs/IRQ_POLICY.md`） | ポーリング経路は第一級のまま残してある |
+| 4 | ~~IRQ 未使用（R6 未実装）~~ | **解決済**: アンカー側の IRQ 経路は実装済み（`UWB_ENABLE_IRQ`、既定は無効・極性は実機未検証）。**タグ側は方針として IRQ 非依存のまま**（`docs/IRQ_POLICY.md`） | ポーリング経路は第一級のまま残してある |
 
 ### StampFly 側（`firmware/vehicle`）— 追加が必要なもの
 
@@ -694,7 +694,7 @@ R を小さく設定すると、ESKF が UWB を信用して**短期精度が悪
 
 ## 5.1 配線
 
-M5StampS3A 背面の 12P FPC を使う（2026-08-22 決定）。M5Stamp UWB Module のホスト側必要信号:
+M5StampS3A 背面の 12P FPC を使う。M5Stamp UWB Module のホスト側必要信号:
 **最低4本（SCK/MOSI/MISO/CS）、推奨 +2（IRQ/RSTn）、省電力なら +1（WAKEUP）**
 （`docs/archive/SURVEY_m5stamp_uwb_module.md:91-92`）。
 

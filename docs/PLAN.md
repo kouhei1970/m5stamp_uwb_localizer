@@ -1,4 +1,4 @@
-# m5stamp_uwb_localizer 開発計画 (2026-08-19 策定、2026-08-21 進捗反映)
+# m5stamp_uwb_localizer 開発計画
 
 ## 0. Phase 0 調査の結論
 
@@ -36,7 +36,7 @@
 **本リポジトリは StampFly から独立した「UWB（Ultra-Wideband、超広帯域無線）測位一式」として完結させる。**
 StampFly への統合はその成果物を利用する下流作業。
 
-### 方針: StampFly 非依存。ただし**タグのハードだけは StampFly 互換**に保つ（2026-08-21 ユーザ指示）
+### 方針: StampFly 非依存。ただし**タグのハードだけは StampFly 互換**に保つ
 
 この2つは矛盾しない。**独立**なのはソフトウェアと想定利用者、**互換**にするのはタグの配線である。
 
@@ -46,32 +46,31 @@ StampFly への統合はその成果物を利用する下流作業。
 | **タグのハード** | **StampFly 互換を維持する**（意図的な制約）。本スタックの成果をそのまま StampFly の位置制御へ移植したいため（`docs/STAMPFLY_INTEGRATION.md` 案B-2） |
 | **アンカーのハード** | **この制約は無い**。据置きなので AtomS3(R) の IRQ を積極利用してよい（`docs/IRQ_POLICY.md`） |
 
-「タグのハードを StampFly 互換に保つ」の具体的な中身（2026-08-22 更新: 制約が緩んだ）:
+「タグのハードを StampFly 互換に保つ」の具体的な中身:
 
 1. **タグ（StampFly 搭載機体）は M5StampS3A 背面の 12P FPC 経由で接続する。**
-   2026-08-22 のユーザ決定により、旧案「GROVE 2系統4本 (G13/G15/G1/G2) だけで動くこと」
-   という制約は廃案になった（`boards/stampfly.h`）。背面 FPC 経由なら SPI3_HOST の4本
-   （SCK/MOSI/MISO/CS）に加えて RSTn(G33)/IRQ(G16)/WAKEUP(G17) が取れ、電源も同じ FPC の
-   VDD_3V3 から取れるので降圧回路（LDO）も不要になった。旧構成を廃した理由の詳細は
-   `boards/stampfly.h` 末尾「■ 旧構成（GROVE 4線）を廃した理由」、経緯は
-   `docs/STAMPFLY_INTEGRATION.md` §5.3 を参照。
+   背面 FPC 経由なら SPI3_HOST の4本（SCK/MOSI/MISO/CS）に加えて
+   RSTn(G33)/IRQ(G16)/WAKEUP(G17) が取れ、電源も同じ FPC の
+   VDD_3V3 から取れるので降圧回路（LDO）も不要である。GROVE 2系統4本 (G13/G15/G1/G2) 経由の
+   旧構成を使わない理由は `boards/stampfly.h` 末尾「■ 旧構成（GROVE 4線）を廃した理由」、
+   詳細は `docs/STAMPFLY_INTEGRATION.md` §5.3 を参照。
 2. **それでも IRQ（Interrupt ReQuest、割り込み要求）/ RST を必要としないポーリング経路を、
-   常に第一級の実装として保つ**（`docs/IRQ_POLICY.md`）。制約が緩んでタグでも IRQ (G16) と
-   RST (G33) が使えるようになったが、既定は引き続きポーリングのままである。理由は
-   「タグが IRQ を取れないから」ではなく、**「IRQ の極性が実機で未検証だから」**
-   （`components/uwb_port/src/uwb_port.c` の `GPIO_INTR_POSEDGE` 周辺コメント）に変わった。
+   常に第一級の実装として保つ**（`docs/IRQ_POLICY.md`）。タグでも IRQ (G16) と
+   RST (G33) は使えるが、既定は引き続きポーリングのままである。
+   **理由は「IRQ の極性が実機で未検証だから」**
+   （`components/uwb_port/src/uwb_port.c` の `GPIO_INTR_POSEDGE` 周辺コメント）。
    実機で Phase 1〜2 の検証が済んでから `AnchorIrq` → `BothIrq` の順に既定を上げる方針。
 3. **SPI（Serial Peripheral Interface）ホストは飛行系(SPI2_HOST)と分離できること**
    （`boards/stampfly.h` は SPI3_HOST のまま。背面 FPC 経由でもこの分離は維持される）。
 
-**制約が緩んだことで、実機検証後に既定を上げれば `AnchorIrq`（59 Hz）だけでなく
-`BothIrq`（90 Hz）も射程に入るようになった**（`docs/TIMING_PRESETS.md`）。ただし
+**実機検証後に既定を上げれば `AnchorIrq`（59 Hz）だけでなく
+`BothIrq`（90 Hz）も射程に入る**（`docs/TIMING_PRESETS.md`）。ただし
 実機未検証のうちは既定を `PollingBoth`（31 Hz）から動かさない。StampFly の位置制御の
 実効帯域は約 0.064 Hz なので、どのプリセットでも実用上の問題は無い、というのが
 `docs/STAMPFLY_INTEGRATION.md` §3.1 の結論である。
 
 ### 提供するもの
-| # | 成果物 | 内容 | 状態（2026-08-21） |
+| # | 成果物 | 内容 | 状態 |
 |---|---|---|---|
 | D1 | ESP-IDF コンポーネント群 | 他プロジェクトへ丸ごと持ち込める。StampFly 依存ゼロ | **実装済み**（`components/` 8個） |
 | D2 | タグ側ファームウェア | M5StampS3A / AtomS3 + M5Stamp UWB Module で測距→測位まで完結 | **実装済み**（`firmware/tag`、CI ビルド済み、実機未検証） |
@@ -80,7 +79,7 @@ StampFly への統合はその成果物を利用する下流作業。
 | D5 | ドキュメント | 配線図、ボード別ピン定義、立ち上げ手順、キャリブレーション手順 | **実装済み**（`docs/` 22本。`WIRING.md` / `GETTING_STARTED.md` / `GETTING_STARTED.md` / `EXPERIMENT_PLAN.md`） |
 | D6 | StampFly 統合 | `sf_hal_uwb_qm33120` として stampfly_ecosystem へ | **未着手**（設計のみ `STAMPFLY_INTEGRATION.md`） |
 
-### 運用構成（2026-08-19 確定）
+### 運用構成
 **アンカー数は固定しない。4台以上の任意台数に対応する。**
 手持ちは M5Stamp UWB Module ×6 なので、当面の検証構成は**タグ1 + アンカー5**。
 
@@ -114,7 +113,7 @@ StampFly への統合はその成果物を利用する下流作業。
   （`docs/TIMING_PRESETS.md`, `docs/STAMPFLY_INTEGRATION.md`）。実測は実機待ち
 - ~~ホストボードが6台あるかは未確認。不足する場合はアンカー台数を減らして段階的に検証する~~
   ~~確定構成（`docs/archive/PROGRESS.md`）: タグ = M5StampS3A ×1、アンカー = AtomS3(R) ×5~~
-  **確定構成（2026-08-22 更新）: タグ = StampFly（M5StampS3A 搭載機体、背面 12P FPC 経由）×1、
+  **確定構成: タグ = StampFly（M5StampS3A 搭載機体、背面 12P FPC 経由）×1、
   アンカー = M5StampS3A + StampS3 BreakOut ×5（既定 Kconfig `UWB_ANCHOR_BOARD_STAMPS3`）。
   AtomS3(R) はアンカーの代替構成として引き続き選択できる（`docs/IRQ_POLICY.md`）**
 
@@ -124,7 +123,7 @@ StampFly への統合はその成果物を利用する下流作業。
 - **M5 AtomS3 / AtomS3R**（ESP32-S3、GROVE 1系統 + 内部で LCD/ボタンが GPIO 消費。
   **アンカーの代替構成**。構成A/B の Kconfig は現役のまま残す。`boards/atoms3.h`）
 - （下流）**StampFly**（M5StampS3A を搭載したドローン機体本体。タグとして背面 12P FPC
-  経由で接続する。2026-08-22 確定、`boards/stampfly.h`）
+  経由で接続する。`boards/stampfly.h`）
 
 ---
 
@@ -148,17 +147,17 @@ StampFly への統合はその成果物を利用する下流作業。
 +---------------------------------------------------------------+
 ```
 
-**実装後の実名対応（2026-08-21）**: `uwb_twr` → `uwb_qm33120` に統合。
+**実装後の実名対応**: `uwb_twr` → `uwb_qm33120` に統合。
 app 層 `uwb_localizer` → 実名 `uwb_ranging`。新設: `uwb_cfgstore`（NVS 永続化 + コンソール）、
 `uwb_math`（線形代数）、`uwb_survey`（アンカー自動測量、計画外）。
 
-### スコープ（2026-08-20 ユーザ指示で確定）
+### スコープ
 **本リポジトリは ESP32-S3 + M5Stamp UWB Module 専用。プラットフォーム最適化を積極的に行ってよい。**
 
 | 対象 | 方針 |
 |---|---|
 | `m5stamp_uwb_localizer`（本リポジトリ） | **ESP32-S3 専用に最適化してよい**。-O2 / 240MHz / float / IRAM / esp-dsp など |
-| `uwb_localizer`（上流） | ~~移植性を維持。他プロジェクトでも使うライブラリなので ESP32 依存を持ち込まない~~ → **2026-08-21 に上流を凍結し、最終状態（`ab23b33`）を `components/uwb_loc/` に取り込んだ。以後 `components/uwb_loc/` は本リポジトリで独立して開発する（上流はもう追わない）** |
+| `uwb_localizer`（上流） | ~~移植性を維持。他プロジェクトでも使うライブラリなので ESP32 依存を持ち込まない~~ → **上流を凍結し、最終状態（`ab23b33`）を `components/uwb_loc/` に取り込んだ。以後 `components/uwb_loc/` は本リポジトリで独立して開発する（上流はもう追わない）** |
 | StampFly | 引き続き**非依存**。StampFly はあくまで本成果物の利用者の一つ |
 
 「StampFly 非依存」と「プラットフォーム非依存」は別物である点に注意。
@@ -172,22 +171,21 @@ app 層 `uwb_localizer` → 実名 `uwb_ranging`。新設: `uwb_cfgstore`（NVS 
 
 #### 評価予定（実機測定後に判断）
 - `UWB_USE_FLOAT`（`madd.s` が効くので期待大。ただし精度検証が先）
-  → **2026-08-21 追記**: ホストでは float ビルド全通過（clang / gcc-16 / `-ffp-contract=off`、
+  → ホストでは float ビルド全通過（clang / gcc-16 / `-ffp-contract=off`、
   `CONFIG_UWB_LOC_USE_FLOAT`）。既定化は実機 `soltest` 待ち
 - ホット関数の IRAM 配置
 - esp-dsp の適用（ただし最適化後のホットパスは行列積ではないため期待値は低い）
 - 詳細は `docs/PERF_ANALYSIS.md`
 
 ### 設計原則
-- **言語方針（2026-08-19 改訂）**: 当初「コアは C99」としたが、調査5で
-  M5Stamp-UWB の wrapper が C++ (PImpl) 1,946行だと判明したため方針変更。
+- **言語方針**: M5Stamp-UWB の wrapper は C++ (PImpl) 1,946行であり、
   機械的に C へ書き換えるのは純粋な追加工数で見返りが無い。
   | 層 | 言語 | 理由 |
   |---|---|---|
   | `qm33120w_sdk` | C（原本のまま） | Arduino依存ゼロ。無改造コピー |
   | `uwb_port` | C | Qorvo SDK の関数ポインタ/`extern "C"` に直接バインドするため |
-  | `uwb_qm33120` / `uwb_twr` | **C++** | M5Stamp-UWB 由来。構造を保って移植＝最小工数。**`uwb_twr` は `uwb_qm33120` に統合された（2026-08-19）** |
-  | `uwb_loc` | C99 | **2026-08-21 に上流 `uwb_localizer` を凍結し、最終状態（`ab23b33`）を取り込んだ。以後 `components/uwb_loc/` は本リポジトリで独立して開発する。** ESP32-S3 向けの最適化（float 化・スカラー展開など）をソースに直接入れてよい |
+  | `uwb_qm33120` / `uwb_twr` | **C++** | M5Stamp-UWB 由来。構造を保って移植＝最小工数。**`uwb_twr` は `uwb_qm33120` に統合されている** |
+  | `uwb_loc` | C99 | **上流 `uwb_localizer` を凍結し、最終状態（`ab23b33`）を取り込んだ。以後 `components/uwb_loc/` は本リポジトリで独立して開発する。** ESP32-S3 向けの最適化（float 化・スカラー展開など）をソースに直接入れてよい |
   | `uwb_localizer`(app層) | C++ | 上位ロジック。**実名 `uwb_ranging`** |
   移植性は「ハード依存が `uwb_port` 1枚に閉じている」ことで担保され、言語では担保しない。
   stampfly_ecosystem は元々 C++ なので統合も素直（`namespace stampfly` ラッパを被せる）
@@ -200,7 +198,7 @@ app 層 `uwb_localizer` → 実名 `uwb_ranging`。新設: `uwb_cfgstore`（NVS 
     チップ内の遅延送信で処理されるので、ホストのポーリング遅延は主に更新レートに効き、
     測距精度には直結しない）
 
-### ディレクトリ構成（実績、2026-08-21）
+### ディレクトリ構成
 ```
 m5stamp_uwb_localizer/
 ├── docs/                 現役22本: WIRING.md / GETTING_STARTED.md / GETTING_STARTED.md /
@@ -236,15 +234,15 @@ m5stamp_uwb_localizer/
 
 ## 3. 配線設計
 
-**【2026-08-22 更新】** 接続は **FPC 経路が標準**になった（`docs/WIRING.md` §0.1）。
+接続は **FPC 経路が標準**である（`docs/WIRING.md` §1）。
 経路は3通りある: 経路A = FPC→DIP 変換基板（据置機の標準）／経路B = 半田パッド直付け（代替）／
 経路C = M5StampS3A 背面 12P FPC（StampFly）。
 
-**信号一覧は本文書では持たない。正本は `docs/WIRING.md` §2 のパッド↔FPC 対応表のみ。**
+**信号一覧は本文書では持たない。正本は `docs/WIRING.md` §7.1 のパッド↔FPC 対応表のみ。**
 同じ表を複数の文書に置くと、片方だけ更新されて食い違う事故につながる。
 
-**モジュール側 12 本の信号と番号 → [`docs/WIRING.md` §2](WIRING.md)（唯一の正本）**
-**ホスト側の GPIO 割当 → `boards/*.h`（`docs/WIRING.md` §3 に同じ値の表がある）**
+**モジュール側 12 本の信号と番号 → [`docs/WIRING.md` §7.1](WIRING.md)（唯一の正本）**
+**ホスト側の GPIO 割当 → `boards/*.h`（`docs/WIRING.md` §2.3 に同じ値の表がある）**
 
 必須は 6 本（VCC_3V3 / GND / CLK / CDI / CDO / CSn）、推奨は +IRQ +RSTn の 8 本、
 省電力運用なら +WAKEUP。
@@ -255,11 +253,10 @@ GPIO に余裕があるので **SPI4線 + IRQ + RSTn + WAKEUP をフル配線**�
 AtomS3 は空き GPIO が少ないため WAKEUP を諦める（代替構成）。
 
 ### StampFly（下流・Phase 6）
-**2026-08-22 のユーザ決定により、M5StampS3A 背面の 12P FPC 経由（`boards/stampfly.h`）に
-確定した。** GROVE 2系統併用（旧案）・内蔵SPI2への相乗り（HW-2）の比較検討は
-`docs/STAMPFLY_INTEGRATION.md` §5.3 を参照（結論はそのどちらでもなく背面 FPC 経由になった
-ため、いまは経緯としてのみ有効。廃案の理由は `boards/stampfly.h` 末尾「■ 旧構成（GROVE 4線）
-を廃した理由」）。
+**M5StampS3A 背面の 12P FPC 経由（`boards/stampfly.h`）に確定している。**
+GROVE 2系統併用・内蔵SPI2への相乗り（HW-2）を採らなかった理由は
+`docs/STAMPFLY_INTEGRATION.md` §5.3、廃案の理由は `boards/stampfly.h` 末尾
+「■ 旧構成（GROVE 4線）を廃した理由」を参照。
 
 ### 電力
 モジュールはタグ動作 58.0mA @3.3V。背面 FPC 経由なら VDD_3V3（M5StampS3A のスイッチング
@@ -273,14 +270,14 @@ DC-DC 出力の下流）から直接給電でき、GROVE 経由で必要だっ�
 ## 4. フェーズ計画
 
 ### Phase 1: 基盤とSPI疎通 【最優先・ここが通れば全体の目処が立つ】
-**実装済み（2026-08-19）。受入（Device ID 読み出し）は実機待ち**
+**実装済み。受入（Device ID 読み出し）は実機待ち**
 - リポジトリ雛形、ESP-IDF プロジェクト、`uwb_port` 抽象定義
 - `uwb_qm33120` の最小実装（レジスタ read/write、ソフトリセット）
 - **受入条件: M5StampS3A で Device ID `0xDECA0314` を読み出せる**
 - 併せて AtomS3 でも同じことを確認（ピン定義の差し替えだけで通ること）
 
 ### Phase 2: 単一リンクの測距
-**実装済み（2026-08-19）。受入は実機待ち**（SS/DS-TWR は `uwb_qm33120_twr.cpp`、`firmware/twr`）
+**実装済み。受入は実機待ち**（SS/DS-TWR は `uwb_qm33120_twr.cpp`、`firmware/twr`）
 - M5Stamp-UWB の PHY（physical layer、物理層）設定・フレーム送受信・タイムスタンプ取得を移植
 - `uwb_twr`: SS-TWR（Single-Sided TWR、片側二方向測距）→ DS-TWR の状態機械
 - **受入条件: 2台（タグ1 + アンカー1）で距離値が安定して出る**
@@ -294,7 +291,7 @@ DC-DC 出力の下流）から直接給電でき、GROVE 経由で必要だっ�
 - ホスト側キャリブレーションツール（tools/）
 
 ### Phase 4: マルチアンカー測距 + 測位
-**実装済み（2026-08-20）。受入と「1周あたりの所要時間の実測」は実機待ち**
+**実装済み。受入と「1周あたりの所要時間の実測」は実機待ち**
 - ~~複数アンカーへの測距スケジューリング（TDMA 的な順次ポーリング）~~
   **実装済み**（`uwb_ranging_scheduler.hpp`）
 - ~~`uwb_loc` の vendoring と `uwb_meas[]` への接続~~ **実装済み**（`components/uwb_loc/`、`uwb_ranging_pipeline.hpp`）
@@ -357,7 +354,7 @@ CI/Release 整備（`docs/PREBUILT_BINARIES.md`、Release zip への LICENSE 同
 | P5〜P9 | Qorvo QM33120W Product Brief / DW3000 User Manual / Qorvo 公式 TWR リファレンス / APS011・APS014 / IEEE 802.15.4-2020・15.4z |
 
 > **回路図を読むときは、どのコネクタの番号を見ているか必ず確認すること。**
-> 同じ信号でもコネクタごとに番号体系が違う（`docs/WIRING.md` §2・§5.5(2)）。
+> 同じ信号でもコネクタごとに番号体系が違う（`docs/WIRING.md` §7.1・§7.3(2)）。
 
 ### 二次資料（参考。根拠にはしない）
 
@@ -404,15 +401,15 @@ CI/Release 整備（`docs/PREBUILT_BINARIES.md`、Release zip への LICENSE 同
 
 | # | リスク | 影響 | 対処 |
 |---|---|---|---|
-| ~~R1~~ | ~~Qorvo SDK のライセンス~~ | — | **解決済(2026-08-19)**: 改変込みのソース再配布は許可。条件=著作権/SPDX表示の保持＋**Qorvo製IC限定**。vendoring 可。詳細は archive/SURVEY_m5stamp_uwb_port.md |
-| ~~R2~~ | ~~Arduino→ESP-IDF 移植の手間（SPI/GPIO/時刻APIの差）~~ | — | **解決済(2026-08-19)**: `uwb_port` 実装、Phase 1-2 完了 |
-| ~~R3~~ | ~~StampFly に G5/G10/G41/G42 のパッドが無い~~ | — | **解決済(2026-08-21): 案B は成立しない。** 4本ともモータPWM。**案A（GROVE 2系統・IRQ無し）で確定** |
+| ~~R1~~ | ~~Qorvo SDK のライセンス~~ | — | **解決済**: 改変込みのソース再配布は許可。条件=著作権/SPDX表示の保持＋**Qorvo製IC限定**。vendoring 可。詳細は archive/SURVEY_m5stamp_uwb_port.md |
+| ~~R2~~ | ~~Arduino→ESP-IDF 移植の手間（SPI/GPIO/時刻APIの差）~~ | — | **解決済**: `uwb_port` 実装、Phase 1-2 完了 |
+| ~~R3~~ | ~~StampFly に G5/G10/G41/G42 のパッドが無い~~ | — | **解決済: 案B は成立しない。** 4本ともモータPWM。**案A（GROVE 2系統・IRQ無し）で確定** |
 | R4 | StampFly GROVE（電池電圧、満充電 ~4.35V）の供給能力、または LDO 後 3.3V の供給能力不足 | Phase 6 で電源設計やり直し | 電流実測。最悪は機体のバッテリから直接取る |
 | R5 | 公式ライブラリが TWR のみで TDoA 未実装 | 多数タグ運用は困難 | 当面 TWR 前提。TDoA は将来課題 |
 | R6 | **更新レート**。DS-TWR を N アンカー逐次で回すと1周が長い（N に比例） | 飛行制御に使うには不足の可能性が高い | **Phase 2 完了時点で1リンクの所要時間を実測**。不足なら (a) SS-TWR へ切替 (b) インターバル短縮 (c) アンカーを間引いて交互にポーリング (d) EKF で補間、を検討。**N を増やすと直接効く**ので台数と更新レートはトレードオフ。**試算 31.3 Hz**（アンカー IRQ 化で 59.4 Hz、`TIMING_PRESETS.md`）。実測は実機待ち。SS/DS は `RangingMethod` で切替可 |
-| ~~R7~~ | ~~ハードウェアの入手数~~ | — | **解決済(2026-08-19)**: 4台以上を保有。Phase 4 まで一気に検証可能 |
+| ~~R7~~ | ~~ハードウェアの入手数~~ | — | **解決済**: 4台以上を保有。Phase 4 まで一気に検証可能 |
 | R9 | Qorvo IC 限定条件（ライセンス条件3） | 別チップ転用不可 | 本リポジトリは QM33120W/DW3720 専用と明記する。SPDXヘッダ・LICENSES/ を必ず同梱。Release zip に LICENSES 同梱・IC 限定明記は済み（`dffcde5`）。自前コードへの SPDX ヘッダは未 |
-| ~~R10~~ | ~~DS-TWR の距離計算が Responder(Anchor) 側にある実装~~ | — | **解決済(2026-08-19)**: Anchor 計算 → DWD フレームで Tag へ返送のまま採用（`uwb_qm33120_twr.cpp` `requestDSRange`）。SS-TWR は Tag 側で完結 |
+| ~~R10~~ | ~~DS-TWR の距離計算が Responder(Anchor) 側にある実装~~ | — | **解決済**: Anchor 計算 → DWD フレームで Tag へ返送のまま採用（`uwb_qm33120_twr.cpp` `requestDSRange`）。SS-TWR は Tag 側で完結 |
 | R8 | M5StampS3A の PSRAM 有無が資料間で矛盾 | メモリ設計 | 実機で確認。`boards/*.h` は ESP32-S3FN8（PSRAM 無し）前提で設計。実機確認は未 |
 
 ---
@@ -421,11 +418,11 @@ CI/Release 整備（`docs/PREBUILT_BINARIES.md`、Release zip への LICENSE 同
 
 1. ~~R1（Qorvo SDK ライセンス）の確認~~ → **完了・クリア**
 2. ~~M5Stamp-UWB の移植量見積もり~~ → **完了（実質 wrapper 1,946行のみ）**
-3. ~~リポジトリ雛形 + ESP-IDF プロジェクト骨格 + `uwb_port` I/F 設計~~ → **完了（2026-08-19）**
-4. ~~Phase 1 実装（M5StampS3A / AtomS3 で Device ID `0xDECA0314` 読み出し）~~ → **実装 2026-08-19・実機受入は未**
+3. ~~リポジトリ雛形 + ESP-IDF プロジェクト骨格 + `uwb_port` I/F 設計~~ → **完了**
+4. ~~Phase 1 実装（M5StampS3A / AtomS3 で Device ID `0xDECA0314` 読み出し）~~ → **実装済み・実機受入は未**
 5. 実機検証（`docs/EXPERIMENT_PLAN.md` の順で probe → twr → anchor×5 + tag）← **いまここ**
 
-### 確定した前提（ユーザ回答 2026-08-19）
+### 確定した前提
 - 保有ハード: **M5Stamp UWB Module / ホストボード ともに4台以上** → Phase 4（3D測位）まで実機検証可能
 - StampFly 統合先: **`firmware/vehicle`**（C++ ラッパはその流儀に合わせる）
   - 注: `firmware/vehicle_new` は `firmware/vehicle` にリネーム済み。旧 `firmware/vehicle` は

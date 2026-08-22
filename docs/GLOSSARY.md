@@ -11,7 +11,7 @@
   - §1 まずこの3つ / §2 測距（レンジング） / §3 時間の単位 / §4 無線フレームと PHY
   - §5 測位（ローカライゼーション） / §6 ハードウェアと ESP-IDF / §7 製品名・型番
   - §8 資料の略号 / §9 ⚠ 紛らわしい語
-- **単位**（「単位リファレンス」節、旧 `docs/GLOSSARY.md`）: UUS / DTU / 実マイクロ秒の
+- **単位**（「単位リファレンス」節）: UUS / DTU / 実マイクロ秒の
   換算式・API ごとの単位・早見表
 
 ## 本リポジトリの表記ルール
@@ -134,9 +134,9 @@
 | **Kconfig / menuconfig** | — | ESP-IDF のビルド設定機構。`idf.py menuconfig` で対話的に設定する |
 | **FPC** | **F**lexible **P**rinted **C**ircuit（フレキシブル基板） | 薄いフィルム状の配線。M5Stamp UWB Module の一部品種はこのコネクタを持つ |
 | **キャステレーション** | castellation | 基板の端の半円形の半田パッド。M5StampS3A の側面にある |
-| **FPC→DIP 変換基板** | — | 0.5mm ピッチの FPC ケーブルを 2.54mm/DIP ヘッダへ変換する基板。据置機の標準経路（`docs/WIRING.md` 経路A）で、M5Stamp UWB Module with FPC (S017-F) を StampS3 BreakOut に繋ぐのに使う。**接点面（同面／異面）が合わないと 1 番と 12 番が入れ替わる**ので実物で要確認（`docs/WIRING.md` §4.0） |
+| **FPC→DIP 変換基板** | — | 0.5mm ピッチの FPC ケーブルを 2.54mm/DIP ヘッダへ変換する基板。据置機の標準経路（`docs/WIRING.md` 経路A）で、M5Stamp UWB Module with FPC (S017-F) を StampS3 BreakOut に繋ぐのに使う。**接点面（同面／異面）が合わないと 1 番と 12 番が入れ替わる**ので実物で要確認（`docs/WIRING.md` §2） |
 | **ロードスイッチ** | load switch | 電源レールを半導体で ON/OFF する IC。M5StampS3A では **AW35122FDR (U2)** が背面 FPC の **BL_3V3** 系統（バックライト・オンボード RGB LED 兼用）を切り替えており、EN が **G38 (DISP_BL)** に配線されている（`boards/stampfly.h`） |
-| **BL_3V3 / VDD_3V3 の区別** | — | M5StampS3A 背面 12P FPC にある2系統の3.3V。**BL_3V3**（位置5）はロードスイッチの出力で **G38 が Low になると落ちる**。**VDD_3V3**（位置11）はロードスイッチの**上流**で常時給電。**UWB モジュールの電源は必ず VDD_3V3 から取る**（`boards/stampfly.h`「■ 電源（重要）」、`docs/WIRING.md` §3.5） |
+| **BL_3V3 / VDD_3V3 の区別** | — | M5StampS3A 背面 12P FPC にある2系統の3.3V。**BL_3V3**（位置5）はロードスイッチの出力で **G38 が Low になると落ちる**。**VDD_3V3**（位置11）はロードスイッチの**上流**で常時給電。**UWB モジュールの電源は必ず VDD_3V3 から取る**（`boards/stampfly.h`「■ 電源（重要）」、`docs/WIRING.md` §4） |
 | **LDO** | **L**ow **D**rop**o**ut regulator | 低損失の降圧レギュレータ。M5Stack 一般の GROVE は 5V 出力が多いが、**StampFly の GROVE は電池電圧（満充電 ~4.35V、チップの絶対最大 4.0V 超）**であり、いずれも 3.3V を作るのに要る。**StampFly 搭載タグの標準経路（背面 12P FPC の VDD_3V3 給電、旧 GROVE 4線構成は廃案）では LDO は不要**（`boards/stampfly.h`） |
 | **XSHUT** | — | ToF 距離センサのシャットダウン端子。同一 I2C アドレスの複数個を個別に初期化するのに使う |
 | **PWM** | **P**ulse **W**idth **M**odulation（パルス幅変調） | StampFly のモータ駆動信号 |
@@ -207,9 +207,7 @@
 
 ---
 
-## 単位リファレンス（旧 UNITS.md）
-
-この節は 2026-08-22 に `docs/GLOSSARY.md` を統合したもの。
+## 単位リファレンス
 
 **TWR の遅延値を読み書きする前に必ずここを読むこと。**
 この単位を取り違えると測距が成立しない。しかも症状は「距離が出ない」だけで、

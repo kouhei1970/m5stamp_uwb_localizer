@@ -22,7 +22,7 @@ UWB_PRIMER.md  →  UWB_ALGORITHMS.md  →  ANCHOR_PLACEMENT.md
 | # | 文書 | 何が分かるか |
 |---|---|---|
 | 1 | **[UWB_PRIMER.md](UWB_PRIMER.md)** | **ここから。** なぜ電波で cm が測れるのか。1 ns = 30 cm、帯域と時間分解能、TWR がなぜ時計同期を要らなくするか、アンテナ遅延、NLOS |
-| 2 | [UWB_ALGORITHMS.md](UWB_ALGORITHMS.md) | 距離から位置を解く数理。Lv0 閉形式 → Beck 厳密解 → ロバスト化 → EKF まで式を追える（**1,700 行。重い**） |
+| 2 | [UWB_ALGORITHMS.md](UWB_ALGORITHMS.md) | 距離から位置を解く数理。Lv0 閉形式 → Beck 厳密解 → ロバスト化 → EKF まで式を追える（**長い**） |
 | 3 | [ANCHOR_PLACEMENT.md](ANCHOR_PLACEMENT.md) | アンカーをどう置くか。同一平面の罠と GDOP |
 
 **分からない略語や単位で迷ったら [GLOSSARY.md](GLOSSARY.md)**（用語集と単位リファレンスの2部構成）。
@@ -36,16 +36,16 @@ GETTING_STARTED.md  →  EXPERIMENT_PLAN.md
 
 | # | 文書 | 何が分かるか |
 |---|---|---|
-| 1 | **[GETTING_STARTED.md](GETTING_STARTED.md)** | **ここから。** BOM から測位まで 11 章の完全手順（**1,297 行**） |
+| 1 | **[GETTING_STARTED.md](GETTING_STARTED.md)** | **ここから。** BOM から測位まで 11 章の完全手順 |
 | 2 | **[EXPERIMENT_PLAN.md](EXPERIMENT_PLAN.md)** | **何を・どの順で確かめ、どのフラグをいつ有効にするか。** 実機でしか潰せない前提12件つき |
 | 3 | [PREBUILT_BINARIES.md](PREBUILT_BINARIES.md) | **ESP-IDF を入れずに**書き込んで試す |
 | 4 | [WIRING.md](WIRING.md) | **配線の正本。接続経路は3通り**（FPC→DIP 変換基板／半田パッド直付け／StampS3A 背面 FPC）。**§0.1 でまず自分の経路を選ぶ** |
 | 5 | [ANCHOR_PLACEMENT.md](ANCHOR_PLACEMENT.md) | アンカーの置き方 |
 
 > 実験1（SPI 疎通で Device ID を読む）の受入基準と切り分けは、
-> 旧 `BRINGUP.md` から [`GETTING_STARTED.md` §4](GETTING_STARTED.md#probe) へ統合済み。
+> [`GETTING_STARTED.md` §4](GETTING_STARTED.md#probe) を参照。
 
-> **⚠ 配線前に [WIRING.md §0.1](WIRING.md#route) で自分の接続経路を選び、
+> **⚠ 配線前に [WIRING.md §1](WIRING.md#route) で自分の接続経路を選び、
 > [GETTING_STARTED.md §3.1](GETTING_STARTED.md#orientation) を必ず読んでください。**
 > パッドの向きは実機で確認が必要で、間違えると電源逆接で壊れます。
 
@@ -62,10 +62,10 @@ PLAN.md  →  各仕様書  →  archive/REIMPL_PLAN.md / archive/CRITICAL_REVIE
 | [IRQ_POLICY.md](IRQ_POLICY.md) | IRQ を使うかどうかの方針。**ポーリングを第一級で残す理由** |
 | [TIMING_PRESETS.md](TIMING_PRESETS.md) | TWR 遅延値の**導出**と、タグ/アンカー間の版不一致検出 |
 | [SURVEY_SPEC.md](SURVEY_SPEC.md) | アンカー座標の自動測量（MDS + Gauss-Newton + ゲージ固定） |
-| [STAMPFLY_INTEGRATION.md](STAMPFLY_INTEGRATION.md) | StampFly の位置制御へ載せる設計検討（**1,100 行**） |
-| [PERF_ANALYSIS.md](PERF_ANALYSIS.md) | ESP32-S3 固有の最適化調査（付録に旧 PLATFORM_TUNING.md を統合） |
+| [STAMPFLY_INTEGRATION.md](STAMPFLY_INTEGRATION.md) | StampFly の位置制御へ載せる設計検討 |
+| [PERF_ANALYSIS.md](PERF_ANALYSIS.md) | ESP32-S3 固有の最適化調査 |
 | [PERF_ANALYSIS.md](PERF_ANALYSIS.md) | 測位ソルバの性能分析 |
-| [REVIEW_2026-08-21.md](REVIEW_2026-08-21.md) | 実機投入前の最終レビュー（2026-08-21）。Critical 1・High 6 を含む全指摘と根拠、対応状況、着手順 |
+| [REVIEW_2026-08-21.md](REVIEW_2026-08-21.md) | 実機投入前の最終レビュー。Critical 1・High 6 を含む全指摘と根拠、対応状況、着手順 |
 | [archive/REIMPL_PLAN.md](archive/REIMPL_PLAN.md) | 【経緯】移植元の課題一覧 R1〜R12 と、それぞれの決着 |
 | [archive/CRITICAL_REVIEW.md](archive/CRITICAL_REVIEW.md) | 【経緯】移植元コードの批判的レビュー（**訂正ボックス入り**） |
 | [archive/MATH_AUDIT_2026-08-21.md](archive/MATH_AUDIT_2026-08-21.md) | 【経緯】行列計算の残存箇所の監査とスカラー化の設計根拠。`components/uwb_math/` の仕様の元（指摘は全件対応済み） |
@@ -75,7 +75,7 @@ PLAN.md  →  各仕様書  →  archive/REIMPL_PLAN.md / archive/CRITICAL_REVIE
 | 文書 | 何が分かるか |
 |---|---|
 | **[HANDOFF.md](HANDOFF.md)** | **最初に読む。** 現在地・確定事項・落とし穴・次の一手 |
-| [REVIEW_2026-08-21.md](REVIEW_2026-08-21.md) | 実機投入前の最終レビュー（2026-08-21）。Critical 1・High 6 を含む全指摘と根拠、対応状況、着手順 |
+| [REVIEW_2026-08-21.md](REVIEW_2026-08-21.md) | 実機投入前の最終レビュー。Critical 1・High 6 を含む全指摘と根拠、対応状況、着手順 |
 | [EXPERIMENT_PLAN.md](EXPERIMENT_PLAN.md) | 実機が来てからやること |
 | **[archive/DESIGN_HISTORY.md](archive/DESIGN_HISTORY.md)** | **なぜこうなっているのか。** 廃案・訂正 15 件・方針変更の経緯。**同じ失敗を繰り返さないための記録** |
 
@@ -103,42 +103,42 @@ PLAN.md  →  各仕様書  →  archive/REIMPL_PLAN.md / archive/CRITICAL_REVIE
 ## 全文書一覧
 
 ### 入門・リファレンス
-| 文書 | 行 | 内容 |
-|---|---:|---|
-| [UWB_PRIMER.md](UWB_PRIMER.md) | 278 | UWB の原理。なぜ電波で cm が測れるのか |
-| [UWB_ALGORITHMS.md](UWB_ALGORITHMS.md) | 1791 | 測位アルゴリズムの導出（上流 uwb_localizer からの移植・改訂版） |
-| [GLOSSARY.md](GLOSSARY.md) | 368 | 用語集。**§9 に「紛らわしい語」**（ToF の二義など） |
-| [GLOSSARY.md](GLOSSARY.md) | 368 | UUS / DTU / 実 µs（旧 UNITS.md を統合）。**遅延値を触る前に必読** |
+| 文書 | 内容 |
+|---|---|
+| [UWB_PRIMER.md](UWB_PRIMER.md) | UWB の原理。なぜ電波で cm が測れるのか |
+| [UWB_ALGORITHMS.md](UWB_ALGORITHMS.md) | 測位アルゴリズムの導出（上流 uwb_localizer からの移植・改訂版） |
+| [GLOSSARY.md](GLOSSARY.md) | 用語集。**§9 に「紛らわしい語」**（ToF の二義など） |
+| [GLOSSARY.md](GLOSSARY.md) | UUS / DTU / 実 µs。**遅延値を触る前に必読** |
 
 ### 実践
-| 文書 | 行 | 内容 |
-|---|---:|---|
-| [GETTING_STARTED.md](GETTING_STARTED.md) | 1297 | BOM から測位までの完全手順（11 章） |
-| [EXPERIMENT_PLAN.md](EXPERIMENT_PLAN.md) | 393 | 実機到着後の実験計画とフラグ有効化の順序 |
-| [PREBUILT_BINARIES.md](PREBUILT_BINARIES.md) | 186 | ビルド済みバイナリの入手と書き込み。ライセンス条件込み |
-| [GETTING_STARTED.md](GETTING_STARTED.md) | 1297 | Phase 1（SPI 疎通）の受入確認（旧 BRINGUP.md の内容を §3〜§4 に統合） |
-| [WIRING.md](WIRING.md) | 913 | 配線の正本（旧 SOLDER_PADS.md を改題・改組）。3つの接続経路とピン対応・向きの確定 |
-| [ANCHOR_PLACEMENT.md](ANCHOR_PLACEMENT.md) | 59 | アンカー配置ルール（実測にもとづく） |
+| 文書 | 内容 |
+|---|---|
+| [GETTING_STARTED.md](GETTING_STARTED.md) | BOM から測位までの完全手順（11 章） |
+| [EXPERIMENT_PLAN.md](EXPERIMENT_PLAN.md) | 実機到着後の実験計画とフラグ有効化の順序 |
+| [PREBUILT_BINARIES.md](PREBUILT_BINARIES.md) | ビルド済みバイナリの入手と書き込み。ライセンス条件込み |
+| [GETTING_STARTED.md](GETTING_STARTED.md) | Phase 1（SPI 疎通）の受入確認 |
+| [WIRING.md](WIRING.md) | 配線の正本。3つの接続経路とピン対応・向きの確定 |
+| [ANCHOR_PLACEMENT.md](ANCHOR_PLACEMENT.md) | アンカー配置ルール（実測にもとづく） |
 
 ### 設計・仕様
-| 文書 | 行 | 内容 |
-|---|---:|---|
-| [PLAN.md](PLAN.md) | 375 | 全体設計・フェーズ計画・**リポジトリの方針** |
-| [IRQ_POLICY.md](IRQ_POLICY.md) | 234 | IRQ の使用方針（確定版） |
-| [TIMING_PRESETS.md](TIMING_PRESETS.md) | 314 | 遅延プリセットの導出と版不一致検出 |
-| [SURVEY_SPEC.md](SURVEY_SPEC.md) | 456 | アンカー座標の自動測量の仕様（外れ値 leave-one-out・キラリティ入力を追記） |
-| [STAMPFLY_INTEGRATION.md](STAMPFLY_INTEGRATION.md) | 1128 | StampFly 位置制御への統合検討 |
-| [PERF_ANALYSIS.md](PERF_ANALYSIS.md) | 452 | ESP32-S3 の浮動小数点・コンパイル設定（付録に旧 PLATFORM_TUNING.md を統合） |
+| 文書 | 内容 |
+|---|---|
+| [PLAN.md](PLAN.md) | 全体設計・フェーズ計画・**リポジトリの方針** |
+| [IRQ_POLICY.md](IRQ_POLICY.md) | IRQ の使用方針（確定版） |
+| [TIMING_PRESETS.md](TIMING_PRESETS.md) | 遅延プリセットの導出と版不一致検出 |
+| [SURVEY_SPEC.md](SURVEY_SPEC.md) | アンカー座標の自動測量の仕様（外れ値 leave-one-out・キラリティ入力） |
+| [STAMPFLY_INTEGRATION.md](STAMPFLY_INTEGRATION.md) | StampFly 位置制御への統合検討 |
+| [PERF_ANALYSIS.md](PERF_ANALYSIS.md) | ESP32-S3 の浮動小数点・コンパイル設定 |
 
 ### 経緯・分析
-| 文書 | 行 | 内容 |
-|---|---:|---|
-| [REVIEW_2026-08-21.md](REVIEW_2026-08-21.md) | 282 | 実機投入前の最終レビュー。Critical 1・High 6、**全件対応済み**（実機確認のみ残る） |
-| [PERF_ANALYSIS.md](PERF_ANALYSIS.md) | 452 | 測位ソルバの性能分析と上流最適化の結果 |
+| 文書 | 内容 |
+|---|---|
+| [REVIEW_2026-08-21.md](REVIEW_2026-08-21.md) | 実機投入前の最終レビュー。Critical 1・High 6、**全件対応済み**（実機確認のみ残る） |
+| [PERF_ANALYSIS.md](PERF_ANALYSIS.md) | 測位ソルバの性能分析と上流最適化の結果 |
 ### 引き継ぎ
-| 文書 | 行 | 内容 |
-|---|---:|---|
-| [HANDOFF.md](HANDOFF.md) | 301 | 次セッションへの申し送り。現在地・確定事項・誤りと教訓・文書の地図・次の一手 |
+| 文書 | 内容 |
+|---|---|
+| [HANDOFF.md](HANDOFF.md) | 次セッションへの申し送り。現在地・確定事項・誤りと教訓・文書の地図・次の一手 |
 
 ---
 

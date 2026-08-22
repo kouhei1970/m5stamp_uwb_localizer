@@ -10,7 +10,7 @@
 > 本日中に**全件対応済み**（§0 の表参照。#6 外れ値棄却・#7 ライセンス同梱も本セッションで解消した）。
 > 残っているのは実機でしか確認できない項目だけである。
 
-### 【追記 2026-08-22】ブランチ `feat/stamps3-fpc-migration` での変更
+### ブランチ `feat/stamps3-fpc-migration` での変更
 
 前回 HANDOFF 時点（HEAD `dffcde5`、main）から本ブランチで6コミット
 （`git log --oneline main..HEAD` で確認可能。一覧は §1）を積み、ハードウェア構成の
@@ -193,8 +193,8 @@ docs/archive/     経緯文書（PROGRESS / REIMPL_PLAN / CRITICAL_REVIEW / SURV
 | 対象 | **ESP32-S3 + M5Stamp UWB Module 専用**。プラットフォーム最適化してよい。ただし StampFly には非依存 | `docs/PLAN.md` |
 | **ハード方針** | **StampFly 非依存。ただしタグの配線だけは StampFly 互換を維持する**（GROVE 2系統4本で成立 ＝ IRQ/RST 不要）。想定利用者は本リポジトリを単体で試す人 | `docs/PLAN.md` §1 |
 | 役割 | **タグ = M5StampS3A ×1（既定は据置＝StampS3 BreakOut 経由。StampFly 搭載時は機体の M5StampS3A を背面 12P FPC 経由で流用） / アンカー = M5StampS3A + StampS3 BreakOut ×5（既定、`UWB_ANCHOR_BOARD_STAMPS3`）。AtomS3(R) は代替として残る** | `docs/archive/PROGRESS.md`、本ブランチ `feat/stamps3-fpc-migration`（§0・§1） |
-| 接続 | **FPC ではなく半田パッド**（1.27mm キャステレーション）。J1（FPC 用番号）と PINMAP（パッド用番号）は**別の番号体系**で両方正しい | `docs/WIRING.md` §5.5 |
-| 電源 | パッド2（VCC_3V3）は QM33120W の VDD1/VDD2 に直結。動作上限 3.6V・絶対最大 4.0V。5V や StampFly GROVE（満充電 ~4.35V）は不可 | `docs/WIRING.md` §5.4 |
+| 接続 | **FPC ではなく半田パッド**（1.27mm キャステレーション）。J1（FPC 用番号）と PINMAP（パッド用番号）は**別の番号体系**で両方正しい | `docs/WIRING.md` §7.3 |
+| 電源 | パッド2（VCC_3V3）は QM33120W の VDD1/VDD2 に直結。動作上限 3.6V・絶対最大 4.0V。5V や StampFly GROVE（満充電 ~4.35V）は不可 | `docs/WIRING.md` §5.1 |
 | **IRQ** | **アンカーは積極使用。タグは不使用。StampFly の別配線可能性は残す** | **`docs/IRQ_POLICY.md`** |
 | 資料 | **一次資料 = Qorvo SDK/UM/APS。M5Stack ラッパは二次資料で信頼しない** | **`docs/PLAN.md` §5** |
 | 測量 | 高さのみ実測(4点以上) + キラリティ1ビット入力（`uwb_survey_input.chirality`）。タグも6台目として参加。外れ値リンクは leave-one-out で棄却。計算は実機上（呼び出し元はまだ無い） | `docs/SURVEY_SPEC.md` |
@@ -231,7 +231,7 @@ docs/EXPERIMENT_PLAN.md       実機到着後の実験計画とフラグ有効�
 docs/IRQ_POLICY.md            IRQ 方針（確定版）
 docs/GLOSSARY.md                 UUS/DTU/実µs の単位リファレンス（遅延値を触る前に必読）
 docs/TIMING_PRESETS.md        遅延プリセットとバージョン不一致検出（設計）
-docs/SURVEY_SPEC.md           自動測量の仕様（外れ値 leave-one-out・キラリティ入力を追記）
+docs/SURVEY_SPEC.md           自動測量の仕様（外れ値 leave-one-out・キラリティ入力）
 docs/STAMPFLY_INTEGRATION.md  StampFly 位置制御への統合（1127行）
 docs/PERF_ANALYSIS.md         測位計算の性能分析と上流最適化の結果
 docs/PERF_ANALYSIS.md       ESP32-S3 の浮動小数点・コンパイル設定

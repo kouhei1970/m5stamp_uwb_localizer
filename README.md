@@ -145,7 +145,7 @@ I (xxx) uwb_probe: === L1: PASS / L2: PASS ===
 |---|---|
 | ビルド | 全ファーム **警告 0・エラー 0**（ESP-IDF v5.5.2 / ESP32-S3） |
 | 測位パイプライン | ホスト（PC）上の合成データで検証済み（**188 件のチェック全通過**。設定のシリアライズ/デシリアライズ、遅延プリセット、フレーム照合の検算を含む） |
-| 測位ソルバ（uwb_loc） | 本リポジトリ独立のホストテストで検証済み（**77 件 + 新旧比較回帰 591,418 件**。上流 [uwb_localizer](https://github.com/kouhei1970/uwb_localizer) は 2026-08-21 に凍結・独立し、以後の開発は本リポジトリ側で行っている） |
+| 測位ソルバ（uwb_loc） | 本リポジトリ独立のホストテストで検証済み（**77 件 + 新旧比較回帰 591,418 件**。上流 [uwb_localizer](https://github.com/kouhei1970/uwb_localizer) は凍結・独立しており、以後の開発は本リポジトリ側で行っている） |
 | 線形代数（uwb_math）／自動測量（uwb_survey） | ホストで検証済み（uwb_math **10,781 件** / uwb_survey **561 件**） |
 | ソルバの計算時間 | ESP32-S3 実機用ベンチを実装済み（**実行は未**） |
 | **実機での SPI 疎通（Device ID 読み出し）** | **未確認** |
@@ -237,7 +237,7 @@ m5stamp_uwb_localizer/
 │   ├── STAMPFLY_INTEGRATION.md  StampFly 位置制御への統合検討
 │   ├── HANDOFF.md           次セッションへの申し送り
 │   ├── PLAN.md              全体設計・フェーズ計画
-│   ├── REVIEW_2026-08-21.md 実機投入前の最終レビュー（2026-08-21）
+│   ├── REVIEW_2026-08-21.md 実機投入前の最終レビュー
 │   ├── PERF_ANALYSIS.md     測位ソルバの性能分析
 │   ├── PERF_ANALYSIS.md   ESP32-S3 固有の最適化調査
 │   └── archive/             経緯文書（設計当時の調査・検討。現役の仕様ではない）

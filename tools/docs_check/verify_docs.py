@@ -59,11 +59,20 @@ if n: fail.append(f"削除済み文書への言及 {n} 件")
 # 3) 配線表の重複（DW_CLK を含む文書）
 print("== 3) パッド↔FPC 対応表の所在（D-2 の再発防止） ==")
 # 「パッド番号と FPC 番号を同じ行に並べた表」= 実際に訂正漏れを起こした表。1文書のみとする
-# 信号名のあとに数値セルが2つ続く行 = パッド番号と FPC 番号を並べた対応表の行。
-# 12行の表なので 8 行以上あれば「表がある」とみなす。
-row=re.compile(r'^\|(?:\s*\d+\s*\|)?[^|]*(?:GND|VCC_3V3|DW_[A-Za-z0-9]+)[^|]*\|\s*\*{0,2}\d+\*{0,2}\s*\|'
-               r'\s*\*{0,2}[\d,\s—-]+\*{0,2}\s*\|', re.M)
-holders=[q for q in md_files(False) if len(row.findall(open(q,encoding='utf-8').read()))>=8]
+# 「パッド番号と FPC 番号を同じ行に並べた表」の行を数える。
+# 信号名を含み、かつ数字だけのセルが 2 つ以上ある行が対応表の行。
+# 12 行の表なので 8 行以上で「表がある」とみなす。
+SIG=re.compile(r'GND|VCC_3V3|DW_[A-Za-z0-9]+')
+NUMCELL=re.compile(r'^\s*\*{0,2}[\d]+(?:,\s*\d+)?\*{0,2}\s*$')
+def maptable_rows(text):
+    n=0
+    for line in text.splitlines():
+        if not line.startswith('|'): continue
+        if not SIG.search(line): continue
+        cells=[c for c in line.strip().strip('|').split('|')]
+        if sum(1 for c in cells if NUMCELL.match(c))>=2: n+=1
+    return n
+holders=[q for q in md_files(False) if maptable_rows(open(q,encoding='utf-8').read())>=8]
 for q in holders: print("  ",q)
 if len(holders)!=1: fail.append(f"パッド↔FPC 対応表が {len(holders)} 文書にある: {holders}")
 # ホスト配線表（FPC->GPIO）は手順書側にもあってよい。値の一致は 7) で機械的に検証する
