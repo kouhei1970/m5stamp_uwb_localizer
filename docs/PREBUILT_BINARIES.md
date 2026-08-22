@@ -49,6 +49,13 @@ GitHub Actions が全ファームをビルドし、**そのまま書き込める
 構成 A / B の違いは [`IRQ_POLICY.md`](IRQ_POLICY.md) を参照。
 **AtomS3R は G38/G39 が空いているので構成 B（ToF を Grove に挿すだけ）が綺麗**です。
 
+> **例外: `twr-anchor-ss` / `twr-anchor-ds` はボード名を含みません。**
+> この2つは **AtomS3（構成 A）用にビルドされたものだけ**を配布しています。
+> M5StampS3A をアンカー役にして実験2・3をやる場合は、この variant は使わずに
+> `firmware/twr` を自分でビルドしてください
+> （`CONFIG_UWB_TWR_BOARD_STAMPS3=y` + `CONFIG_UWB_TWR_ROLE_ANCHOR=y`）。
+> **実験5・6（本番）用の `anchor-stamps3-ds` は配布しています。**
+
 ### `-fast` は必ずペアで使う
 
 `anchor-*-ds-fast` と `tag-*-ds-fast` は**必ず両方**書き込んでください。
