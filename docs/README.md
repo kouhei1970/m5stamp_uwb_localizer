@@ -1,6 +1,6 @@
 # ドキュメント索引
 
-現役 17 本あります。**全部読む必要はありません。**
+現役 16 本あります。**全部読む必要はありません。**
 下の「あなたはどれですか」から入ってください。
 
 **現役文書には「いま正しいこと」だけが書いてあります。**
@@ -76,8 +76,8 @@ PLAN.md  →  各仕様書  →  archive/REIMPL_PLAN.md / archive/CRITICAL_REVIE
 |---|---|
 | **[HANDOFF.md](HANDOFF.md)** | **最初に読む。** 現在地・確定事項・落とし穴・次の一手 |
 | [REVIEW_2026-08-21.md](REVIEW_2026-08-21.md) | 実機投入前の最終レビュー（2026-08-21）。Critical 1・High 6 を含む全指摘と根拠、対応状況、着手順 |
-| **[SOURCE_POLICY.md](SOURCE_POLICY.md)** | **資料の格付けと、これまでに犯した誤りの記録。** 同じ失敗を繰り返さないために |
 | [EXPERIMENT_PLAN.md](EXPERIMENT_PLAN.md) | 実機が来てからやること |
+| **[archive/DESIGN_HISTORY.md](archive/DESIGN_HISTORY.md)** | **なぜこうなっているのか。** 廃案・訂正 15 件・方針変更の経緯。**同じ失敗を繰り返さないための記録** |
 
 ---
 
@@ -135,8 +135,6 @@ PLAN.md  →  各仕様書  →  archive/REIMPL_PLAN.md / archive/CRITICAL_REVIE
 |---|---:|---|
 | [REVIEW_2026-08-21.md](REVIEW_2026-08-21.md) | 282 | 実機投入前の最終レビュー。Critical 1・High 6、**全件対応済み**（実機確認のみ残る） |
 | [PERF_ANALYSIS.md](PERF_ANALYSIS.md) | 452 | 測位ソルバの性能分析と上流最適化の結果 |
-| [SOURCE_POLICY.md](SOURCE_POLICY.md) | 136 | **資料の格付けと、犯した誤りの記録** |
-
 ### 引き継ぎ
 | 文書 | 行 | 内容 |
 |---|---:|---|
@@ -172,7 +170,7 @@ PLAN.md  →  各仕様書  →  archive/REIMPL_PLAN.md / archive/CRITICAL_REVIE
 
 1. **略語は各文書の初出で「正式名称（英語）＝日本語の意味」を添える**（[GLOSSARY.md](GLOSSARY.md) 冒頭）。
    文書をまたぐときは各文書で改めて展開する
-2. **断定には出典を `ファイル:行` で添える**（[SOURCE_POLICY.md](SOURCE_POLICY.md)）。
+2. **断定には出典を `ファイル:行` で添える**（
    一次資料は Qorvo の SDK / UM / APS。M5Stack のラッパは二次資料として扱う
 3. **フラグやメタデータより、直接観測できる事実を優先する。**
    矛盾する証拠が出たら辻褄を合わせず前提を疑う

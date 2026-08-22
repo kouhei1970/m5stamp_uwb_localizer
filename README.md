@@ -29,8 +29,6 @@
 | 🔧 **買った。動かしたい** | **[`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md)**<br>BOM から測位までの完全手順 | [`EXPERIMENT_PLAN.md`](docs/EXPERIMENT_PLAN.md)（進める順序） |
 | ⚡ **とにかく書き込んで試したい** | **[`docs/PREBUILT_BINARIES.md`](docs/PREBUILT_BINARIES.md)**<br>ESP-IDF を入れずに書き込む | [`GETTING_STARTED.md`](docs/GETTING_STARTED.md)（最初の関門） |
 | 🛠 **中身を読みたい・改造したい** | **[`docs/PLAN.md`](docs/PLAN.md)**<br>全体設計と方針 | [`REIMPL_PLAN.md`](docs/archive/REIMPL_PLAN.md)（なぜこの実装か。経緯） |
-| 📋 **引き継ぐ・続きをやる** | **[`docs/HANDOFF.md`](docs/HANDOFF.md)**<br>現在地と次の一手 | [`SOURCE_POLICY.md`](docs/SOURCE_POLICY.md)（過去の誤りの記録） |
-
 **略語が分からないときは [`docs/GLOSSARY.md`](docs/GLOSSARY.md)、
 単位（UUS / DTU）で混乱したら [`docs/GLOSSARY.md`](docs/GLOSSARY.md)。**
 
@@ -237,7 +235,6 @@ m5stamp_uwb_localizer/
 │   ├── TIMING_PRESETS.md    TWR 遅延プリセットと版不一致検出
 │   ├── SURVEY_SPEC.md       アンカー座標の自動測量の仕様
 │   ├── STAMPFLY_INTEGRATION.md  StampFly 位置制御への統合検討
-│   ├── SOURCE_POLICY.md     資料の格付けと、過去の誤りの記録
 │   ├── HANDOFF.md           次セッションへの申し送り
 │   ├── PLAN.md              全体設計・フェーズ計画
 │   ├── REVIEW_2026-08-21.md 実機投入前の最終レビュー（2026-08-21）

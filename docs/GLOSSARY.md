@@ -165,7 +165,7 @@
 |---|---|
 | **APS** | Qorvo の **A**pplication **N**ote（例: **APS014** = アンテナ遅延校正の手順書） |
 | **UM** | **U**ser **M**anual（DW3000 ファミリのユーザマニュアル） |
-| **一次資料** | Qorvo の SDK / UM / APS。**信頼してよい**。M5Stack のラッパは二次資料として扱う（`docs/SOURCE_POLICY.md`） |
+| **一次資料** | Qorvo の SDK / UM / APS。**信頼してよい**。M5Stack のラッパは二次資料として扱う（`docs/PLAN.md` §5） |
 | **R1〜R12 / S1〜S7** | 本プロジェクトの作業項目番号。R = 再実装項目（`docs/archive/REIMPL_PLAN.md`）、S = 自動測量関連（`docs/SURVEY_SPEC.md`） |
 
 ---
@@ -202,7 +202,7 @@
 - `docs/UWB_ALGORITHMS.md` — 測位アルゴリズムの導出
 - `docs/GLOSSARY.md` — UUS / DTU / 実 µs の単位リファレンス
 - `docs/TIMING_PRESETS.md` — 遅延プリセットとその導出
-- `docs/SOURCE_POLICY.md` — 資料の格付けと、過去の誤りの記録
+- `docs/PLAN.md` §5 — 資料の格付けと実装方針
 - `docs/GETTING_STARTED.md` — BOM から測位までの手順
 
 ---
@@ -360,4 +360,4 @@ UUS -> DTU  :  x * 65536
 - `docs/GLOSSARY.md` — 略語の一覧（UUS 以外の用語はこちら）
 - `docs/TIMING_PRESETS.md` — 遅延プリセットの実際の値と、その導出
 - `docs/archive/REIMPL_PLAN.md` R1 — この単位問題を発見・訂正した経緯
-- `docs/SOURCE_POLICY.md` — 「一次資料 = Qorvo SDK/UM/APS」の格付け
+- `docs/PLAN.md` §5 — 「一次資料 = Qorvo SDK/UM/APS」の格付け

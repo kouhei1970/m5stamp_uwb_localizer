@@ -340,7 +340,62 @@ CI/Release 整備（`docs/PREBUILT_BINARIES.md`、Release zip への LICENSE 同
 
 ---
 
-## 5. リスクと未確認事項
+## 5. 資料の格付けと実装方針
+
+**実装の根拠は一次資料に置く。** M5Stack の Arduino ラッパは「そういう書き方もある」
+という参考であって、正しさの根拠にはしない
+（この方針に至った経緯は [`archive/DESIGN_HISTORY.md` §4](archive/DESIGN_HISTORY.md)）。
+
+### 一次資料（実装の根拠にしてよい）
+
+| # | 資料 |
+|---|---|
+| P0 | **M5Stamp UWB Module 公式回路図**（`assets/SCH_UWB_MODULE_SCH_main_V0.2_...pdf`） |
+| P0b | **M5StampS3A 公式回路図**（`assets/Sch_StampS3_v0.3.3.pdf`） |
+| P1 | `components/qm33120w_sdk/deca_device_api.h`（API 定義） |
+| P2〜P4 | `dw3720/dw3720_deca_regs.h` / `_vals.h` / `_device.c`（レジスタ・定数・ドライバ実装） |
+| P5〜P9 | Qorvo QM33120W Product Brief / DW3000 User Manual / Qorvo 公式 TWR リファレンス / APS011・APS014 / IEEE 802.15.4-2020・15.4z |
+
+> **回路図を読むときは、どのコネクタの番号を見ているか必ず確認すること。**
+> 同じ信号でもコネクタごとに番号体系が違う（`docs/WIRING.md` §2・§5.5(2)）。
+
+### 二次資料（参考。根拠にはしない）
+
+| # | 資料 | 扱い |
+|---|---|---|
+| S1 | `third_party/M5Stamp-UWB/src/M5Stamp_UWB.cpp` | **参考実装。動作未検証。全て疑う** |
+| S2 | M5Stack 公式ドキュメント・チュートリアル | 参考 |
+| S3 | 各種ブログ・フォーラム | 参考 |
+
+**`components/qm33120w_sdk/` は Qorvo のドライバそのものなので一次資料、
+`M5Stamp_UWB.cpp` は M5Stack が書いたラッパなので二次資料。この境界を混同しないこと。**
+
+### 実装の原則
+
+1. **実装の根拠は一次資料に置く**
+2. **定数はコピーせず導出する。** 遅延時間はフレームの air time から計算し、
+   マージンの根拠を示す（`docs/TIMING_PRESETS.md`）
+3. **SDK が提供する機能を使っていない箇所は、使わない理由を確認する**
+4. **疑わしい箇所は実機で検証できる形にする。** Kconfig で振れるようにし、
+   成功率と誤差を同時にログする
+
+### 調査の運用ルール
+
+**過去に何度も踏んだ失敗から作られた規則**
+（何をどう間違えたかは [`archive/DESIGN_HISTORY.md` §3](archive/DESIGN_HISTORY.md)）。
+
+1. **フラグ・メタデータより、直接観測できる事実を優先する**
+2. **矛盾する証拠が出たら、辻褄を合わせず前提を疑う**
+3. **`grep` が 0 件を返したら、まずファイルが読めているかを疑う**
+   （**Qorvo 公式サンプルの `.c` は非 UTF-8。`grep -a` か `iconv` が要る**）
+4. **「SDK に API があるのに使っていない」は、それだけでは欠陥の根拠にならない**
+5. **入手した資料は独立な経路で再取得してハッシュ照合する**
+6. **ブラウザ自動化は使わない。** Web 取得は `WebFetch` / `curl` に限定し、
+   サブエージェントにも明示的に禁止する
+
+---
+
+## 6. リスクと未確認事項
 
 > **⚠ 番号の衝突に注意。** 本節の R1〜R10 は**この表の中だけの通し番号**であり、
 > `docs/archive/REIMPL_PLAN.md` の R1〜R12（TWR 層の再実装項目）とは**別物**です。
@@ -362,7 +417,7 @@ CI/Release 整備（`docs/PREBUILT_BINARIES.md`、Release zip への LICENSE 同
 
 ---
 
-## 6. 直近の着手順
+## 7. 直近の着手順
 
 1. ~~R1（Qorvo SDK ライセンス）の確認~~ → **完了・クリア**
 2. ~~M5Stamp-UWB の移植量見積もり~~ → **完了（実質 wrapper 1,946行のみ）**
