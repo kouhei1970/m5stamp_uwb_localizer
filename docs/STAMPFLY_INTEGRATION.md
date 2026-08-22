@@ -768,7 +768,7 @@ IRQ / RSTn / WAKEUP  → 無し
 | **RSTn** | 取れない → `hard_reset_on_begin`（`uwb_qm33120_types.hpp:83`）が使えない。ソフトリセット (`dwt_softreset`) だけで復旧できるか**要検証** |
 | GROVE 拡張性 | **I2C 拡張・UART 拡張の両方を潰す** |
 | 配線 | 2コネクタが基板上の別位置 → 標準ケーブル1本では不可。**カスタムケーブル必須** |
-| 電源 | StampFly の GROVE は電池直結（満充電約 4.35V、プロジェクト設計者による実機確認 2026-08-21）で **QM33120W の絶対最大定格 4.0V を超える**。パッド 2 はチップ直結（`docs/SOLDER_PADS.md` §5.4）のため → **LDO 必須**（または基板の 3.3V レールから取る） |
+| 電源 | StampFly の GROVE は電池直結（満充電約 4.35V、プロジェクト設計者による実機確認 2026-08-21）で **QM33120W の絶対最大定格 4.0V を超える**。パッド 2 はチップ直結（`docs/WIRING.md` §5.4）のため → **LDO 必須**（または基板の 3.3V レールから取る） |
 
 ### HW-2: SPI2_HOST に相乗り + GROVE を CS / IRQ / RST に使う
 
@@ -861,7 +861,7 @@ G13 → CS,  G15 → IRQ,  G1 → RSTn,  G2 → WAKEUP（予備）
 | 項目 | 値 | 出典 |
 |---|---:|---|
 | StampFly 全備重量 | **37 g** | `SF/docs/poshold_journey.md:5` |
-| M5Stamp UWB Module (S017) | **0.5 g** | `docs/SOLDER_PADS.md:25` |
+| M5Stamp UWB Module (S017) | **0.5 g** | `docs/WIRING.md:25` |
 | M5Stamp UWB Module (S017-F、FPC コネクタ実装済) | 0.6 g | 同 |
 | モジュール外形 | 11.5 × 12.0 × 1.6 mm（S017）/ ×2.8 mm（S017-F） | 同 `:24` |
 | 配線 + LDO + 固定具（推定） | **+1.5〜3.5 g** | 未実測 |
@@ -883,7 +883,7 @@ G13 → CS,  G15 → IRQ,  G1 → RSTn,  G2 → WAKEUP（予備）
 **→ UWB 搭載後は、まず ALT_HOLD / POS_HOLD が現状通り成立するかを確認してから
 UWB 統合に進むこと**（§6 の Step 0）。
 
-### アンテナ禁止領域（`docs/SOLDER_PADS.md:189-215`）
+### アンテナ禁止領域（`docs/WIRING.md:189-215`）
 
 - 基板のアンテナ側（**2.0mm 面取りがある角の側**）の端から **3.556 mm、基板全幅**にわたる帯が
   KiCad フットプリントで F.Cu / B.Cu 両面 keepout に指定されている
@@ -898,7 +898,7 @@ UWB 統合に進むこと**（§6 の Step 0）。
 | **バッテリの真上・真横を避ける** | LiPo は大きな導体。StampFly は 37g 機で余地が少ない |
 | **モータ / プロペラの回転面から離す** | 遮蔽と振動 |
 | **アンテナ側を上向き or 外向きに** | アンカーは通常、部屋の上方に置く（`docs/ANCHOR_PLACEMENT.md`） |
-| S017-F は背面に FPC コネクタがあり**背面が平らでない**（厚さ 2.8mm） | ベタ貼り不可（`docs/SOLDER_PADS.md:235-237`） |
+| S017-F は背面に FPC コネクタがあり**背面が平らでない**（厚さ 2.8mm） | ベタ貼り不可（`docs/WIRING.md:235-237`） |
 
 **実験段階は半田パッド（S017 / キャステレーション）を使う方針が確定済み**
 （`PROGRESS.md` ハードウェア構成の節）。
@@ -992,7 +992,7 @@ UWB 統合に進むこと**（§6 の Step 0）。
 
 | 事項 | 状態 |
 |---|---|
-| M5Stamp UWB Module は**基板パターンアンテナ** | `docs/SOLDER_PADS.md:201-206` |
+| M5Stamp UWB Module は**基板パターンアンテナ** | `docs/WIRING.md:201-206` |
 | 指向性パターン | **データシートに記載なし。未調査** |
 | StampFly の飛行姿勢 | 位置制御中は最大 ±? 度傾く（`clamp` 上限は `pid_controller.cpp:1336-1341`）。ドリフト補正時に実測 6.4° の傾きが報告されている（`SF/docs/poshold_journey.md:68`） |
 
@@ -1107,8 +1107,8 @@ UWB という「たまに大きく外れる観測」をゲート付きで追加�
 | UWB 精度（M5Stack 測定） | 0.14 m | `docs/archive/SURVEY_m5stamp_uwb_module.md:109` |
 | UWB 精度（無校正） | **数十cm〜1m超のバイアス** | `docs/archive/CRITICAL_REVIEW.md:130` |
 | モジュール消費 | 58.0 mA @3.3V（タグ） | `docs/archive/SURVEY_m5stamp_uwb_module.md:100` |
-| モジュール重量 | 0.5 g / 機体 37 g | `docs/SOLDER_PADS.md:25`, `SF/docs/poshold_journey.md:5` |
-| アンテナ禁止領域 | 面取り側から 3.556 mm × 全幅 | `docs/SOLDER_PADS.md:194-197` |
+| モジュール重量 | 0.5 g / 機体 37 g | `docs/WIRING.md:25`, `SF/docs/poshold_journey.md:5` |
+| アンテナ禁止領域 | 面取り側から 3.556 mm × 全幅 | `docs/WIRING.md:194-197` |
 | 外部に出せる GPIO | **GROVE 4本のみ**（G13/G15/G1/G2） | §5.2 |
 
 ---

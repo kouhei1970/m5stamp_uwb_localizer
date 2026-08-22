@@ -26,7 +26,7 @@ DS-TWR（Double-Sided TWR、両側二方向測距）は**両側に遅延送信�
 ## 1. 締切がどこから来るか（数値の根拠）
 
 すべての `*Uus` は UUS（UWB microsecond）単位（1 UUS = 512/499.2 µs = 1.02564 µs）。**UUS とは何か、なぜ実 µs と
-違うのか、Qorvo 公式の `*_UUS` 定数がなぜそのまま使えないのかは `docs/UNITS.md` を必ず先に読むこと。**
+違うのか、Qorvo 公式の `*_UUS` 定数がなぜそのまま使えないのかは `docs/GLOSSARY.md` を必ず先に読むこと。**
 以下の導出は**実 µs** で行い、最後に UUS へ直す。
 
 ### 1.1 フレームの長さ
@@ -72,7 +72,7 @@ R − (frame_len − SHR) − SHR  =  R − frame_len  ≈  R − 179 µs
 ### 1.3.1 Qorvo 公式サンプルとの照合
 
 `docs/refs/qorvo_api/DW3XXX_API_rev9p3/API/Src/examples/` を `grep -a` で確認した実値
-（**Qorvo の `*_UUS` 定数は実マイクロ秒**。→ `docs/UNITS.md` §3）:
+（**Qorvo の `*_UUS` 定数は実マイクロ秒**。→ `docs/GLOSSARY.md` §3）:
 
 | 定数 | 値（実 µs） | 出典 |
 |---|---:|---|

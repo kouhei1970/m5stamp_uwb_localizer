@@ -27,12 +27,12 @@
 |---|---|---|
 | 🔰 **UWB を知らない。原理から勉強したい** | **[`docs/UWB_PRIMER.md`](docs/UWB_PRIMER.md)**<br>なぜ電波で cm が測れるのか | [`UWB_ALGORITHMS.md`](docs/UWB_ALGORITHMS.md)（測位の数理） |
 | 🔧 **買った。動かしたい** | **[`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md)**<br>BOM から測位までの完全手順 | [`EXPERIMENT_PLAN.md`](docs/EXPERIMENT_PLAN.md)（進める順序） |
-| ⚡ **とにかく書き込んで試したい** | **[`docs/PREBUILT_BINARIES.md`](docs/PREBUILT_BINARIES.md)**<br>ESP-IDF を入れずに書き込む | [`BRINGUP.md`](docs/BRINGUP.md)（最初の関門） |
+| ⚡ **とにかく書き込んで試したい** | **[`docs/PREBUILT_BINARIES.md`](docs/PREBUILT_BINARIES.md)**<br>ESP-IDF を入れずに書き込む | [`GETTING_STARTED.md`](docs/GETTING_STARTED.md)（最初の関門） |
 | 🛠 **中身を読みたい・改造したい** | **[`docs/PLAN.md`](docs/PLAN.md)**<br>全体設計と方針 | [`REIMPL_PLAN.md`](docs/archive/REIMPL_PLAN.md)（なぜこの実装か。経緯） |
 | 📋 **引き継ぐ・続きをやる** | **[`docs/HANDOFF.md`](docs/HANDOFF.md)**<br>現在地と次の一手 | [`SOURCE_POLICY.md`](docs/SOURCE_POLICY.md)（過去の誤りの記録） |
 
 **略語が分からないときは [`docs/GLOSSARY.md`](docs/GLOSSARY.md)、
-単位（UUS / DTU）で混乱したら [`docs/UNITS.md`](docs/UNITS.md)。**
+単位（UUS / DTU）で混乱したら [`docs/GLOSSARY.md`](docs/GLOSSARY.md)。**
 
 ---
 
@@ -163,7 +163,7 @@ I (xxx) uwb_probe: === L1: PASS / L2: PASS ===
   PINMAP 画像が配信サーバから取得できず、設計データからは左右を確定できていません。
   → [`docs/GETTING_STARTED.md` §3.1](docs/GETTING_STARTED.md#orientation) の
   **テスターによる導通試験を必ず実施してください**（間違えると電源逆接で壊れます）。
-- 未確認事項の一覧は [`docs/SOLDER_PADS.md`](docs/SOLDER_PADS.md) §5 と
+- 未確認事項の一覧は [`docs/WIRING.md`](docs/WIRING.md) §5 と
   [`docs/GETTING_STARTED.md` §11](docs/GETTING_STARTED.md#limitations) にあります。
 
 つまりこれは「動作実績のあるライブラリ」ではなく、**一次資料から積み上げた実装と、
@@ -214,9 +214,9 @@ m5stamp_uwb_localizer/
 │   ├── UWB_PRIMER.md        ★ UWB 入門（なぜ電波で cm が測れるのか）
 │   ├── UWB_ALGORITHMS.md    測位アルゴリズムの導出（上流からの移植・改訂版）
 │   ├── GLOSSARY.md          用語集（略語の正式名称と意味）
-│   ├── UNITS.md             UUS / DTU / 実µs の単位リファレンス
-│   ├── SOLDER_PADS.md       半田パッドの寸法・配線・アンテナ禁止領域
-│   ├── BRINGUP.md           Phase 1（SPI 疎通）の受入確認手順
+│   ├── GLOSSARY.md             UUS / DTU / 実µs の単位リファレンス
+│   ├── WIRING.md       半田パッドの寸法・配線・アンテナ禁止領域
+│   ├── GETTING_STARTED.md           Phase 1（SPI 疎通）の受入確認手順
 │   ├── ANCHOR_PLACEMENT.md  アンカー配置ルール（実測にもとづく）
 │   ├── IRQ_POLICY.md        IRQ を使うかどうかの方針
 │   ├── TIMING_PRESETS.md    TWR 遅延プリセットと版不一致検出
@@ -227,7 +227,7 @@ m5stamp_uwb_localizer/
 │   ├── PLAN.md              全体設計・フェーズ計画
 │   ├── REVIEW_2026-08-21.md 実機投入前の最終レビュー（2026-08-21）
 │   ├── PERF_ANALYSIS.md     測位ソルバの性能分析
-│   ├── PLATFORM_TUNING.md   ESP32-S3 固有の最適化調査
+│   ├── PERF_ANALYSIS.md   ESP32-S3 固有の最適化調査
 │   ├── MATH_AUDIT_2026-08-21.md  行列計算の残存箇所の監査とスカラー化の設計根拠
 │   └── archive/             経緯文書（設計当時の調査・検討。現役の仕様ではない）
 │       ├── PROGRESS.md          開発進捗ログ（何がどこまで検証済みか）

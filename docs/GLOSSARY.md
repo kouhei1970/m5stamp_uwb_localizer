@@ -11,7 +11,7 @@
   - §1 まずこの3つ / §2 測距（レンジング） / §3 時間の単位 / §4 無線フレームと PHY
   - §5 測位（ローカライゼーション） / §6 ハードウェアと ESP-IDF / §7 製品名・型番
   - §8 資料の略号 / §9 ⚠ 紛らわしい語
-- **単位**（「単位リファレンス」節、旧 `docs/UNITS.md`）: UUS / DTU / 実マイクロ秒の
+- **単位**（「単位リファレンス」節、旧 `docs/GLOSSARY.md`）: UUS / DTU / 実マイクロ秒の
   換算式・API ごとの単位・早見表
 
 ## 本リポジトリの表記ルール
@@ -67,7 +67,7 @@
 
 ## 3. 時間の単位
 
-**詳細は `docs/UNITS.md`（遅延値を触る前に必読）。**
+**詳細は `docs/GLOSSARY.md`（遅延値を触る前に必読）。**
 
 | 用語 | 正式名称 | 意味 |
 |---|---|---|
@@ -146,7 +146,7 @@
 |---|---|
 | **M5Stamp UWB Module** | M5Stack の UWB モジュール（**通称 M5Stamp UWB**）。中身は Qorvo QM33120W。**本プロジェクトの対象**。FPC コネクタ付きの品種（**M5Stamp UWB Module with FPC**）もある |
 | **QM33120W** | Qorvo の UWB トランシーバ IC。**DW3720 系**。Device ID = `0xDECA0314` |
-| **DW3000 / DW3720 / DW1000** | Decawave（現 Qorvo）の UWB IC 系列。DW1000 が旧世代。**単位系の定数が世代で違うので混同注意**（`docs/UNITS.md`） |
+| **DW3000 / DW3720 / DW1000** | Decawave（現 Qorvo）の UWB IC 系列。DW1000 が旧世代。**単位系の定数が世代で違うので混同注意**（`docs/GLOSSARY.md`） |
 | **M5StampS3A** | ESP32-S3 の小型ボード。**タグのホスト**。旧 M5StampS3 と互換 |
 | **AtomS3 / AtomS3R** | ESP32-S3 の小型ボード（LCD 付き）。**アンカーのホスト**。R が現行版で、IMU が G0/G45 に移っている分 G38/G39 が空く |
 | **StampFly** | M5StampS3A を積んだマルチコプター機体。**本リポジトリは非依存だが、タグの配線だけ互換を保つ**（`docs/PLAN.md` §1） |
@@ -185,7 +185,7 @@
 
 ### 「UUS」は実マイクロ秒ではない
 1 UUS = 1.02564 µs。**Qorvo 公式サンプルの `*_UUS` という名前の定数は、名前に反して実マイクロ秒**。
-→ `docs/UNITS.md` §3
+→ `docs/GLOSSARY.md` §3
 
 ### 「Lv1」が飛んでいる
 `SolverLevel` は Lv0 / Lv2 / Lv3 の3つ。Lv1 は上流 uwb_localizer 側に存在する段階で、
@@ -196,7 +196,7 @@
 ## 関連文書
 - `docs/UWB_PRIMER.md` — UWB 入門（原理。用語の背景が分かる）
 - `docs/UWB_ALGORITHMS.md` — 測位アルゴリズムの導出
-- `docs/UNITS.md` — UUS / DTU / 実 µs の単位リファレンス
+- `docs/GLOSSARY.md` — UUS / DTU / 実 µs の単位リファレンス
 - `docs/TIMING_PRESETS.md` — 遅延プリセットとその導出
 - `docs/SOURCE_POLICY.md` — 資料の格付けと、過去の誤りの記録
 - `docs/GETTING_STARTED.md` — BOM から測位までの手順
@@ -205,7 +205,7 @@
 
 ## 単位リファレンス（旧 UNITS.md）
 
-この節は 2026-08-22 に `docs/UNITS.md` を統合したもの。
+この節は 2026-08-22 に `docs/GLOSSARY.md` を統合したもの。
 
 **TWR の遅延値を読み書きする前に必ずここを読むこと。**
 この単位を取り違えると測距が成立しない。しかも症状は「距離が出ない」だけで、

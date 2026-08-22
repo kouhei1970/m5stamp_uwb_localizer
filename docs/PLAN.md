@@ -67,7 +67,7 @@ StampFly への統合はその成果物を利用する下流作業。
 | D2 | タグ側ファームウェア | M5StampS3A / AtomS3 + M5Stamp UWB Module で測距→測位まで完結 | **実装済み**（`firmware/tag`、CI ビルド済み、実機未検証） |
 | D3 | アンカー側ファームウェア | 同上ハードでレスポンダ動作。アドレス/座標設定可 | **実装済み**（`firmware/anchor`、同上） |
 | D4 | ホスト側ツール | 測位結果の可視化・ログ・アンテナ遅延キャリブレーション | **一部**（`tools/bench_loc` のみ。JSON Lines は上流 Python 可視化と互換。校正ツールは未） |
-| D5 | ドキュメント | 配線図、ボード別ピン定義、立ち上げ手順、キャリブレーション手順 | **実装済み**（`docs/` 22本。`SOLDER_PADS.md` / `GETTING_STARTED.md` / `BRINGUP.md` / `EXPERIMENT_PLAN.md`） |
+| D5 | ドキュメント | 配線図、ボード別ピン定義、立ち上げ手順、キャリブレーション手順 | **実装済み**（`docs/` 22本。`WIRING.md` / `GETTING_STARTED.md` / `GETTING_STARTED.md` / `EXPERIMENT_PLAN.md`） |
 | D6 | StampFly 統合 | `sf_hal_uwb_qm33120` として stampfly_ecosystem へ | **未着手**（設計のみ `STAMPFLY_INTEGRATION.md`） |
 
 ### 運用構成（2026-08-19 確定）
@@ -160,7 +160,7 @@ app 層 `uwb_localizer` → 実名 `uwb_ranging`。新設: `uwb_cfgstore`（NVS 
   `CONFIG_UWB_LOC_USE_FLOAT`）。既定化は実機 `soltest` 待ち
 - ホット関数の IRAM 配置
 - esp-dsp の適用（ただし最適化後のホットパスは行列積ではないため期待値は低い）
-- 詳細は `docs/PLATFORM_TUNING.md`
+- 詳細は `docs/PERF_ANALYSIS.md`
 
 ### 設計原則
 - **言語方針（2026-08-19 改訂）**: 当初「コアは C99」としたが、調査5で
@@ -187,7 +187,7 @@ app 層 `uwb_localizer` → 実名 `uwb_ranging`。新設: `uwb_cfgstore`（NVS 
 ### ディレクトリ構成（実績、2026-08-21）
 ```
 m5stamp_uwb_localizer/
-├── docs/                 現役22本: SOLDER_PADS.md / GETTING_STARTED.md / BRINGUP.md /
+├── docs/                 現役22本: WIRING.md / GETTING_STARTED.md / GETTING_STARTED.md /
 │                         EXPERIMENT_PLAN.md / PLAN.md / TIMING_PRESETS.md /
 │                         STAMPFLY_INTEGRATION.md / SURVEY_SPEC.md / GLOSSARY.md ...
 │   └── archive/          PROGRESS.md、SURVEY_*.md ほか旧文書
@@ -220,7 +220,7 @@ m5stamp_uwb_localizer/
 
 ## 3. 配線設計
 
-**【2026-08-21 更新】** 接続は FPC ではなく半田パッドで確定（`docs/SOLDER_PADS.md`）。
+**【2026-08-21 更新】** 接続は FPC ではなく半田パッドで確定（`docs/WIRING.md`）。
 以下の 12P 信号一覧は有効。
 
 ### モジュール側（12P FPC、固定）

@@ -2,7 +2,7 @@
  * @file bench.h
  * @brief 基本演算・メモリアクセスパターンのマイクロベンチマーク(サイクル計測)。
  *
- * docs/PERF_ANALYSIS.md の追記2・追記3、docs/PLATFORM_TUNING.md の指摘を受けて、
+ * docs/PERF_ANALYSIS.md の追記2・追記3、docs/PERF_ANALYSIS.md の指摘を受けて、
  * 実機到着後すぐに「float と double、加減乗除・積和(FMA)・sqrt それぞれの
  * 実コストが何サイクルか」「9x9行列(EKFの共分散P相当)への連続アクセスと
  * ストライドアクセスの差」を取れるようにしたもの。合成データのソルバ計測

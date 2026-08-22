@@ -118,7 +118,7 @@ esp-idf-monitor -p /dev/cu.usbmodemXXXX
 ```
 `screen /dev/cu.usbmodemXXXX 115200` でも読めます（抜けるのは `Ctrl-A` `K`）。
 
-期待される出力は [`BRINGUP.md`](BRINGUP.md) と [`GETTING_STARTED.md`](GETTING_STARTED.md) を参照。
+期待される出力は [`GETTING_STARTED.md`](GETTING_STARTED.md) と [`GETTING_STARTED.md`](GETTING_STARTED.md) を参照。
 
 ---
 
@@ -182,5 +182,5 @@ zip の中身一覧:
 ## 関連文書
 - [`EXPERIMENT_PLAN.md`](EXPERIMENT_PLAN.md) — どの順で試すか
 - [`GETTING_STARTED.md`](GETTING_STARTED.md) — 配線から測位までの完全手順
-- [`BRINGUP.md`](BRINGUP.md) — 実験1（SPI 疎通）の受入基準
+- [`GETTING_STARTED.md`](GETTING_STARTED.md) — 実験1（SPI 疎通）の受入基準
 - [`TIMING_PRESETS.md`](TIMING_PRESETS.md) — `-fast` 版で何が変わるか

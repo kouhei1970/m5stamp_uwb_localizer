@@ -23,7 +23,7 @@
  * SPI (SCK/MOSI/MISO/CS) はどちらの構成でも共通してこの底面 6 ピンヘッダの
  * うち G5/G6/G7/G8 を使う。
  * 出典: https://docs.m5stack.com/en/core/AtomS3
- * ※ この内訳は実物で要確認（docs/SOLDER_PADS.md の未確認事項リスト参照）
+ * ※ この内訳は実物で要確認（docs/WIRING.md の未確認事項リスト参照）
  *
  * WAKEUP と GP7 はどちらの構成でも UWB_PORT_PIN_UNUSED（未配線）とする。
  * 機能面での支障は無い: 本モジュールの最小配線要件は

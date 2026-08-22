@@ -55,7 +55,7 @@ UWB（Ultra-Wideband、超広帯域無線）測位を動かすまでの完全手
 > 基板・寸法・電気仕様・半田パッドは同一です。本書は**半田パッドを使う**ので
 > どちらでも構いません。ただし `S017-F` は背面に FPC コネクタが出っ張っていて
 > 厚みが 1.6mm → 2.8mm になるため、**背面をベタ貼りできません**。
-> （出典: `docs/SOLDER_PADS.md` §0, §1.6）
+> （出典: `docs/WIRING.md` §0, §1.6）
 
 ### 1.2 工具・材料（半田付け）
 
@@ -178,7 +178,7 @@ idf.py build
 
 **この章がいちばん壊しやすいところです。焦らずに。**
 
-詳細な寸法・出典は [`docs/SOLDER_PADS.md`](SOLDER_PADS.md) にあります。本章はそれを
+詳細な寸法・出典は [`docs/WIRING.md`](WIRING.md) にあります。本章はそれを
 手順の形にしたものです。
 
 ### 接続方法は 2 通りある
@@ -186,7 +186,7 @@ idf.py build
 モジュールには **12P FPC コネクタ**（`S017-F` のみ）と、
 **基板側面の半田付けパッド（キャステレーション 12 個）**（両方にある）が出ています。
 信号名は同一ですが、**パッド番号と FPC ピン番号の並びは異なります**（例: FPC の 1・2 番が 3V3、
-7・11 番が GND。対応表は `SOLDER_PADS.md` §2・§5.5）。FPC ケーブルで繋ぐときは
+7・11 番が GND。対応表は `WIRING.md` §2・§5.5）。FPC ケーブルで繋ぐときは
 FPC 側の番号で配線してください。
 
 | | A. FPC を使う | B. 半田パッドを使う |
@@ -197,7 +197,7 @@ FPC 側の番号で配線してください。
 | 実験段階 | 変換基板が手元にあるなら楽 | **手元の部品だけで始められる。本プロジェクトはこちら** |
 
 **B を選ぶ場合**（寸法・**向きの判定**・半田付け手順・アンテナ禁止領域）:
-→ [`SOLDER_PADS.md`](SOLDER_PADS.md)。手順としての展開は本章（[3.1](#orientation) 以降）。
+→ [`WIRING.md`](WIRING.md)。手順としての展開は本章（[3.1](#orientation) 以降）。
 
 > **⚠️ 配線前に必ず向きを確定すること。**
 > 半田パッドの pin 1 がどちら側かは**実物で確認が必要**です（公式 PINMAP 画像を
@@ -231,7 +231,7 @@ FPC 側の番号で配線してください。
 > 「FPC ピン番号 = 半田パッド番号。固定」と書いていたが**誤り**だった。
 > 本節も以前はパッド番号だけの表だった。
 > 公式回路図で確認済みのとおり、**信号名は共通だが番号の並びは違う**
-> （上の「接続方法は 2 通りある」および [`SOLDER_PADS.md` §2](SOLDER_PADS.md) と同じ結論）。
+> （上の「接続方法は 2 通りある」および [`WIRING.md` §2](WIRING.md) と同じ結論）。
 
 **半田パッドで配線するなら「パッド」列、FPC ケーブルで配線するなら「FPC」列の番号を使う。**
 **両者を混ぜると電源が信号線に入ってモジュールが壊れる。**
@@ -254,7 +254,7 @@ FPC 側の番号で配線してください。
 **パッドは GND×3 (1/8/12)・VCC_3V3×1 (2)、FPC は GND×2 (7/11)・VCC_3V3×2 (1/2) と本数も違う。**
 出典: 公式回路図 PDF の `PINMAP` / `J1` シンボル、および公式ピンマップ画像
 `assets/S017_Stamp_UWB_pinmap.jpg`（両者は一致）。詳細は
-[`SOLDER_PADS.md` §2・§5.5](SOLDER_PADS.md)。
+[`WIRING.md` §2・§5.5](WIRING.md)。
 
 半田パッドの場合、**SPI（Serial Peripheral Interface）4 本 + GND 2 本がすべて右列（pin 7〜12）に
 集まっている**ので、右列 6 本をリボン状にまとめて引き出すと戻り電流経路が短くなります（推奨）。
@@ -288,7 +288,7 @@ FPC 側の番号で配線してください。
 > なぜ確認が要るか: 公式の PINMAP 画像が入手できておらず（配信サーバに接続不可）、
 > 設計データからは**モジュールのどちらの面が部品面か**を確定できていません。
 > キャステレーションは側面に出ているのでパッドの物理位置は表裏で変わりませんが、
-> **左右の見え方が変わります**。（`docs/SOLDER_PADS.md` §1.4, §1.7）
+> **左右の見え方が変わります**。（`docs/WIRING.md` §1.4, §1.7）
 >
 > **外部報告との整合**: 公式 Arduino ライブラリ + 別 MCU（Seeed XIAO ESP32-C6）で
 > 動かした外部報告（GOROman 氏、
@@ -318,7 +318,7 @@ M5StampS3A は GPIO（General Purpose Input/Output、汎用入出力）に余裕
 
 > **`5V` ピンには絶対に繋がないこと。** パッド 2（3V3）は QM33120W の電源レールに
 > 直結しており、公式仕様 3.3V・絶対最大定格 4.0V（3.6V 超は仕様外）です。
-> 5V を入れると壊れます。詳細は [`SOLDER_PADS.md` §5.4](SOLDER_PADS.md)。
+> 5V を入れると壊れます。詳細は [`WIRING.md` §5.4](WIRING.md)。
 
 ### 3.3 アンカー用の配線（M5 AtomS3 × 5台）
 
@@ -326,7 +326,7 @@ AtomS3 は空き GPIO が実質 6 本しかないので、WAKEUP と GP7 は未�
 
 | UWB パッド | 信号 | AtomS3 | 必須 | 備考 |
 |---:|---|---|:-:|---|
-| 2 | VCC_3V3 | **3V3** | ● | **公式 3.3V。5V は不可**（[SOLDER_PADS.md §5.4](SOLDER_PADS.md)） |
+| 2 | VCC_3V3 | **3V3** | ● | **公式 3.3V。5V は不可**（[WIRING.md §5.4](WIRING.md)） |
 | 11 | DW_CLK | **G7** | ● | 底面 6 ピンヘッダ |
 | 9 | DW_CDI (MOSI) | **G6** | ● | 底面 6 ピンヘッダ |
 | 7 | DW_CDO (MISO) | **G5** | ● | 底面 6 ピンヘッダ |
@@ -492,7 +492,7 @@ I (xxx) uwb_probe: L1 (periodic): raw DEV_ID = 0xDECA0314
 | `0x00000000` が返る | MISO (pin 7) 未接続 / CS (pin 10) が効いていない / 電源が来ていない | 3V3 パッドの電圧を実測。pin 7・10 の導通確認 |
 | `0xFFFFFFFF` が返る | MISO が浮いている / モジュール未給電 | 同上。**予備はんだが切り欠きに乗らず被覆越しに触っているだけ**のケースが多い |
 | 値が毎回バラつく | 配線長・GND の戻り経路 | GND を pin 8 と pin 12 の 2 本にする。**`spi_fast_hz` は `firmware/probe` には効かない**（上の 3.6「配線長と信号品質」末尾の注意参照。`begin()` を呼ばないため常に `spi_slow_hz`=2MHz で動く）ので、SPI クロックを疑うなら `spi_slow_hz` を落とすか `firmware/twr` の `active` ログで切り分ける |
-| **触ると値が変わる** | パッド根元の剥がれ | 固定剤で補強してやり直す。詳しくは [`SOLDER_PADS.md` §4.6](SOLDER_PADS.md) |
+| **触ると値が変わる** | パッド根元の剥がれ | 固定剤で補強してやり直す。詳しくは [`WIRING.md` §4.6](WIRING.md) |
 | **隣の信号が連動する** | 半田ブリッジ | 拡大鏡で **9-10-11-12** を重点確認 |
 | L1 は OK だが L2 が FAIL | `dwt_probe()` の wakeup シーケンス／SPI の再現性 | RSTn へのプルアップは付けない（DS で `Must not be pulled high` と禁止されている。[3.7](#extra-parts) からプルアップの推奨は削除済み）。配線長・GND 戻り経路を見直す |
 | **DEV_ID は読めるのに `begin()` が `CONFIG_FAILED`**（`firmware/twr`/`tag`/`anchor` で発生。書き込み直後の再起動で起き、USB 抜き差しで直る） | RST 未配線のとき、UWB チップが前回の動作状態（受信中など）を引きずったまま MCU だけ再起動した | 本リポジトリは `begin()` の中でソフトリセットする実装なので起きないはず。起きたら `Config::soft_reset_on_begin` が `true` か、`pin_rst` を配線している場合はリセットパルスが出ているかを確認する。最終手段は電源断（外部報告と同じ症状・同じ対策） |
@@ -1190,7 +1190,7 @@ DW3720 の OTP アドレス `0x0B` は "Antenna Delay – RFLoop" とされて�
 
 ### 11.2 ハードウェア側の未確認事項
 
-`docs/SOLDER_PADS.md` §5 に完全なリストがあります。特に重要なもの:
+`docs/WIRING.md` §5 に完全なリストがあります。特に重要なもの:
 
 | 項目 | 状況 |
 |---|---|
@@ -1246,9 +1246,9 @@ DW3720 の OTP アドレス `0x0B` は "Antenna Delay – RFLoop" とされて�
 
 | ファイル | 内容 |
 |---|---|
-| [`SOLDER_PADS.md`](SOLDER_PADS.md) | 半田パッドの寸法・配線・アンテナ禁止領域。**配線前に必読** |
+| [`WIRING.md`](WIRING.md) | 半田パッドの寸法・配線・アンテナ禁止領域。**配線前に必読** |
 | [`ANCHOR_PLACEMENT.md`](ANCHOR_PLACEMENT.md) | アンカー配置ルールの実測根拠 |
-| [`BRINGUP.md`](BRINGUP.md) | Phase 1（SPI 疎通）の受入確認手順。本書 [4](#probe) の元資料 |
+| [`GETTING_STARTED.md`](GETTING_STARTED.md) | Phase 1（SPI 疎通）の受入確認手順。本書 [4](#probe) の元資料 |
 | [`archive/SURVEY_m5stamp_uwb_module.md`](archive/SURVEY_m5stamp_uwb_module.md) | モジュールのハードウェア仕様調査 |
 | [`archive/REIMPL_PLAN.md`](archive/REIMPL_PLAN.md) | TWR 層の課題一覧（R1〜R12） |
 | [`archive/CRITICAL_REVIEW.md`](archive/CRITICAL_REVIEW.md) | 移植元コードの問題点の詳細分析 |
@@ -1261,7 +1261,7 @@ DW3720 の OTP アドレス `0x0B` は "Antenna Delay – RFLoop" とされて�
 
 このプロジェクトは実機データを持っていません。以下が取れたら大きな前進です。
 
-- [ ] **半田パッドの向き**（pin 1 の位置、シルク印刷の有無）→ `docs/SOLDER_PADS.md` §5
+- [ ] **半田パッドの向き**（pin 1 の位置、シルク印刷の有無）→ `docs/WIRING.md` §5
 - [ ] 動作した `spi_fast_hz` と配線長（`firmware/probe` は `begin()` を呼ばず
       検証できないので、`firmware/twr`/`tag`/`anchor` の `begin()` ログの
       `active` 値で確認すること）

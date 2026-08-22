@@ -91,7 +91,7 @@ DS-TWR（Double-Sided TWR、両側二方向測距）は**両側に遅延送信�
 
 > **⚠ この表の数値は実マイクロ秒である。** `RangeConfig` / `DSRangeConfig` の `*Uus` フィールドは **UUS（UWB microsecond）**
 > （1 UUS = 1.02564 µs）なので、**この表の値をそのまま代入してはいけない**。換算済みの実際の設定値は
-> `docs/TIMING_PRESETS.md` §2 の表を使うこと。単位の詳細は `docs/UNITS.md`。
+> `docs/TIMING_PRESETS.md` §2 の表を使うこと。単位の詳細は `docs/GLOSSARY.md`。
 
 ### 3. 【重要】遅延値はタグとアンカーで一致していなければならない
 `responseTxDelayUus` はアンカーが「いつ送るか」であり、
@@ -173,7 +173,7 @@ DS-TWR（Double-Sided TWR、両側二方向測距）は**両側に遅延送信�
 ## 【重要】モジュール上の IRQ 外付けプルアップについて（2026-08-21、公式回路図で判明）
 
 公式回路図（`assets/SCH_UWB_MODULE_SCH_main_V0.2_...pdf`。詳細は
-`docs/SOLDER_PADS.md` §5.5(4)）を確認したところ、**M5Stamp UWB Module 上に
+`docs/WIRING.md` §5.5(4)）を確認したところ、**M5Stamp UWB Module 上に
 DW_IRQ を VCC_3V3 へプルアップする抵抗 R2（10kΩ）が実装されている**ことが分かった。
 
 - **動作中は問題にならない**: QM33120W の IRQ は既定でアクティブ HIGH の

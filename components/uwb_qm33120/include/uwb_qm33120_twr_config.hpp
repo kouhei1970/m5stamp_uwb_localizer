@@ -31,7 +31,7 @@ namespace uwb {
  * default values.
  *
  * --- 単位について（docs/archive/REIMPL_PLAN.md R1） ---
- * 詳細は docs/UNITS.md。
+ * 詳細は docs/GLOSSARY.md。
  * `*Uus` フィールドの単位は UUS (UWB microsecond)。
  * 1 UUS = 512/499.2 us = 1.02564... us
  * (`deca_device_api.h:2681` dwt_setrxaftertxdelay() 「The delay is in UWB
@@ -97,7 +97,7 @@ struct RangeConfig {
  * default values.
  *
  * --- 単位について（docs/archive/REIMPL_PLAN.md R1。RangeConfig と同じ規則） ---
- * 詳細は docs/UNITS.md。
+ * 詳細は docs/GLOSSARY.md。
  * `*Uus` フィールドの単位は UUS。1 UUS = 512/499.2 us = 1.02564... us。
  * `responseTxDelayUus` / `finalTxDelayUus` の2つだけが
  * `uwb::detail::kUusToDwtTime`(=65536) 倍されて DTU に変換され

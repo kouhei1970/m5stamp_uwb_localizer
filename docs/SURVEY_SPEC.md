@@ -82,7 +82,7 @@ r_ij = d_ij + δ_i + δ_j     (i<j)
 実装は `components/uwb_survey/`（純計算、ESP-IDF 非依存）。線形代数はすべて
 `components/uwb_math/`（スカラー展開した 3×3 と 3×3 ブロックのコレスキー）で済ませ、
 **一般の固有分解・一般の密コレスキーは持たない**（ESP32-S3 は単精度 FPU のみで、
-除算と sqrt が高い。`docs/MATH_AUDIT_2026-08-21.md`）。
+除算と sqrt が高い。`docs/archive/MATH_AUDIT_2026-08-21.md`）。
 
 ### [2] 初期配置の詳細（逐次三辺測量）
 

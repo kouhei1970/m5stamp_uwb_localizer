@@ -76,7 +76,7 @@
    `uwb_survey_input.chirality`、`uwb_survey_result.outlier_ambiguous` / `chirality_margin` を追加。
 3. **`uwb_math` へ LDLᵀ・`solve_sphere`・`null_vector` 等を統合**
    `components/uwb_math/{include,src}` / `components/uwb_loc/src/{uwb_closed_form.c,uwb_internal.h,uwb_nls.c}` /
-   `docs/MATH_AUDIT_2026-08-21.md` / `tests/host/math/test_math.c`。
+   `docs/archive/MATH_AUDIT_2026-08-21.md` / `tests/host/math/test_math.c`。
    `uwb_loc` 側・`uwb_survey` 側とも新 API への差し替えが完了している。
 
 ### ホストテスト（`make -C tests all` = test / strict / float を再実行して確認。float ビルドの回帰は 591,184 件）
@@ -137,7 +137,7 @@ docs/archive/     経緯文書（PROGRESS / REIMPL_PLAN / CRITICAL_REVIEW / SURV
 **ハード依存は `uwb_port` と `uwb_ranging` のスケジューラ部分の2箇所だけ**に隔離。
 測位パイプラインと測量計算はホストで検証できる。**線形代数はすべて `uwb_math` に集約**
 されており、一般次元の LU 分解・Jacobi 法などは存在しない（設計根拠:
-`docs/MATH_AUDIT_2026-08-21.md`）。
+`docs/archive/MATH_AUDIT_2026-08-21.md`）。
 
 ---
 
@@ -148,13 +148,13 @@ docs/archive/     経緯文書（PROGRESS / REIMPL_PLAN / CRITICAL_REVIEW / SURV
 | 対象 | **ESP32-S3 + M5Stamp UWB Module 専用**。プラットフォーム最適化してよい。ただし StampFly には非依存 | `docs/PLAN.md` |
 | **ハード方針** | **StampFly 非依存。ただしタグの配線だけは StampFly 互換を維持する**（GROVE 2系統4本で成立 ＝ IRQ/RST 不要）。想定利用者は本リポジトリを単体で試す人 | `docs/PLAN.md` §1 |
 | 役割 | **タグ = M5StampS3A ×1 / アンカー = AtomS3(R) ×5** | `docs/archive/PROGRESS.md` |
-| 接続 | **FPC ではなく半田パッド**（1.27mm キャステレーション）。J1（FPC 用番号）と PINMAP（パッド用番号）は**別の番号体系**で両方正しい | `docs/SOLDER_PADS.md` §5.5 |
-| 電源 | パッド2（VCC_3V3）は QM33120W の VDD1/VDD2 に直結。動作上限 3.6V・絶対最大 4.0V。5V や StampFly GROVE（満充電 ~4.35V）は不可 | `docs/SOLDER_PADS.md` §5.4 |
+| 接続 | **FPC ではなく半田パッド**（1.27mm キャステレーション）。J1（FPC 用番号）と PINMAP（パッド用番号）は**別の番号体系**で両方正しい | `docs/WIRING.md` §5.5 |
+| 電源 | パッド2（VCC_3V3）は QM33120W の VDD1/VDD2 に直結。動作上限 3.6V・絶対最大 4.0V。5V や StampFly GROVE（満充電 ~4.35V）は不可 | `docs/WIRING.md` §5.4 |
 | **IRQ** | **アンカーは積極使用。タグは不使用。StampFly の別配線可能性は残す** | **`docs/IRQ_POLICY.md`** |
 | 資料 | **一次資料 = Qorvo SDK/UM/APS。M5Stack ラッパは二次資料で信頼しない** | **`docs/SOURCE_POLICY.md`** |
 | 測量 | 高さのみ実測(4点以上) + キラリティ1ビット入力（`uwb_survey_input.chirality`）。タグも6台目として参加。外れ値リンクは leave-one-out で棄却。計算は実機上（呼び出し元はまだ無い） | `docs/SURVEY_SPEC.md` |
 | StampFly統合 | **案B-2 疎結合**: Lv2 で位置を出し `EskfCore::vectorUpdate3()` で POS_X/Y 観測 | `docs/STAMPFLY_INTEGRATION.md` |
-| **数値計算方針** | **一般次元の行列計算（LU/Jacobi/一般コレスキー）は置かない。** 対称3x3/2x2の閉形式と nb≤8 のブロックコレスキーに集約し `uwb_math` に一本化する。ESP32-S3 特化（スカラー展開・単精度FPU前提の最適化）は OK | `docs/MATH_AUDIT_2026-08-21.md` |
+| **数値計算方針** | **一般次元の行列計算（LU/Jacobi/一般コレスキー）は置かない。** 対称3x3/2x2の閉形式と nb≤8 のブロックコレスキーに集約し `uwb_math` に一本化する。ESP32-S3 特化（スカラー展開・単精度FPU前提の最適化）は OK | `docs/archive/MATH_AUDIT_2026-08-21.md` |
 | **上流の扱い** | `uwb_localizer` は 2026-08-21 に凍結・独立（`42daea9`）。以後 `components/uwb_loc/` は本リポジトリで独立開発する。**上流は見ない**（孵化器は役目を終えた） | — |
 | **float の検証** | clang に加え **gcc-16 と `-ffp-contract=off` でも**通すこと（FMA 縮約に助けられて clang だけ通っていた事故があった） | `tests/Makefile` |
 | **ブラウザ自動化** | 使わない（§4 参照） | — |
@@ -211,16 +211,16 @@ docs/UWB_ALGORITHMS.md        測位アルゴリズムの導出（上流から�
 docs/EXPERIMENT_PLAN.md       実機到着後の実験計画とフラグ有効化の順序。実機でしか潰せない前提12件
 docs/SOURCE_POLICY.md         資料の格付けと、過去の誤りの記録
 docs/IRQ_POLICY.md            IRQ 方針（確定版）
-docs/UNITS.md                 UUS/DTU/実µs の単位リファレンス（遅延値を触る前に必読）
+docs/GLOSSARY.md                 UUS/DTU/実µs の単位リファレンス（遅延値を触る前に必読）
 docs/TIMING_PRESETS.md        遅延プリセットとバージョン不一致検出（設計）
 docs/SURVEY_SPEC.md           自動測量の仕様（外れ値 leave-one-out・キラリティ入力を追記）
 docs/STAMPFLY_INTEGRATION.md  StampFly 位置制御への統合（1127行）
 docs/PERF_ANALYSIS.md         測位計算の性能分析と上流最適化の結果
-docs/PLATFORM_TUNING.md       ESP32-S3 の浮動小数点・コンパイル設定
-docs/MATH_AUDIT_2026-08-21.md 行列計算の残存箇所の監査とスカラー化の設計根拠。uwb_math の仕様の元
+docs/PERF_ANALYSIS.md       ESP32-S3 の浮動小数点・コンパイル設定
+docs/archive/MATH_AUDIT_2026-08-21.md 行列計算の残存箇所の監査とスカラー化の設計根拠。uwb_math の仕様の元
 docs/ANCHOR_PLACEMENT.md      アンカー配置ルール
-docs/SOLDER_PADS.md           パッド仕様と配線（公式回路図でのネットリスト確認込み）
-docs/BRINGUP.md               Phase 1 受入確認
+docs/WIRING.md           パッド仕様と配線（公式回路図でのネットリスト確認込み）
+docs/GETTING_STARTED.md               Phase 1 受入確認
 docs/PLAN.md                  全体設計・フェーズ計画
 docs/GETTING_STARTED.md       BOM から測位まで11章
 docs/PREBUILT_BINARIES.md     ビルド済みバイナリの入手と書き込み。ライセンス条件込み
@@ -263,7 +263,7 @@ docs/archive/                 経緯文書（現役8本 + archive自身のREADME
 1. **Qorvo 公式サンプルの `.c` は latin-1。`grep -a` を使うこと**
 2. **`UUS_TO_DWT_TIME` は DW1000=65536 / DW3000公式=63898。**
    Qorvo の `*_UUS` 定数は実は実マイクロ秒。そのまま流用すると2.5%ずれる
-   → **`docs/UNITS.md`**
+   → **`docs/GLOSSARY.md`**
 3. **ESP-IDF ビルドとホスト `make strict` は警告設定が違う。**
    `uwb_survey.c` が `-Werror=maybe-uninitialized` で落ちた実例あり。
    **新規コンポーネントは必ず `idf.py build` も通すこと**

@@ -461,7 +461,7 @@ esp_err_t uwb_port_irq_enable(void)
      * （後者は各待ちループの通常のステータス判定が不一致フレームとして
      * 処理し続けるだけで、実害はvTaskDelay(1)相当に留まる想定）。
      * pull_down_en = GPIO_PULLDOWN_DISABLE (2026-08-21訂正): 公式回路図
-     * (assets/SCH_UWB_MODULE_SCH_main_V0.2_...pdf、docs/SOLDER_PADS.md
+     * (assets/SCH_UWB_MODULE_SCH_main_V0.2_...pdf、docs/WIRING.md
      * §5.5(4)) で、M5Stamp UWB Module上にDW_IRQをVCC_3V3へプルアップする
      * 抵抗R2(10kΩ)が実装済みであることが判明した。ESP32-S3の内部プルダウン
      * (概算45kΩ程度)はこの10kΩに負けるため、有効化してもIRQピンをLow側へ
