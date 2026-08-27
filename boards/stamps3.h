@@ -46,6 +46,16 @@
  *
  * RST/IRQ/WAKEUP/GP7 はオンボード周辺機能を持たない空きヘッダ GPIO。
  */
+/*
+ * 内蔵フルカラー LED (WS2812 系) のデータ線。
+ * On-board RGB LED data line. Used by firmware/probe's heartbeat blink so a
+ * board running without a serial monitor still shows that it is alive.
+ * 出典: docs/STAMPFLY_INTEGRATION.md:728（StampFly 側 vehicle/main/config.hpp:70
+ * が同じ M5StampS3A の内蔵 LED を GPIO 21 として使っている）。
+ * UWB の SPI/RST/IRQ/WAKEUP (G12/G11/G13/G10/G6/G7/G8) とは競合しない。
+ */
+#define BOARD_STAMPS3_STATUS_LED_GPIO 21
+
 #define BOARD_STAMPS3_UWB_PORT_CONFIG                                    \
     {                                                                    \
         .spi_host     = SPI2_HOST,                                      \

@@ -18,6 +18,7 @@
 
 #include "deca_device_api.h"
 #include "deca_interface.h"
+#include "status_led.h"
 #include "uwb_port.h"
 
 #if CONFIG_UWB_PROBE_BOARD_ATOMS3
@@ -32,11 +33,28 @@
 #include "boards/stamps3.h"
 #define BOARD_UWB_PORT_CONFIG BOARD_STAMPS3_UWB_PORT_CONFIG
 #define BOARD_NAME            "M5StampS3A"
+/* Only the M5StampS3A carries a WS2812 on a known GPIO; the AtomS3 has an
+ * LCD instead, so the heartbeat is compiled out there.
+ * 内蔵フルカラー LED を持つのは M5StampS3A のみ（AtomS3 は LCD）。
+ * それ以外のボードではハートビート表示ごとコンパイルから外れる。 */
+#define BOARD_STATUS_LED_GPIO BOARD_STAMPS3_STATUS_LED_GPIO
 #endif
 
 static const char *TAG = "uwb_probe";
 
 #define UWB_DEV_ID_EXPECTED   0xDECA0314UL
+
+/* Heartbeat blink: amber-yellow at 2 Hz. Green is perceptually brighter
+ * than red on a WS2812, so the green component is kept lower than the red
+ * one to land on yellow rather than yellow-green. Raise both to make it
+ * brighter (0-255).
+ * ハートビートの点滅色と周期。WS2812 は緑が赤より明るく見えるので、
+ * 黄緑に転ばないよう緑を赤より小さくしてある。両方を上げれば明るくなる。 */
+#define STATUS_LED_HEARTBEAT_R      48
+#define STATUS_LED_HEARTBEAT_G      32
+#define STATUS_LED_HEARTBEAT_B      0
+#define STATUS_LED_HEARTBEAT_ON_MS  250
+#define STATUS_LED_HEARTBEAT_OFF_MS 250
 #define PROBE_RETRY_COUNT     5
 #define PROBE_RETRY_DELAY_MS  20
 
@@ -133,6 +151,22 @@ static bool run_l2_dwt_probe_check(struct dwt_spi_s *spi, uint32_t *out_dev_id)
 void app_main(void)
 {
     ESP_LOGI(TAG, "Phase 1 UWB probe acceptance test, board=%s", BOARD_NAME);
+
+    /* Start the heartbeat before anything else can fail, and note that the
+     * blink runs in its own FreeRTOS task: it keeps going even when
+     * app_main() returns early on an error below. A blinking LED therefore
+     * means "the board booted and is running", not "the probe passed" - the
+     * DEV_ID verdict is only in the log.
+     * 何かが失敗するより先に点滅を始める。点滅は専用の FreeRTOS タスクで
+     * 走るので、下でエラー復帰して app_main() を抜けても点滅は続く。
+     * つまり点滅は「起動して動作中」の意味であり、「疎通 OK」ではない。
+     * 判定はログにしか出ない。 */
+#ifdef BOARD_STATUS_LED_GPIO
+    if (status_led_init(BOARD_STATUS_LED_GPIO) == ESP_OK) {
+        (void)status_led_start_blink(STATUS_LED_HEARTBEAT_R, STATUS_LED_HEARTBEAT_G, STATUS_LED_HEARTBEAT_B,
+                                     STATUS_LED_HEARTBEAT_ON_MS, STATUS_LED_HEARTBEAT_OFF_MS);
+    }
+#endif
 
     uwb_port_config_t cfg = BOARD_UWB_PORT_CONFIG;
 
