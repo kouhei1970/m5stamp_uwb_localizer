@@ -5,9 +5,18 @@
  *        module via components/uwb_port.
  *
  * ============================================================
- * 暫定値。実配線に合わせて要変更。
- * ここに書かれているピン番号は未確定であり、実機の配線・シルク印刷・
- * テスターでの導通確認等で必ず検証してから使用すること。
+ * 実機での確認状況 (2026-08-27, M5StampS3A + StampS3 BreakOut + FPC, 1台,
+ * firmware/probe)
+ *
+ *   確定  SCK=G12 / MOSI=G11 / MISO=G13 / CS=G10
+ *         この4本を変えずに Device ID 0xDECA0314 を60秒間安定して読めた。
+ *         Verified on real hardware.
+ *
+ *   未確認 RST=G6 / IRQ=G7 / WAKEUP=G8
+ *         probe が PASS してもこの3本は裏付けられない。RST は未配線でも
+ *         POR 直後なら通り、WAKEUP は未配線だと CS パルス経路へ
+ *         フォールバックし、IRQ は probe がポーリングのため読まれない。
+ *         Not yet verified - docs/GETTING_STARTED.md section 4.2.1.
  * ============================================================
  *
  * ■ 標準構成 (2026-08-22 確定)

@@ -96,8 +96,33 @@
 
 ## 1. 現在地
 
-**実機未着。すべてビルド通過とホスト検証まで。実機で Device ID すら読めていない。**
+**Phase 1（SPI 疎通）は 2026-08-27 に実機で通った。** 測距・測位はまだ実機未検証。
 製品自体が新しく、コミュニティの実績も無い（ユーザ談）。
+
+### 実機の状況（2026-08-27。本リポジトリで実機の Device ID が読めた最初の記録）
+
+| 項目 | 結果 |
+|---|---|
+| 構成 | **M5StampS3A + StampS3 BreakOut + FPC→DIP 変換基板 + `S017-F`**。＝ **本ブランチが標準に定めた経路A（FPC）そのものが実機で通った**。パッド直付け（経路B）は使っていない |
+| 台数 | **1 台のみ**（残り 5 台は未着手。Phase 2 の TWR には 2 台要る） |
+| `firmware/probe` | **L1 / L2 とも PASS**。`raw DEV_ID = 0xDECA0314`。60 秒 64 回すべて同値、`0x00000000` / `0xFFFFFFFF` は 0 件 |
+| 機械的ストレス | 線を触る・軽く引っ張っても崩れない |
+| ピン定義 | **`boards/stamps3.h` を一切変えずに通った** |
+| SPI クロック | **2MHz (`spi_slow_hz`) のみ。16MHz は依然として未検証**（`firmware/probe` は `begin()` を呼ばない） |
+
+**裏付けの範囲（広げて解釈しないこと）**
+`docs/GETTING_STARTED.md` [4.2.1](GETTING_STARTED.md#probe-result) に詳細。要約すると
+**取れた**のは FPC 接続そのもの・挿し方向・SPI 4 本（SCK=G12 / MOSI=G11 / MISO=G13 / CS=G10）。
+**取れていない**のは RSTn(G6) / IRQ(G7) / WAKEUP(G8) と 16MHz SPI。
+RSTn は未配線でも POR 直後なら probe が通り、WAKEUP は未配線だと CS パルス経路へ
+フォールバックし、IRQ はポーリングのため読まれないため。
+
+**到達までの経緯（原因未確定。断定しないこと）**
+最初は L1/L2 とも FAIL で `raw DEV_ID` が `0x00000000` と `0xFFFFFFFF` の間をふらついていた
+（= MISO が浮いている直接証拠）。3V3 は実測済みだったため配線側を疑い、**変換基板を
+挿し直した**ところ PASS。半田付けはやり直していない。「差し込みが 1 ピンずれていた
+可能性」が挙がっているが直接観測していないので未確定。機械的ストレスで再現しないため
+接触不良の線は薄い。**1 ピンずれは電源逆接になり得るので、挿し位置の目印を推奨。**
 
 | リポジトリ | 状態 |
 |---|---|
@@ -218,7 +243,7 @@ docs/archive/     経緯文書（PROGRESS / REIMPL_PLAN / CRITICAL_REVIEW / SURV
 | 対象 | **ESP32-S3 + M5Stamp UWB Module 専用**。プラットフォーム最適化してよい。ただし StampFly には非依存 | `docs/PLAN.md` |
 | **ハード方針** | **StampFly 非依存。ただしタグの配線だけは StampFly 互換を維持する**（GROVE 2系統4本で成立 ＝ IRQ/RST 不要）。想定利用者は本リポジトリを単体で試す人 | `docs/PLAN.md` §1 |
 | 役割 | **タグ = M5StampS3A ×1（既定は据置＝StampS3 BreakOut 経由。StampFly 搭載時は機体の M5StampS3A を背面 12P FPC 経由で流用） / アンカー = M5StampS3A + StampS3 BreakOut ×5（既定、`UWB_ANCHOR_BOARD_STAMPS3`）。AtomS3(R) は代替として残る** | `docs/archive/PROGRESS.md`、本ブランチ `feat/stamps3-fpc-migration`（§0・§1） |
-| 接続 | **FPC ではなく半田パッド**（1.27mm キャステレーション）。J1（FPC 用番号）と PINMAP（パッド用番号）は**別の番号体系**で両方正しい | `docs/WIRING.md` §7.3 |
+| 接続 | **標準は FPC**（経路A: `S017-F` + 0.5mm 12P FPC + FPC→DIP 変換基板 + StampS3 BreakOut。モジュール側の半田付け不要）。**2026-08-27 に実機で疎通確認済み**。半田パッド直付け（経路B）は代替として残すが今後は使わない方針。J1（FPC 用番号）と PINMAP（パッド用番号）は**別の番号体系**で両方正しい | `docs/WIRING.md` §7.3 |
 | 電源 | パッド2（VCC_3V3）は QM33120W の VDD1/VDD2 に直結。動作上限 3.6V・絶対最大 4.0V。5V や StampFly GROVE（満充電 ~4.35V）は不可 | `docs/WIRING.md` §5.1 |
 | **IRQ** | **アンカーは積極使用。タグは不使用。StampFly の別配線可能性は残す** | **`docs/IRQ_POLICY.md`** |
 | 資料 | **一次資料 = Qorvo SDK/UM/APS。M5Stack ラッパは二次資料で信頼しない** | **`docs/PLAN.md` §5** |
