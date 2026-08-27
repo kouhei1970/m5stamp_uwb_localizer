@@ -50,8 +50,8 @@ static const char *TAG = "uwb_probe";
  * brighter (0-255).
  * ハートビートの点滅色と周期。WS2812 は緑が赤より明るく見えるので、
  * 黄緑に転ばないよう緑を赤より小さくしてある。両方を上げれば明るくなる。 */
-#define STATUS_LED_HEARTBEAT_R      48
-#define STATUS_LED_HEARTBEAT_G      32
+#define STATUS_LED_HEARTBEAT_R      12
+#define STATUS_LED_HEARTBEAT_G      8
 #define STATUS_LED_HEARTBEAT_B      0
 #define STATUS_LED_HEARTBEAT_ON_MS  250
 #define STATUS_LED_HEARTBEAT_OFF_MS 250
