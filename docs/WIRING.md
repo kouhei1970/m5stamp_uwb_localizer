@@ -144,8 +144,14 @@ device." と明記している。
 
 ### 3.3 配線表（パッド番号 ↔ ホスト）
 
-ホスト側ピン番号は `boards/stamps3.h` / `boards/atoms3.h` の**暫定値**と一致させてある。
-**どちらも実配線前に現物と照合すること**（両ファイルの冒頭コメント参照）。
+ホスト側ピン番号は `boards/stamps3.h` / `boards/atoms3.h` と一致させてある。
+
+**`boards/stamps3.h` の SPI 4 本（SCK=G12 / MOSI=G11 / MISO=G13 / CS=G10）は
+2026-08-27 に実機で確認済み**（M5StampS3A + StampS3 BreakOut + FPC、1 台。値を
+変えずに `firmware/probe` が PASS。→ [`GETTING_STARTED.md` §4.2.1](GETTING_STARTED.md#probe-result)）。
+**同じファイルでも RST=G6 / IRQ=G7 / WAKEUP=G8 は未確認**で、`boards/atoms3.h` は
+全ピン未確認。**確認済みの 4 本以外は実配線前に現物と照合すること**
+（両ファイルの冒頭コメント参照）。
 
 **M5StampS3A（標準構成。BreakOut の有無によらず同じ）**
 
@@ -602,6 +608,9 @@ H に張り付く**。QM33120W データシートには「sleep するには IRQ
 
 ## 8. 未確認事項
 
+（ホスト側ピン割当の確認状況は §3.3 と `boards/*.h` の冒頭コメントにある。
+本節はハードウェアそのものについて残っている疑問点のみ）
+
 - **AtomS3R と無印 AtomS3 の底面ヘッダのピン配置が同じか**
   （AtomS3R が現行版。IMU が MPU6886@G38/G39 から BMI270@G0/G45 へ移り、
    G0/G45 は拡張ピンに出ていない。本リポジトリは IMU を使わないので
@@ -615,5 +624,6 @@ H に張り付く**。QM33120W データシートには「sleep するには IRQ
   （§3 配線）。買ってから測位が出るまでの通し手順はこちら**
 - `docs/GETTING_STARTED.md` … Phase 1（SPI 疎通）の受入確認手順。FPC / 半田パッドの選択も
 - `docs/archive/SURVEY_m5stamp_uwb_module.md` … モジュール全体の仕様調査（FPC ピンアサインの出典）
-- `boards/stamps3.h` / `boards/atoms3.h` … ホスト側ピン割当（暫定）
+- `boards/stamps3.h` / `boards/atoms3.h` … ホスト側ピン割当。
+  冒頭コメントに実機での確認状況（どのピンが確定でどれが未確認か）がある
 - `docs/refs/m5_hardware/` … 本調査で取得した M5_Hardware の原本（gitignore 済み）
