@@ -266,6 +266,53 @@ menu "UWB TWR Configuration"
             afterwards and wins.
             UWB_TWR_DIAG_ROBUST_PHY と併用した場合は、こちらが後から上書きする。
 
+    config UWB_TWR_DIAG_TXPOWER
+        hex "Diagnostic: TX_POWER register override (0xfefefefe = ch9 default)"
+        range 0x00000000 0xffffffff
+        default 0xfefefefe
+        help
+            Overrides PhyConfig::txPower, which is written verbatim to the
+            DW3720 TX_POWER register (4 bytes = 4 frame parts: TX_CP_PWR
+            (STS)/TX_SHR_PWR/TX_PHR_PWR/TX_DATA_PWR, most-significant byte
+            first - deca_device_api.h dwt_txconfig_t/dwt_settxpower comments).
+            Within each byte, bits[7:2] are a 6-bit fine gain and bits[1:0]
+            are a 2-bit coarse gain (dw3720_deca_regs.h TX_POWER_FINE_BIT_*/
+            TX_POWER_COARSE_BIT_*); both count up toward more power (the
+            per-step gain tables in dw3720_device.c are all positive), so a
+            lower byte value means less transmit power. The default,
+            0xfefefefe, is the Qorvo reference-design ch9 maximum (coarse=2,
+            fine=63/63 in every byte - only one coarse step below the
+            absolute ceiling 0xff).
+
+            This is a diagnostic for the "PA overdrive / pulse distortion"
+            hypothesis: SS-TWR failures on this hardware are almost all
+            RXFSL (Reed-Solomon decode failure of the data part) and do not
+            fall off with distance/received power, which is what an
+            overdriven power amplifier distorting the pulses would look
+            like regardless of range. Lowering this value tests that by
+            simply reducing transmit power; if the failure rate drops, the
+            hypothesis gains support.
+
+            BOTH boards of a link must use the same value - a one-sided
+            change makes the link asymmetric, not a fair A/B test.
+            診断用: PhyConfig::txPower を上書きする。DW3720 の TX_POWER
+            レジスタへそのまま書き込まれる4バイト値で、各バイトが送信
+            フレームの4つの部分（上位から順に TX_CP_PWR(STS)/TX_SHR_PWR/
+            TX_PHR_PWR/TX_DATA_PWR）に対応する。各バイト内は上位6bitが
+            微調整ゲイン、下位2bitが粗調整ゲインで、どちらも値が大きい
+            ほど送信電力が高い（dw3720_device.c のゲイン表はすべて正の
+            増分）。既定値 0xfefefefe は Qorvo リファレンス設計の ch9 用
+            最大値（各バイトとも粗=2・微=63/63で、絶対上限0xffより
+            粗調整1段だけ低い）。
+
+            SS-TWR の失敗はほぼ全て RXFSL（データ部のリードソロモン復号
+            失敗）で、受信電力・距離が下がっても悪化しない（実測）。これは
+            パワーアンプの過駆動でパルスが歪んでいる場合の見え方と一致する
+            という仮説の検証用: 送信電力を下げて失敗率が下がれば仮説を
+            支持する材料になる。
+
+            両機を同じ値にすること。片側だけ変えるとA/B比較が成立しない。
+
     choice UWB_TIMING_PROFILE
         prompt "TWR timing preset"
         default UWB_TIMING_PROFILE_BOTH_IRQ

@@ -42,6 +42,8 @@
 #include "freertos/task.h"
 
 #include "deca_device_api.h"
+#include "deca_private.h" // dwt_readfromdevice(): TX_POWER readback / TX_POWER の読み戻し
+#include "dw3720_deca_regs.h" // TX_POWER_ID
 #include "uwb_port.h"
 #include "uwb_status_led.h"
 #include "uwb_qm33120.hpp"
@@ -844,6 +846,24 @@ extern "C" void app_main(void)
     ESP_LOGW(TAG, "DIAG_PHY_850K: rate=850kbps (both boards must match)");
 #endif
 
+#if defined(CONFIG_UWB_TWR_DIAG_TXPOWER) && (CONFIG_UWB_TWR_DIAG_TXPOWER != 0xfefefefe)
+    // Diagnostic: override the TX_POWER register value written verbatim to
+    // the DW3720 (see components/uwb_qm33120/src/uwb_qm33120.cpp
+    // toDwtTxConfig()/dwt_configuretxrf()). Tests the "PA overdrive / pulse
+    // distortion" hypothesis for the RXFSL failures seen on this hardware:
+    // if a lower value raises the success rate, the default (Qorvo ch9 max,
+    // 0xfefefefe) was overdriving the PA. Both boards must match.
+    // 診断: DW3720 の TX_POWER レジスタへそのまま書き込まれる値を上書きする
+    // （components/uwb_qm33120/src/uwb_qm33120.cpp の toDwtTxConfig()/
+    // dwt_configuretxrf() 参照）。本機で見えている RXFSL 失敗が「パワー
+    // アンプの過駆動でパルスが歪んでいる」せいという仮説の検証用: 下げて
+    // 成功率が上がれば既定値（Qorvo ch9 最大、0xfefefefe）が過駆動だった
+    // ことになる。両機を同じ値にすること。
+    phy.txPower = CONFIG_UWB_TWR_DIAG_TXPOWER;
+    ESP_LOGW(TAG, "DIAG_TXPOWER: txPower=0x%08lX (default 0xfefefefe; both boards should match)",
+             (unsigned long)phy.txPower);
+#endif
+
     // タスクD-2: 実際に使うSPI高速クロックを起動ログに出す(切り分け作業で
     // Kconfigの値が本当に反映されたかを確認できるように)。
     ESP_LOGI(TAG, "spi_fast=%lu", (unsigned long)cfg.spi_fast_hz);
@@ -862,10 +882,11 @@ extern "C" void app_main(void)
     // Diagnostic: log the PHY settings that actually took effect in begin(),
     // so which of the DIAG_* options (if any) actually applied is visible
     // from the boot log alone.
-    ESP_LOGI(TAG, "phy: preamble=%u pac=%u rate=%s ch=%u code=%u/%u sfd=%u",
+    ESP_LOGI(TAG, "phy: preamble=%u pac=%u rate=%s ch=%u code=%u/%u sfd=%u txpower=0x%08lX pgdelay=0x%02X",
              static_cast<unsigned>(phy.preambleLength), pacSizeCount(phy.pacSize),
              (phy.dataRate == uwb::DataRate::Rate850K) ? "850kbps" : "6.8Mbps", static_cast<unsigned>(phy.channel),
-             phy.txPreambleCode, phy.rxPreambleCode, static_cast<unsigned>(phy.sfdType));
+             phy.txPreambleCode, phy.rxPreambleCode, static_cast<unsigned>(phy.sfdType),
+             (unsigned long)phy.txPower, phy.pgDelay);
 
     if (uwbDevice.deviceId() != UWB_DEV_ID_EXPECTED) {
         ESP_LOGE(TAG, "unexpected device id, aborting");
@@ -883,6 +904,16 @@ extern "C" void app_main(void)
     // いることがあるため、以降は「実際に適用されたプリセット」を使う。
     g_effectiveTimingProfile = uwbDevice.config().timing_profile;
 
+    {
+        // Read back TX_POWER from the chip so the log proves what was actually applied
+        // (DIAG_TXPOWER A/B showed no rsl change; rule out a lost write).
+        // 実際にチップへ入った TX_POWER を読み戻してログに残す
+        // (DIAG_TXPOWER の A/B で rsl が変わらなかったので、書き込み漏れを排除する)。
+        uint8_t txp[4] = {0, 0, 0, 0};
+        dwt_readfromdevice(TX_POWER_ID, 0, sizeof(txp), txp);
+        const uint32_t txp32 = ((uint32_t)txp[3] << 24) | ((uint32_t)txp[2] << 16) | ((uint32_t)txp[1] << 8) | txp[0];
+        ESP_LOGI(TAG, "tx_power readback=0x%08lX (requested 0x%08lX)", (unsigned long)txp32, (unsigned long)phy.txPower);
+    }
     ESP_LOGI(TAG, "begin() + PHY config OK, starting %s/%s loop", ROLE_NAME, METHOD_NAME);
 
     // --- Log whether IRQ actually ended up active (docs/IRQ_POLICY.md) ---
