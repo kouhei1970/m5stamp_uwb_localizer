@@ -26,6 +26,7 @@
  */
 #pragma once
 
+#include <climits>
 #include <cstdint>
 #include <cstring>
 
@@ -220,6 +221,56 @@ static inline void stopRadioAndClearIoStatus()
 {
     stopRadioAndClearStatus(SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR | SYS_STATUS_ALL_RX_GOOD |
                              DWT_INT_TXFRS_BIT_MASK);
+}
+
+/**
+ * Received-power indication for the frame the radio last worked on.
+ * 直前に受信機が扱ったフレームの受信電力の指標。
+ * rslQ8 / fpQ8 are signed Q8.8 dBm (real dBm = value / 256.0); INT16_MIN means
+ * "not available". accumCount == 0 means the CIA never accumulated anything
+ * (e.g. RXFTO with no preamble), so the power values must not be trusted.
+ * rslQ8 / fpQ8 は符号付き Q8.8 形式の dBm（実 dBm = 値/256.0）。INT16_MIN は
+ * 取得不可。accumCount == 0 は CIA が何も蓄積していない（前置信号すら来て
+ * いない）ことを意味し、そのときの電力値は信用してはならない。
+ */
+struct RxPower {
+    int16_t  rslQ8       = INT16_MIN;
+    int16_t  fpQ8        = INT16_MIN;
+    uint16_t accumCount  = 0;
+    uint32_t ipatovPower = 0;
+};
+
+/**
+ * @brief dwt_readdiagnostics_acc() / dwt_calculate_rssi() /
+ * dwt_calculate_first_path_power() をまとめて呼び、Ipatov（前置信号相関器、
+ * DWT_ACC_IDX_IP_M）チャネルの受信電力指標を読み出す。
+ * dwt_configciadiag(DW_CIA_DIAG_LOG_ALL) を（uwb_qm33120.cpp の init() で）
+ * 一度呼んでいることが前提 - 呼んでいないと診断レジスタは常に0になる
+ * （components/qm33120w_sdk/deca_device_api.h:3517-3518）。
+ * 呼び出し側は、フレームを最後に扱った直後・かつ
+ * stopRadioAndClearRxStatus() 等でステータスをクリアする前に呼ぶこと
+ * （順序を間違えると診断レジスタの内容が消える）。
+ *
+ * Calls dwt_readdiagnostics_acc() / dwt_calculate_rssi() /
+ * dwt_calculate_first_path_power() together to read the Ipatov
+ * (DWT_ACC_IDX_IP_M) channel's received-power indication. Assumes
+ * dwt_configciadiag(DW_CIA_DIAG_LOG_ALL) has already been called once (in
+ * uwb_qm33120.cpp's init()) - otherwise the diagnostic registers always read
+ * 0 (deca_device_api.h:3517-3518). Call this right after the radio last
+ * worked on a frame and before anything clears the status registers (e.g.
+ * stopRadioAndClearRxStatus()) - reversing the order loses the diagnostics.
+ */
+static inline RxPower readRxPower()
+{
+    RxPower result;
+    dwt_cirdiags_t diag = {};
+    if (dwt_readdiagnostics_acc(&diag, DWT_ACC_IDX_IP_M) == DWT_SUCCESS) {
+        result.accumCount  = diag.accumCount;
+        result.ipatovPower = diag.power;
+        dwt_calculate_rssi(&diag, DWT_ACC_IDX_IP_M, &result.rslQ8);
+        dwt_calculate_first_path_power(&diag, DWT_ACC_IDX_IP_M, &result.fpQ8);
+    }
+    return result;
 }
 
 /* Step 2 (TWR) 用に前倒しで用意した定数。cpp:787/1012/1165 で3回重複定義されて

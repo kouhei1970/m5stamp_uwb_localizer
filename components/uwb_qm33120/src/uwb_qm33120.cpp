@@ -620,6 +620,14 @@ bool Qm33120::init(const PhyConfig& phy)
         dwt_setlnapamode(DWT_LNA_ENABLE | DWT_PA_ENABLE);
     }
 
+    // CIA診断レジスタを有効化する。これを呼ばないとdwt_readdiagnostics_acc()等の
+    // 診断読み出しは常に0を返す
+    // （components/qm33120w_sdk/deca_device_api.h:3517-3518の注記）。
+    // Enable CIA diagnostic register logging - without this call,
+    // dwt_readdiagnostics*() always reads back 0 (see
+    // deca_device_api.h:3517-3518).
+    dwt_configciadiag(DW_CIA_DIAG_LOG_ALL);
+
     // --- IRQ（起床信号）の有効化 (docs/IRQ_POLICY.md) ---
     // PHY設定が終わった後に行う。dwt_setcallbacks()/dwt_isr()は意図的に
     // 使わない（復号経路をポーリングと1本に保つため。docs/IRQ_POLICY.md

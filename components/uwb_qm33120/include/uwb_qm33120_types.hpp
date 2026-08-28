@@ -415,6 +415,71 @@ struct RangeResult {
      * 受信フレームの強さの相対指標。
      */
     uint32_t ipatovPower  = 0;
+    /**
+     * Received signal level (whole-channel power) for the Ipatov CIR,
+     * captured via detail::readRxPower() - filled on BOTH the success and
+     * the failure path (unlike ipatovPower above, which the older
+     * dwt_readdiagnostics() call only fills on success). Signed Q8.8 dBm
+     * (real dBm = value / 256.0); INT16_MIN means the CIA diagnostics could
+     * not be read. Check rxAccumCount before trusting this value.
+     * Ipatov CIR（前置信号相関器）のチャネル全体の受信電力（RSL）。
+     * detail::readRxPower() で取得し、成功時・失敗時の両方で埋まる（上の
+     * ipatovPower は旧来の dwt_readdiagnostics() 経路のままで成功時のみ）。
+     * 符号付き Q8.8 形式の dBm（実 dBm = 値/256.0）。INT16_MIN は CIA 診断が
+     * 読めなかったことを示す。信用してよいかは rxAccumCount も見て判断する
+     * こと。
+     */
+    int16_t rslDbmQ8 = INT16_MIN;
+    /**
+     * First-path signal power for the Ipatov CIR - the power of just the
+     * earliest-arriving path, as opposed to rslDbmQ8's whole-channel power.
+     * Same encoding and caveats as rslDbmQ8 (signed Q8.8 dBm, INT16_MIN =
+     * unavailable, check rxAccumCount before trusting).
+     * Ipatov CIR の第一波（最初に到達したパス）だけの受信電力。符号化・
+     * 注意点は rslDbmQ8 と同じ（符号付き Q8.8 dBm、INT16_MIN = 取得不可。
+     * 信用してよいかは rxAccumCount も見て判断すること）。
+     */
+    int16_t fpDbmQ8 = INT16_MIN;
+    /**
+     * Number of symbols the CIA accumulated for the Ipatov CIR when
+     * rslDbmQ8 / fpDbmQ8 were captured. 0 means the CIA never accumulated
+     * anything (e.g. RXFTO with no preamble detected at all), in which case
+     * rslDbmQ8 / fpDbmQ8 must not be trusted even when they are not
+     * INT16_MIN.
+     * rslDbmQ8 / fpDbmQ8 を取得した時点で CIA が Ipatov CIR に蓄積した
+     * シンボル数。0 は CIA が何も蓄積していない（例: プリアンブルすら
+     * 検出されない RXFTO）ことを意味し、その場合 rslDbmQ8 / fpDbmQ8 が
+     * INT16_MIN でなくても信用してはならない。
+     */
+    uint16_t rxAccumCount = 0;
+    /**
+     * How many frames passed the hardware CRC check (RXFCG) during this one
+     * ranging attempt, and how many of those the software then discarded
+     * because frameMatchesExpectation() said they were not the Response we
+     * were waiting for (R2 re-arms the receiver instead of failing).
+     * Diagnostic only: rxRejected > 0 on a failed attempt means the radio
+     * DID deliver a good frame and the loss happened in the software match,
+     * not on the air.
+     * この1回の測距で、ハードウェアの CRC を通った(RXFCG)フレーム数と、
+     * そのうち「待っていた Response ではない」と照合で捨てた数(R2 は失敗に
+     * せず受信を張り直す)。失敗した攻略で rxRejected > 0 なら、電波は届いて
+     * いてソフトの照合で落としたことになる。
+     */
+    uint16_t rxSeen     = 0;
+    uint16_t rxRejected = 0;
+    /**
+     * Which parts of the last discarded frame did not match, as a bit mask:
+     * bit0 header, bit1 payload, bit2 sequence, bit3 PAN ID, bit4 source,
+     * bit5 destination (1 = that part was OK). Plus the raw frame length and
+     * sequence number of that frame. Zero when nothing was discarded.
+     * 最後に捨てたフレームの、どこが合わなかったかのビットマスク:
+     * bit0 ヘッダ / bit1 ペイロード / bit2 シーケンス / bit3 PAN ID /
+     * bit4 送信元 / bit5 宛先（1 = そこは一致）。あわせてそのフレームの
+     * 生の長さとシーケンス番号。何も捨てていなければ 0。
+     */
+    uint8_t rejectMask      = 0;
+    uint16_t rejectFrameLen = 0;
+    uint8_t rejectSequence  = 0;
 };
 
 /**
@@ -482,6 +547,39 @@ struct ResponderResult {
      * かかった時間が出る。
      */
     int32_t txMarginUs = 0;
+    /**
+     * Received signal level (whole-channel power) for the Ipatov CIR,
+     * captured via detail::readRxPower() on both success and failure. Signed
+     * Q8.8 dBm (real dBm = value / 256.0); INT16_MIN means the CIA
+     * diagnostics could not be read. Check rxAccumCount before trusting.
+     * Ipatov CIR（前置信号相関器）のチャネル全体の受信電力（RSL）。
+     * detail::readRxPower() で取得し、成功時・失敗時の両方で埋まる。符号付き
+     * Q8.8 形式の dBm（実 dBm = 値/256.0）。INT16_MIN は CIA 診断が読めな
+     * かったことを示す。信用してよいかは rxAccumCount も見て判断すること。
+     */
+    int16_t rslDbmQ8 = INT16_MIN;
+    /**
+     * First-path signal power for the Ipatov CIR - the power of just the
+     * earliest-arriving path, as opposed to rslDbmQ8's whole-channel power.
+     * Same encoding and caveats as rslDbmQ8 (signed Q8.8 dBm, INT16_MIN =
+     * unavailable, check rxAccumCount before trusting).
+     * Ipatov CIR の第一波（最初に到達したパス）だけの受信電力。符号化・
+     * 注意点は rslDbmQ8 と同じ（符号付き Q8.8 dBm、INT16_MIN = 取得不可。
+     * 信用してよいかは rxAccumCount も見て判断すること）。
+     */
+    int16_t fpDbmQ8 = INT16_MIN;
+    /**
+     * Number of symbols the CIA accumulated for the Ipatov CIR when
+     * rslDbmQ8 / fpDbmQ8 were captured. 0 means the CIA never accumulated
+     * anything (e.g. RXFTO with no preamble detected at all), in which case
+     * rslDbmQ8 / fpDbmQ8 must not be trusted even when they are not
+     * INT16_MIN.
+     * rslDbmQ8 / fpDbmQ8 を取得した時点で CIA が Ipatov CIR に蓄積した
+     * シンボル数。0 は CIA が何も蓄積していない（例: プリアンブルすら
+     * 検出されない RXFTO）ことを意味し、その場合 rslDbmQ8 / fpDbmQ8 が
+     * INT16_MIN でなくても信用してはならない。
+     */
+    uint16_t rxAccumCount = 0;
 };
 
 /**

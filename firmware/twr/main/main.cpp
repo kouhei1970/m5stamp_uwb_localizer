@@ -153,6 +153,27 @@ static const char* rxStatusBits(uint32_t st, char* buf, size_t len)
     return buf;
 }
 
+/**
+ * @brief Format a signed Q8.8 dBm value (dwt_calculate_rssi() /
+ *        dwt_calculate_first_path_power() convention, real dBm =
+ *        value / 256.0) into buf, or "n/a" when q8 is INT16_MIN
+ *        ("not available" - printing INT16_MIN/256 as a plain %.1f would
+ *        show a misleadingly plausible -128.0).
+ *        符号付き Q8.8 dBm 値（dwt_calculate_rssi() /
+ *        dwt_calculate_first_path_power() の形式。実 dBm = 値/256.0）を buf
+ *        に整形する。q8 が INT16_MIN（取得不可）のときは "n/a" にする
+ *        （そのまま %.1f で出すと -128.0 という紛らわしい値になるため）。
+ */
+static const char* fmtDbmQ8(int16_t q8, char* buf, size_t len)
+{
+    if (q8 == INT16_MIN) {
+        snprintf(buf, len, "n/a");
+    } else {
+        snprintf(buf, len, "%.1f", static_cast<float>(q8) / 256.0f);
+    }
+    return buf;
+}
+
 /** @brief Read the on-chip die temperature [degC] / ダイ温度を読む */
 static float dieTempC()
 {
@@ -369,22 +390,33 @@ static void runRole(uwb::Qm33120& uwb)
         const float rate =
             (rangeCount == 0) ? 0.0f : (100.0f * static_cast<float>(rangeOkCount) / static_cast<float>(rangeCount));
         if (result.success) {
+            char rslBuf[8];
+            char fpBuf[8];
             ESP_LOGI(TAG,
                      "SS_RANGE_STAT count=%lu ok=%lu fail=%lu rate=%.1f%% last=OK seq=%u distance_mm=%ld "
                      "distance_m=%.3f mean_mm=%.1f std_mm=%.1f n=%lu elapsed_ms=%lu temp=%.1fC clock_ppm=%.2f "
-                     "ipatov_power=%lu",
+                     "ipatov_power=%lu rsl_dbm=%s fp_dbm=%s accum=%u rx_seen=%u rx_rej=%u",
                      (unsigned long)rangeCount, (unsigned long)rangeOkCount, (unsigned long)rangeFailCount, rate,
                      result.sequence, (long)result.distanceMm, result.distanceM, stats.mean, stats.stddev(),
                      (unsigned long)stats.count, (unsigned long)result.elapsedMs, dieTempC(), result.clockOffsetPpm,
-                     (unsigned long)result.ipatovPower);
+                     (unsigned long)result.ipatovPower, fmtDbmQ8(result.rslDbmQ8, rslBuf, sizeof(rslBuf)),
+                     fmtDbmQ8(result.fpDbmQ8, fpBuf, sizeof(fpBuf)), (unsigned)result.rxAccumCount,
+                     (unsigned)result.rxSeen, (unsigned)result.rxRejected);
         } else {
             char statusBuf[72];
+            char rslBuf[8];
+            char fpBuf[8];
             ESP_LOGW(TAG,
                      "SS_RANGE_STAT count=%lu ok=%lu fail=%lu rate=%.1f%% last=FAIL seq=%u error=%s temp=%.1fC "
-                     "rx_status=0x%08lX [%s]",
+                     "rx_status=0x%08lX [%s] rsl_dbm=%s fp_dbm=%s accum=%u elapsed_ms=%lu rx_seen=%u rx_rej=%u "
+                     "rej_mask=0x%02X rej_len=%u rej_seq=%u",
                      (unsigned long)rangeCount, (unsigned long)rangeOkCount, (unsigned long)rangeFailCount, rate,
                      result.sequence, uwb.lastErrorName(), dieTempC(), (unsigned long)result.rxStatus,
-                     rxStatusBits(result.rxStatus, statusBuf, sizeof(statusBuf)));
+                     rxStatusBits(result.rxStatus, statusBuf, sizeof(statusBuf)),
+                     fmtDbmQ8(result.rslDbmQ8, rslBuf, sizeof(rslBuf)), fmtDbmQ8(result.fpDbmQ8, fpBuf, sizeof(fpBuf)),
+                     (unsigned)result.rxAccumCount, (unsigned long)result.elapsedMs, (unsigned)result.rxSeen,
+                     (unsigned)result.rxRejected, (unsigned)result.rejectMask, (unsigned)result.rejectFrameLen,
+                     (unsigned)result.rejectSequence);
         }
     }
 }
@@ -587,6 +619,8 @@ static void runRole(uwb::Qm33120& uwb)
             failCount++;
             if ((failCount % ANCHOR_LOG_INTERVAL) == 0) {
                 char statusBuf[72];
+                char rslBuf[8];
+                char fpBuf[8];
                 // tx_margin_us: 遅延送信を予約した瞬間の締切までの残り [µs]。
                 // error=TxStartFailed でこれが負なら、Poll は聞こえていたのに
                 // 折返しが間に合わず**送信が取り消された**ことの直接の証拠。
@@ -594,10 +628,12 @@ static void runRole(uwb::Qm33120& uwb)
                 // evidence that the poll WAS heard but the response was
                 // cancelled because the turnaround missed the deadline.
                 ESP_LOGW(TAG,
-                         "SS_RESP_STAT ok=%lu fail=%lu last=FAIL error=%s rx_status=0x%08lX [%s] tx_margin_us=%ld",
+                         "SS_RESP_STAT ok=%lu fail=%lu last=FAIL error=%s rx_status=0x%08lX [%s] tx_margin_us=%ld "
+                         "rsl_dbm=%s fp_dbm=%s accum=%u",
                          (unsigned long)respCount, (unsigned long)failCount, uwb.lastErrorName(),
                          (unsigned long)result.rxStatus, rxStatusBits(result.rxStatus, statusBuf, sizeof(statusBuf)),
-                         (long)result.txMarginUs);
+                         (long)result.txMarginUs, fmtDbmQ8(result.rslDbmQ8, rslBuf, sizeof(rslBuf)),
+                         fmtDbmQ8(result.fpDbmQ8, fpBuf, sizeof(fpBuf)), (unsigned)result.rxAccumCount);
             }
             continue;
         }
@@ -611,11 +647,17 @@ static void runRole(uwb::Qm33120& uwb)
         // docs/TIMING_PRESETS.md §1.3 の折返し時間の見積りは、この値と
         // responseTxDelayUus の実µs値の差として実測できる。
         // Even on success, a small margin means the deadline is nearly missed.
-        ESP_LOGI(TAG,
-                 "SS_RESP_STAT ok=%lu fail=%lu last=OK seq=%u requester=0x%04X elapsed_ms=%lu tx_margin_us=%ld "
-                 "temp=%.1fC",
-                 (unsigned long)respCount, (unsigned long)failCount, result.sequence, result.requester,
-                 (unsigned long)result.elapsedMs, (long)result.txMarginUs, dieTempC());
+        {
+            char rslBuf[8];
+            char fpBuf[8];
+            ESP_LOGI(TAG,
+                     "SS_RESP_STAT ok=%lu fail=%lu last=OK seq=%u requester=0x%04X elapsed_ms=%lu tx_margin_us=%ld "
+                     "temp=%.1fC rsl_dbm=%s fp_dbm=%s accum=%u",
+                     (unsigned long)respCount, (unsigned long)failCount, result.sequence, result.requester,
+                     (unsigned long)result.elapsedMs, (long)result.txMarginUs, dieTempC(),
+                     fmtDbmQ8(result.rslDbmQ8, rslBuf, sizeof(rslBuf)), fmtDbmQ8(result.fpDbmQ8, fpBuf, sizeof(fpBuf)),
+                     (unsigned)result.rxAccumCount);
+        }
     }
 }
 

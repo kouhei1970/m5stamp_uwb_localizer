@@ -328,6 +328,10 @@ RangeResult Qm33120::requestRange(const RangeConfig& range)
             dwt_readrxdata(rawFrame, frameLen, 0);
             dwt_writesysstatuslo(SYS_STATUS_ALL_RX_GOOD | DWT_INT_TXFRS_BIT_MASK);
 
+            // Count every frame the radio actually handed us (RXFCG).
+            // 電波としては届いてCRCも通ったフレームの数を数える。
+            result.rxSeen++;
+
             RxResult parsed;
             const bool headerOk = detail::parseShortAddressFrame(rawFrame, frameLen, parsed);
             // 【タスクC-2】"TWR" ペイロードは 11(旧) または 13(版/種別付き)
@@ -406,10 +410,15 @@ RangeResult Qm33120::requestRange(const RangeConfig& range)
                 result.clockOffsetPpm = clockOffsetRatio * 1.0e6f; // 実機デバッグ用に可視化（R4）
                 {
                     // Received-power indication for the frame just decoded.
+                    // dwt_configciadiag(DW_CIA_DIAG_LOG_ALL) を init() で呼んで
+                    // いる前提の readRxPower()（uwb_qm33120_internal.hpp）を使う
+                    // - dBm換算のrslDbmQ8/fpDbmQ8/rxAccumCountも同時に埋める。
                     // 受信できたフレームの強さの指標。
-                    dwt_rxdiag_t diag = {};
-                    dwt_readdiagnostics(&diag);
-                    result.ipatovPower = diag.ipatovPower;
+                    const detail::RxPower power = detail::readRxPower();
+                    result.ipatovPower  = power.ipatovPower;
+                    result.rslDbmQ8     = power.rslQ8;
+                    result.fpDbmQ8      = power.fpQ8;
+                    result.rxAccumCount = power.accumCount;
                 }
                 result.sequence        = pollSeq;
                 result.elapsedMs       = detail::nowMs() - startMs;
@@ -424,6 +433,21 @@ RangeResult Qm33120::requestRange(const RangeConfig& range)
             // 破棄せず、受信を再開して hostTimeoutMs まで待ち続ける。
             // 根拠・dwt_setrxtimeout()再設定が不要な理由は本ファイル冒頭の
             // R2コメントとuwb_qm33120_frame_match.hppを参照。
+            // Record which part of the discarded frame did not match, so a
+            // failed attempt can tell "nothing arrived" from "it arrived and
+            // we threw it away". Diagnostic only - no behaviour change.
+            // 捨てたフレームのどこが合わなかったかを残す。「届かなかった」と
+            // 「届いたのに捨てた」を後から区別するための記録で、挙動は変えない。
+            result.rxRejected++;
+            result.rejectFrameLen = frameLen;
+            result.rejectSequence = parsed.sequence;
+            result.rejectMask     = static_cast<uint8_t>(
+                (headerOk ? 0x01U : 0U) | (payloadOk ? 0x02U : 0U) |
+                ((!expect.checkSequence || summary.sequence == expect.sequence) ? 0x04U : 0U) |
+                ((summary.panId == expect.panId) ? 0x08U : 0U) |
+                (((expect.src == 0) || (summary.src == expect.src)) ? 0x10U : 0U) |
+                ((summary.dst == expect.dst) ? 0x20U : 0U));
+
             dwt_rxenable(DWT_START_RX_IMMEDIATE);
         }
 
@@ -431,6 +455,18 @@ RangeResult Qm33120::requestRange(const RangeConfig& range)
             // Carry the raw status out before it is cleared (RangeResult::rxStatus).
             // 消される前に生の status を持ち出す。
             result.rxStatus = status;
+            // 受信電力も同じ理由で、ステータスをクリアする(=診断レジスタが
+            // 消える)前に読み出す。RXPHE/RXFSL等の失敗フレームが飽和／微弱
+            // どちらだったかを実機で切り分けるための計器。
+            // Read the received-power indication for the same reason and in
+            // the same order: it must be captured before
+            // stopRadioAndClearRxStatus() clears the diagnostic registers.
+            {
+                const detail::RxPower power = detail::readRxPower();
+                result.rslDbmQ8     = power.rslQ8;
+                result.fpDbmQ8      = power.fpQ8;
+                result.rxAccumCount = power.accumCount;
+            }
             detail::stopRadioAndClearRxStatus();
             result.elapsedMs = detail::nowMs() - startMs;
             result.error     = detail::rxStatusToError(status);
@@ -585,6 +621,14 @@ ResponderResult Qm33120::respondRange(const RangeConfig& range)
                     const uint32_t txStatus = dwt_readsysstatuslo();
                     if ((txStatus & DWT_INT_TXFRS_BIT_MASK) != 0) {
                         dwt_writesysstatuslo(DWT_INT_TXFRS_BIT_MASK);
+                        // Received-power indication for the Poll just decoded.
+                        // 受信できた Poll フレームの強さの指標。
+                        {
+                            const detail::RxPower power = detail::readRxPower();
+                            result.rslDbmQ8     = power.rslQ8;
+                            result.fpDbmQ8      = power.fpQ8;
+                            result.rxAccumCount = power.accumCount;
+                        }
                         result.success   = true;
                         result.sequence  = parsed.sequence;
                         result.requester = parsed.src;
@@ -609,6 +653,16 @@ ResponderResult Qm33120::respondRange(const RangeConfig& range)
         if ((status & (SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR)) != 0) {
             // 消される前に生の status を持ち出す / carry the raw status out
             result.rxStatus = status;
+            // 受信電力も同じ理由で、ステータスをクリアする(=診断レジスタが
+            // 消える)前に読み出す。
+            // Read the received-power indication for the same reason and in
+            // the same order: before stopRadioAndClearRxStatus() clears it.
+            {
+                const detail::RxPower power = detail::readRxPower();
+                result.rslDbmQ8     = power.rslQ8;
+                result.fpDbmQ8      = power.fpQ8;
+                result.rxAccumCount = power.accumCount;
+            }
             detail::stopRadioAndClearRxStatus();
             result.elapsedMs = detail::nowMs() - startMs;
             result.error     = detail::rxStatusToError(status);
