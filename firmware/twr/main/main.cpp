@@ -447,6 +447,20 @@ static uwb::RangeConfig makeRangeConfig()
     // (components/uwb_qm33120/src/uwb_qm33120_twr.cpp, respondRange()).
     // They were already dead here, so overriding them changes nothing on air.
     uwb::applyTimingProfile(range, TIMING_PROFILE);
+    // How long this anchor keeps its receiver armed while waiting for a poll.
+    // The measured failure mode: the window opens a few ms after the previous
+    // exchange, so the next poll lands (window - t_exchange) into it. With the
+    // window equal to the tag's poll period the margin is only ~3ms, and the
+    // phase never re-centres itself - it sits either just inside (every poll
+    // heard) or just outside (none heard) for tens of seconds. Making the
+    // window comfortably longer than the poll period restores the margin.
+    // アンカーが Poll を待つ間、受信機を開けておく時間。窓が Poll 周期と
+    // 同じだと余裕が約 3ms しか無く、位相が自分で中央へ戻らないため、
+    // 「全部聞こえる」か「全く聞こえない」かが数十秒単位で入れ替わる。
+    // 窓を Poll 周期より十分長くすれば余裕が戻る。
+#if CONFIG_UWB_TWR_POLL_WAIT_MS > 0
+    range.pollHostTimeoutMs = CONFIG_UWB_TWR_POLL_WAIT_MS;
+#endif
     return range;
 }
 

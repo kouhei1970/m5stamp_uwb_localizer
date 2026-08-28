@@ -148,6 +148,24 @@ menu "UWB TWR Configuration"
             exactly as it did before this option existed. This is an
             experiment, not a fix - the real fix is task R10.
 
+    config UWB_TWR_POLL_WAIT_MS
+        int "ANCHOR poll-wait window [ms] (0 = RangeConfig default, 200)"
+        range 0 5000
+        default 0
+        help
+            How long the ANCHOR keeps its receiver armed inside one
+            respondRange() call while waiting for a poll
+            (RangeConfig::pollHostTimeoutMs).
+
+            This must be comfortably LONGER than the tag's poll interval.
+            The window reopens a few ms after the previous exchange ends, so
+            the next poll arrives (interval - a few ms) into it; when the
+            window equals the poll interval the remaining margin is only a
+            few ms, and nothing pulls the phase back to the middle. Measured
+            on hardware: window 200 ms with a 200 ms interval gave a 1%
+            success rate, while the same window with a 137 ms interval let
+            the anchor see 429 of 430 polls.
+
     config UWB_TWR_RANGE_INTERVAL_MS
         int "TAG poll interval [ms]"
         range 20 5000
