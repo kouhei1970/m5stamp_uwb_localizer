@@ -744,6 +744,12 @@ bool Qm33120::verifyIrqLine()
     bool woken = false;
     if (dwt_rxenable(DWT_START_RX_IMMEDIATE) == DWT_SUCCESS) {
         woken = uwb_port_irq_wait(kEventWaitMs);
+    } else {
+        // 受信を開けなかった＝IRQ 線の話ではなくチップ側の問題。段階2 は
+        // 成立しないので、下の「事象が起きなかった＝判定不能」へ落ちる。
+        // Could not arm RX: this is a chip-side problem, not an IRQ-line one.
+        // Stage 2 cannot run, so it falls through to "inconclusive" below.
+        ESP_LOGW(TAG, "irq self-test: dwt_rxenable() failed; cannot run stage 2");
     }
     const uint32_t status = dwt_readsysstatuslo();
 

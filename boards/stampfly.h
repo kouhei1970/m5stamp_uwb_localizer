@@ -169,13 +169,21 @@
  * 廃案の記録は docs/STAMPFLY_INTEGRATION.md に残す（消さずに残す方針。
  * docs/README.md の約束ごと規則6）。
  */
-#define BOARD_STAMPFLY_UWB_PORT_CONFIG                                   \
-
 /* On-board WS2812 RGB LED of the M5StampS3A this firmware runs on. Same
  * module - and therefore the same GPIO - as boards/stamps3.h.
  * このファームが載る M5StampS3A の内蔵フルカラー LED。stamps3.h と同じ
  * モジュールなので GPIO も同じ。 */
 #define BOARD_STAMPFLY_STATUS_LED_GPIO 21
+
+/* NOTE: keep this macro's body immediately after this line. A blank line or
+ * anything else between the `#define ... \` and the `{` ends the macro right
+ * there (the continuation swallows the blank line), leaving the initializer
+ * as stray file-scope code - which is exactly how this header got broken
+ * between 00af114 and 1a5166e.
+ * 注意: この #define の直後に本体 `{` を置くこと。あいだに空行や別の宣言を
+ * 挟むとマクロはそこで終わり、初期化子だけがファイルスコープに取り残されて
+ * コンパイルエラーになる。実際にそれで一度壊れた。 */
+#define BOARD_STAMPFLY_UWB_PORT_CONFIG                                   \
     {                                                                    \
         .spi_host     = SPI3_HOST,                                      \
         .pin_sck      = 36, /* G36 = DISP_SCK。背面12P FPC 位置10。assets/Sch_StampS3_v0.3.3.pdf */ \

@@ -245,55 +245,59 @@ static bool reprobe_dev_id(const char *prefix, uint32_t *out_dev_id)
  * L3 / L4: register write/readback, and the RSTn functional check
  * ===========================================================================
  *
- * 【重要な実装ノート・2箇所共通】
- * タスク定義では両方とも dwt_setxtaltrim() / dwt_getxtaltrim() を使うよう
- * 指示されていたが、grep で以下を確認したため GPIO_DIR レジスタ
- * (dwt_setgpiodir() / dwt_getgpiodir(), 実際に SPI 経由で GPIO_DIR_ID
- * レジスタを読み書きする) へ差し替えている:
+ * 【どのレジスタで殴るかの選定・2箇所共通】
+ * この2つの検査は「SPI 経由でチップのレジスタに書いた値が、読み戻して
+ * そのまま返ってくるか」を土台にしている。したがって使うレジスタは
+ *   (1) 書きも読みも本当に SPI トランザクションを発行すること
+ *   (2) 書いてもチップの外側（ピン）に影響が出ないこと
+ * の両方を満たす必要がある。
  *
- *  - deca_device_api.h:2997 の doc comment: 「dwt_getxtaltrim() の戻り値は
- *    dwt_initialise() 実行時の初期値のみで、dwt_setxtaltrim() の呼び出しでは
- *    更新されない」と明記されている
- *    (The value returned by this function is the initial value only! It is
- *    not updated on dwt_setxtaltrim() calls.)。
- *  - components/qm33120w_sdk/dw3720/dw3720_device.c の ull_setxtaltrim()
- *    (grep: ~L6131) はホスト側 RAM 構造体 LOCAL_DATA(dw)->init_xtrim を
- *    書き換えるだけで、SPI トランザクションを一切発行しない。実際に
- *    チップのレジスタへ書くのは ull_initialise() 内 (dwt_initialise() 経由)
- *    の一度きりの OTP 読み出し直後のみ (grep: ~L1021)。
- *  - components/qm33120w_sdk/deca_compat.c の dwt_probe() は静的に確保
- *    された struct dwchip_s static_dw を毎回使い回す (`dw = &static_dw`)。
- *    つまりこの RAM 値は dwt_probe() を呼び直しても（L4 の RSTn 後の
- *    再プローブでも）保持されたままになる。
+ * ■ dwt_setxtaltrim() / dwt_getxtaltrim() は使えない（(1) を満たさない）
+ *   dwt_setxtaltrim() 側は SPI へ書く（dw3720_device.c の ull_setxtaltrim()
+ *   は LOCAL_DATA(dw)->init_xtrim を更新したうえで
+ *   dwt_write8bitoffsetreg(XTAL_ID, ...) を発行する）が、
+ *   **dwt_getxtaltrim() が読むのはチップではなくホスト側 RAM** である
+ *   （ull_getxtaltrim() は `return LOCAL_DATA(dw)->init_xtrim;` の1行のみ）。
+ *   deca_device_api.h の doc comment も「The value returned by this function
+ *   is the initial value only!」と書いている。
+ *   さらに deca_compat.c の dwt_probe() は静的な static_dw を毎回使い回すので、
+ *   この RAM 値は L4 の RSTn 後の再プローブをまたいでも保持される。
+ *   結果:
+ *     - L3 に使うと「RAM に書いて同じ RAM を読む」往復になり、SPI の書き込み
+ *       経路が死んでいても常に PASS する自明な検査になる（確証バイアスそのもの）。
+ *     - L4 に使うと、RSTn が正しく配線されていても T2 == T1 のままになり
+ *       **常に FAIL** する偽陰性になる。実機を疑わせて時間を失わせるだけの罠。
  *
- * → xtaltrim のペアで書いて読み戻しても、それは「ホスト RAM を書いて同じ
- *   ホスト RAM を読む」だけの往復であり、SPI バスの書き込み経路も RSTn の
- *   実効果も一切検証しない：
- *     - L3 として使うと、SPI が壊れていても常に PASS する自明なテストに
- *       なる（確証バイアスそのもの）。
- *     - L4 として使うと、RSTn が正しく配線されていても T2==T1 のまま
- *       （RAM は dwt_probe() 越しに保持され続ける）なので**常に FAIL**する
- *       偽陰性になる。dwt_initialise() を挟まない限り OTP からの再導出も
- *       起きないため、これは実機を疑わせて時間を失わせるだけの罠になる。
+ * ■ dwt_setgpiodir() / dwt_getgpiodir() も使わない（(2) を満たさない）
+ *   こちらは (1) は満たす（GPIO_DIR_ID を SPI で読み書きする）が、
+ *   **GPIO の入出力方向を変える＝チップのピンを出力に切り替える**。
+ *   出力データレジスタの既定は 0 なので、そのピンが基板側で何かに駆動されて
+ *   いると Low へ引きに行って喧嘩する。本ファームは「配線が分からない基板を
+ *   最初に挿して素性を調べる」道具なので、素性の分からないピンを能動的に
+ *   駆動する検査を既定で走らせるべきではない。
  *
- * 一方 dwt_setgpiodir()/dwt_getgpiodir() は ull_setgpiodir()/ull_getgpiodir()
- * がそれぞれ dwt_write16bitoffsetreg()/dwt_read16bitoffsetreg() で
- * GPIO_DIR_ID レジスタへ実際に SPI トランザクションを発行する
- * (dw3720_device.c 内 ull_setgpiodir()/ull_getgpiodir()、grep: ~L1197-1216)。
- * この読み戻しが書いた値と一致することが低速 SPI の書き込み経路が
- * 生きていることの直接証拠になり (L3)、GPIO_DIR はチップ内レジスタ
- * そのもの（ホスト側キャッシュを経由しない、既定値は「全 GPIO 入力」の
- * ハードウェアリセット既定値）なので RSTn パルスで本当に既定へ戻るかを
- * 直接観測できる (L4)。
+ * ■ 採用: dwt_setrxantennadelay() / dwt_getrxantennadelay()（CIA_CONF_ID）
+ *   (1) を満たす: ull_setrxantennadelay() は
+ *       dwt_write16bitoffsetreg(CIA_CONF_ID, 0, v)、
+ *       ull_getrxantennadelay() は dwt_read16bitoffsetreg(CIA_CONF_ID, 0)。
+ *       どちらもホスト側キャッシュを経由せず実際に SPI を叩く。
+ *   (2) を満たす: CIA_CONF はタイムスタンプ補正に使う純粋な内部レジスタで、
+ *       ピンを一切駆動しない。値を変えても受信タイムスタンプの補正量が
+ *       ずれるだけで、この時点では測距もしていない。しかも L5 の begin() が
+ *       改めて dwt_setrxantennadelay(16385) を書き直すので、取りこぼしても
+ *       実害が残らない。
+ *   L4 に使える理由: チップ内レジスタそのものなので、RSTn が本当に効けば
+ *       ハードウェアリセット既定値へ戻る。ホスト RAM は介在しない。
  *
- * Both are declared with real signatures in deca_device_api.h (grep-
- * verified above), so this is a substitution of *which* register pair to
- * exercise, not a fabricated API.
+ * いずれの関数も deca_device_api.h に実在する
+ * （dwt_setrxantennadelay: :2018 / dwt_getrxantennadelay: :2025。
+ *  後者の doc comment に "16-bit RX antenna delay value which is currently
+ *  programmed in CIA_CONF_ID register" とある）。
  * ===========================================================================
  */
 
 /**
- * @brief L3: low-speed SPI write/readback consistency, using GPIO_DIR_ID
+ * @brief L3: low-speed SPI write/readback consistency, using CIA_CONF_ID (RX antenna delay)
  * (see the block comment above for why this register was chosen instead of
  * XTAL trim). Sequence: read T0, write T1 = T0 ^ 0x0F, read back and compare
  * to T1, then always restore T0 and verify that too.
@@ -303,23 +307,20 @@ static bool reprobe_dev_id(const char *prefix, uint32_t *out_dev_id)
  */
 static bool run_l3_spi_writeback_check()
 {
-    uint16_t t0 = 0;
-    dwt_getgpiodir(&t0);
-    const uint16_t t1 = static_cast<uint16_t>(t0 ^ 0x000FU);
+    const uint16_t t0 = dwt_getrxantennadelay();
+    const uint16_t t1 = static_cast<uint16_t>(t0 ^ 0x0FFFU);
 
-    dwt_setgpiodir(t1);
-    uint16_t readback = 0;
-    dwt_getgpiodir(&readback);
-    const bool write_ok = (readback == t1);
+    dwt_setrxantennadelay(t1);
+    const uint16_t readback = dwt_getrxantennadelay();
+    const bool write_ok     = (readback == t1);
 
     /* 検査後は必ず元へ戻す。 Always restore, regardless of write_ok. */
-    dwt_setgpiodir(t0);
-    uint16_t restored = 0;
-    dwt_getgpiodir(&restored);
-    const bool restore_ok = (restored == t0);
+    dwt_setrxantennadelay(t0);
+    const uint16_t restored = dwt_getrxantennadelay();
+    const bool restore_ok   = (restored == t0);
 
     if (write_ok && restore_ok) {
-        ESP_LOGI(TAG, "L3: SPI write/readback OK (gpio_dir T0=0x%04X T1=0x%04X readback=0x%04X restored=0x%04X) -> PASS",
+        ESP_LOGI(TAG, "L3: SPI write/readback OK (rx_antd T0=0x%04X T1=0x%04X readback=0x%04X restored=0x%04X) -> PASS",
                  (unsigned)t0, (unsigned)t1, (unsigned)readback, (unsigned)restored);
         return true;
     }
@@ -328,7 +329,7 @@ static bool run_l3_spi_writeback_check()
                  (unsigned)t1, (unsigned)readback);
     }
     if (!restore_ok) {
-        ESP_LOGE(TAG, "L3: FAILED TO RESTORE gpio_dir to 0x%04X (now reads 0x%04X) -> retry or power-cycle before continuing",
+        ESP_LOGE(TAG, "L3: FAILED TO RESTORE rx_antd to 0x%04X (now reads 0x%04X) -> retry or power-cycle before continuing",
                  (unsigned)t0, (unsigned)restored);
     }
     return false;
@@ -336,7 +337,7 @@ static bool run_l3_spi_writeback_check()
 
 /**
  * @brief L4: RSTn functional check (docs/HANDOFF.md's "not yet verified"
- * item). Writes a non-default GPIO_DIR value, pulses RSTn via
+ * item). Writes a non-default CIA_CONF (RX antenna delay) value, pulses RSTn via
  * uwb_port_hard_reset(), re-probes, and checks whether the write survived.
  *
  * 判定:
@@ -362,34 +363,47 @@ static bool run_l4_rstn_check(const uwb_port_config_t &port, uint32_t *out_dev_i
         return false;
     }
 
-    uint16_t t0 = 0;
-    dwt_getgpiodir(&t0);
-    const uint16_t t1 = static_cast<uint16_t>(t0 ^ 0x000FU);
-    dwt_setgpiodir(t1);
+    /* この時点で CIA_CONF はまだ誰も書いていない（L3 は書いた値を戻している）
+     * ので、t0 はハードウェアリセット既定値そのものである。したがって RSTn が
+     * 効けばリセット後は t0 へ戻るはずで、「t1 でない」より強い
+     * 「t0 に戻った」まで判定できる。
+     * Nothing has written CIA_CONF yet (L3 restores what it wrote), so t0 IS
+     * the hardware reset default. A working RSTn must therefore bring it back
+     * to exactly t0, which is a stronger check than merely "not t1". */
+    const uint16_t t0 = dwt_getrxantennadelay();
+    const uint16_t t1 = static_cast<uint16_t>(t0 ^ 0x0FFFU);
+    dwt_setrxantennadelay(t1);
 
-    ESP_LOGI(TAG, "L4: wrote gpio_dir T1=0x%04X, pulsing RSTn (pin=%d)...", (unsigned)t1, port.pin_rst);
+    ESP_LOGI(TAG, "L4: wrote rx_antd T1=0x%04X, pulsing RSTn (pin=%d)...", (unsigned)t1, port.pin_rst);
     uwb_port_hard_reset(5, 100);
 
     if (!reprobe_dev_id("L4", out_dev_id_after)) {
         ESP_LOGE(TAG, "L4: chip did not answer after the RSTn pulse -> FAIL (cannot judge RSTn)");
         /* レジスタは書き戻せないかもしれないが試みる。
          * The register write may be unrecoverable, but try anyway. */
-        dwt_setgpiodir(t0);
+        dwt_setrxantennadelay(t0);
         return false;
     }
 
-    uint16_t t2 = 0;
-    dwt_getgpiodir(&t2);
+    const uint16_t t2 = dwt_getrxantennadelay();
     /* 判定後、レジスタを元へ戻しておく。L5 の begin() が RSTn からやり直す
      * ため厳密には不要だが、直後に何か失敗しても安全側に倒しておく。
      * Not strictly needed since L5's begin() resets from RSTn again, but
      * restoring anyway is the safe default if something goes wrong first. */
-    dwt_setgpiodir(t0);
+    dwt_setrxantennadelay(t0);
 
-    const bool rstn_effective = (t2 != t1);
+    const bool rstn_effective = (t2 == t0);
     if (rstn_effective) {
-        ESP_LOGI(TAG, "L4: RSTn OK (wrote T1=0x%04X, after reset reads T2=0x%04X != T1) -> PASS", (unsigned)t1,
+        ESP_LOGI(TAG, "L4: RSTn OK (wrote T1=0x%04X, after reset reads T2=0x%04X == T0) -> PASS", (unsigned)t1,
                  (unsigned)t2);
+    } else if (t2 != t1) {
+        /* t1 でも t0 でもない: リセットは効いたが既定値の想定が違う、または
+         * 読みが化けている。断定せず WARN 止まりにして値を出す。
+         * Neither t1 nor t0: the reset did something, but not what was
+         * predicted. Report the values instead of asserting a verdict. */
+        ESP_LOGW(TAG,
+                 "L4: inconclusive (T0=0x%04X T1=0x%04X T2=0x%04X). リセットで値は変わったが T0 へは戻っていない",
+                 (unsigned)t0, (unsigned)t1, (unsigned)t2);
     } else {
         ESP_LOGE(TAG,
                  "L4: RSTn FAILED (T2=0x%04X == T1=0x%04X, the write survived the reset pulse) -> pin_rst likely "
@@ -687,7 +701,7 @@ extern "C" void app_main(void)
     /* --- L3 / L4 ---------------------------------------------------------
      * L2 が失敗した状態で L3/L4 を呼ぶと、SDK 内部の静的ドライバテーブル
      * (components/qm33120w_sdk/deca_compat.c の `dw`) が未確定のまま
-     * dwt_setgpiodir() 等の関数ポインタ経由呼び出しへ入り、NULL 参照で
+     * dwt_setrxantennadelay() 等の関数ポインタ経由呼び出しへ入り、NULL 参照で
      * クラッシュ（再起動）しうる。L2 失敗時は SKIP して安全側に倒す。
      * Skip L3/L4 rather than risk a null-driver crash when L2 already
      * failed - see the SDK's static `dw` pointer note above L3/L4. */
