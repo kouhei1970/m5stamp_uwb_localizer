@@ -184,6 +184,21 @@ menu "UWB TWR Configuration"
             for that: if the success rate changes, the loss was scheduling,
             not radio.
 
+    config UWB_TWR_DIAG_NO_LNA_PA
+        bool "Diagnostic: do not enable external LNA/PA mode"
+        default n
+        help
+            Sets PhyConfig::enableLnaPa = false, so dwt_setlnapamode(
+            DWT_LNA_ENABLE | DWT_PA_ENABLE) is never called. That call
+            repurposes DW3720 GPIOs to drive an external RF front end.
+
+            Whether the M5Stamp UWB Module has such a front end, and whether
+            M5Stack's own wrapper enables this mode, are both unverified in
+            this checkout (no datasheet under docs/refs, no third_party/
+            M5Stamp-UWB). This option makes it testable: it is a local RF
+            setting, not an on-air parameter, so one side can be changed
+            independently of the other.
+
     config UWB_TWR_DIAG_ROBUST_PHY
         bool "Diagnostic: most robust PHY (preamble 1024, PAC32, 850kbps)"
         default n

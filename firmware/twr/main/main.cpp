@@ -614,6 +614,18 @@ extern "C" void app_main(void)
     uwb::Qm33120 uwbDevice;
     const uwb::Config cfg = makeConfigFromBoard();
     uwb::PhyConfig phy; // defaults: ch9, preamble128, PAC8, 6.8Mbps (see uwb_qm33120_types.hpp)
+#if defined(CONFIG_UWB_TWR_DIAG_NO_LNA_PA) && CONFIG_UWB_TWR_DIAG_NO_LNA_PA
+    // Diagnostic: do not put the chip into external LNA/PA mode. The default
+    // (PhyConfig::enableLnaPa = true) calls dwt_setlnapamode(DWT_LNA_ENABLE |
+    // DWT_PA_ENABLE), which repurposes DW3720 GPIOs to drive an external front
+    // end. Whether this module has one - and whether the M5Stack wrapper does
+    // the same - is unverified here, so this makes it switchable.
+    // 診断: 外部 LNA/PA モードに入れない。既定は有効で、DW3720 の GPIO を
+    // 外部フロントエンド制御に転用する。本モジュールに外部フロントエンドが
+    // あるか、M5Stack のラッパが同じことをするかは、いずれも未確認。
+    phy.enableLnaPa = false;
+    ESP_LOGW(TAG, "DIAG_NO_LNA_PA: dwt_setlnapamode() is not called");
+#endif
 #if defined(CONFIG_UWB_TWR_DIAG_ROBUST_PHY) && CONFIG_UWB_TWR_DIAG_ROBUST_PHY
     // Diagnostic: trade update rate for link margin. The default preamble of
     // 128 symbols is the shortest the chip offers, so preamble detection has
