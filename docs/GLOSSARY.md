@@ -148,8 +148,8 @@
 | 名前 | 何か |
 |---|---|
 | **M5Stamp UWB Module** | M5Stack の UWB モジュール（**通称 M5Stamp UWB**）。中身は Qorvo QM33120W。**本プロジェクトの対象**。FPC コネクタ付きの品種（**M5Stamp UWB Module with FPC**）もある |
-| **QM33120W** | Qorvo の UWB トランシーバ IC。**DW3720 系**。Device ID = `0xDECA0314` |
-| **DW3000 / DW3720 / DW1000** | Decawave（現 Qorvo）の UWB IC 系列。DW1000 が旧世代。**単位系の定数が世代で違うので混同注意**（`docs/GLOSSARY.md`） |
+| **QM33120W** | Qorvo の UWB トランシーバ IC（WLCSP52 パッケージ、PDoA［Phase Difference of Arrival、到来波の位相差から角度を測る方式］対応）。**本モジュールに搭載されているチップ本体**。Device ID = `0xDECA0314`（`DWT_QM33120_PDOA_DEV_ID`）。**DW3720** は同じシリコンの Decawave 時代のコードネームで、Qorvo 改称後の QM33120W データシートには登場しないが、ドライバのファイル名（`dw3720_device.c` 等）に今も残る。PDoA 非対応の姉妹品番は **QM33110W** |
+| **DW3000 系 / DW1000** | Decawave（現 Qorvo）の UWB IC の世代。DW1000 が旧世代、**DW3000 系**が現行世代（本モジュール搭載の QM33120W もこの系列）。DW3720 は DW3000 系の中の QM33120W 固有のコードネームであり、系列名ではない（→ 上の「QM33120W」の行）。**単位系の定数が世代で違うので混同注意**（`docs/GLOSSARY.md`） |
 | **M5StampS3A** | ESP32-S3 の小型ボード。**既定のホスト（タグ・アンカーとも）**。据置機は **StampS3 BreakOut** に載せて使う（`UWB_*_BOARD_STAMPS3` が既定）。StampFly 搭載タグは背面 12P FPC 経由（`UWB_TAG_BOARD_STAMPFLY`）。旧 M5StampS3 と互換 |
 | **AtomS3 / AtomS3R** | ESP32-S3 の小型ボード（LCD 付き）。**アンカーホストの代替**（`UWB_ANCHOR_BOARD_ATOMS3`。既定は M5StampS3A + StampS3 BreakOut に切り替わったが、削除はされていない）。R が現行版で、IMU が G0/G45 に移っている分 G38/G39 が空く |
 | **StampS3 BreakOut** | M5StampS3A の 1.27mm ピンを 2.54mm へ変換する M5Stack 純正の拡張基板。露出 IO 23本（G0-G15, G39-G44, G46）は M5StampS3A 単体と同じで、BreakOut を使っても使わなくてもピン定義は同一。Grove ポートは **G13/G15** に配線されており、**G13 は UWB の SPI MISO と衝突する**ので ToF 増設等は Grove に挿すだけでは済まない（`boards/stamps3.h`、`docs/SURVEY_SPEC.md` §3.5）。G0/EN のタクトスイッチ付きで書き込みモードに入りやすい |

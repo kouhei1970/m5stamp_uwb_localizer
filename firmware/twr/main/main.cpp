@@ -1450,6 +1450,25 @@ extern "C" void app_main(void)
              (unsigned long)phy.txPower);
 #endif
 
+#if defined(CONFIG_UWB_TWR_DIAG_PGDELAY) && (CONFIG_UWB_TWR_DIAG_PGDELAY != 0x34)
+    // Diagnostic: override the TX pulse-generator delay (PGdly), which sets
+    // the TX pulse bandwidth, written to the DW3720 TX_CTRL_HI PG_DELAY
+    // field via dwt_configuretxrf() (components/uwb_qm33120/src/
+    // uwb_qm33120.cpp toDwtTxConfig()). 0x34 is Qorvo's ch9 reference-design
+    // default; Qorvo's API guide notes it may need per-board recalibration,
+    // which this hardware lacks. Both boards must match.
+    // 診断: 送信パルス発生器の遅延（PGdly、送信パルスの帯域幅を決める）を
+    // 上書きする。DW3720 の TX_CTRL_HI PG_DELAY フィールドへ
+    // dwt_configuretxrf() 経由で書き込まれる
+    // （components/uwb_qm33120/src/uwb_qm33120.cpp の toDwtTxConfig()）。
+    // 0x34 は Qorvo リファレンス設計の ch9 用既定値。Qorvo の API ガイドは
+    // 基板ごとの再校正が必要な場合があるとしているが、本機にはそれがない。
+    // 両機を同じ値にすること。
+    phy.pgDelay = CONFIG_UWB_TWR_DIAG_PGDELAY;
+    ESP_LOGW(TAG, "DIAG_PGDELAY: pgDelay=0x%02X (default 0x34; both boards should match)",
+             (unsigned)phy.pgDelay);
+#endif
+
     // タスクD-2: 実際に使うSPI高速クロックを起動ログに出す(切り分け作業で
     // Kconfigの値が本当に反映されたかを確認できるように)。
     ESP_LOGI(TAG, "spi_fast=%lu", (unsigned long)cfg.spi_fast_hz);
@@ -1499,6 +1518,56 @@ extern "C" void app_main(void)
         dwt_readfromdevice(TX_POWER_ID, 0, sizeof(txp), txp);
         const uint32_t txp32 = ((uint32_t)txp[3] << 24) | ((uint32_t)txp[2] << 16) | ((uint32_t)txp[1] << 8) | txp[0];
         ESP_LOGI(TAG, "tx_power readback=0x%08lX (requested 0x%08lX)", (unsigned long)txp32, (unsigned long)phy.txPower);
+    }
+
+    {
+        // Read back the live PG delay register and compute its calibration
+        // pulse count (dwt_calcpgcount()) so the DIAG_PGDELAY sweep can be
+        // cross-checked against the chip's own bandwidth calibration from
+        // the boot log alone.
+        //
+        // Safety/preconditions (dw3720_device.c ull_calcpgcount(),
+        // ~6615-6651, reached via deca_compat.c dwt_calcpgcount() ->
+        // DWT_CALCPGCOUNT ioctl, dw3720_device.c:9968-9974): the function's
+        // own doc comment says it "presumes the PLL is already on (device is
+        // in the IDLE state)" - true here, right after begin() succeeded and
+        // before the ranging loop starts (no RX/TX exchange in flight, TRX
+        // off). It temporarily forces the system clock to FOSC/4 with TX
+        // clocks on and powers up the TX LDO/bias/enable blocks to run the
+        // PG auto-cal, then powers them back down and restores AUTO clocking
+        // when done; it never touches the TX/RX antenna switch
+        // (switch_control=0 on both enable and disable), so it does not key
+        // up an actual over-the-air transmission. It DOES write its pgdly
+        // argument straight into the live TX_CTRL_HI PG_DELAY field as part
+        // of the measurement, so it must only be called with phy.pgDelay
+        // (the value already applied via dwt_configuretxrf()) - passing
+        // anything else would silently move the chip's live TX pulse
+        // bandwidth setting away from what was configured.
+        //
+        // 実際にチップへ入っている PG delay を読み戻し、その帯域校正用
+        // パルスカウント（dwt_calcpgcount()）を算出してログへ残す。
+        // DIAG_PGDELAY を振ったとき、チップ自身の帯域校正結果と突き合わせ
+        // られるように、起動ログだけで確認できる。
+        //
+        // 前提・副作用（dw3720_device.c の ull_calcpgcount()、~6615-6651行、
+        // deca_compat.c の dwt_calcpgcount() 経由で DWT_CALCPGCOUNT ioctl、
+        // dw3720_device.c:9968-9974）: 関数自身のドキュメントコメントに
+        // 「PLL は既にオン（デバイスは IDLE 状態）であることを前提とする」
+        // とあり、ここは begin() 成功直後・測距ループ開始前（RX/TX の
+        // やり取りが進行中でない、TRX オフ）なので条件を満たす。システム
+        // クロックを一時的に FOSC/4 + TXクロックONへ強制し、TX の
+        // LDO/バイアス/イネーブル系ブロックを立ち上げて PG 自動校正を
+        // 走らせた後、元のAUTOクロックへ戻して立ち下げる。アンテナの
+        // TX/RXスイッチには一切触れない（enable/disable とも
+        // switch_control=0）ため、実際に電波を空間へ送信するわけではない。
+        // ただし測定の一部として引数の pgdly を TX_CTRL_HI の PG_DELAY
+        // レジスタへそのまま書き込むため、必ず phy.pgDelay
+        // （dwt_configuretxrf() で実際に適用した値）を渡すこと - 別の値を
+        // 渡すと、チップの生きている送信パルス帯域幅設定が設定値から
+        // ずれてしまう。
+        const uint8_t pgdelay_readback = dwt_readpgdelay();
+        const uint16_t pgcount = dwt_calcpgcount(phy.pgDelay);
+        ESP_LOGI(TAG, "pg: pgdelay_readback=0x%02X pgcount(0x%02X)=%u", pgdelay_readback, phy.pgDelay, pgcount);
     }
     ESP_LOGI(TAG, "begin() + PHY config OK, starting %s/%s loop", ROLE_NAME, METHOD_NAME);
 

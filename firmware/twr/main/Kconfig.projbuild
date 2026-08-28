@@ -313,6 +313,47 @@ menu "UWB TWR Configuration"
 
             両機を同じ値にすること。片側だけ変えるとA/B比較が成立しない。
 
+    config UWB_TWR_DIAG_PGDELAY
+        hex "Diagnostic: TX pulse-generator delay override (PGdly, 0x34 = ch9 default)"
+        range 0x00 0x3F
+        default 0x34
+        help
+            Overrides PhyConfig::pgDelay, which is written to the DW3720
+            TX_CTRL_HI PG_DELAY bitfield via dwt_configuretxrf()
+            (components/uwb_qm33120/src/uwb_qm33120.cpp toDwtTxConfig(),
+            ~line 296). This is the TX pulse-generator delay, which sets the
+            transmit pulse bandwidth. 0x34 is Qorvo's reference-design
+            default for channel 9.
+
+            Qorvo's API guide notes that the default TX config (PGdly
+            0x34, power 0xfefefefe for ch9) suits Qorvo's own evaluation
+            boards, and "for other hardware designs the values may need to
+            be changed as part of the transmit power calibration activity."
+            The M5Stamp UWB module has no board-level calibration, so this
+            is a diagnostic sweep of PGdly to see whether ranging success
+            changes with it.
+
+            BOTH boards of a link must use the same value - a one-sided
+            change makes the link asymmetric, not a fair A/B test. This is
+            part of the per-board TX calibration that the M5Stamp module
+            lacks.
+            診断用: PhyConfig::pgDelay を上書きする。DW3720 の TX_CTRL_HI
+            レジスタの PG_DELAY ビットフィールドへ dwt_configuretxrf() 経由
+            で書き込まれる値（components/uwb_qm33120/src/uwb_qm33120.cpp の
+            toDwtTxConfig()、296行目付近）。これは送信パルス発生器の遅延で、
+            送信パルスの帯域幅を決める。0x34 は Qorvo リファレンス設計の
+            ch9 用既定値。
+
+            Qorvo の API ガイドには、既定の送信設定（ch9用 PGdly 0x34、
+            power 0xfefefefe）は Qorvo 自身の評価ボード向けであり、「他の
+            ハードウェア設計では、送信電力校正作業の一環としてこれらの値を
+            変更する必要があるかもしれない」との記載がある。M5Stamp UWB
+            モジュールには基板単位の校正がないため、PGdly を振って測距成功率
+            が変化するかを確認する診断用オプション。
+
+            両機を同じ値にすること。片側だけ変えるとA/B比較が成立しない。
+            M5Stamp モジュールに欠けている基板単位の送信校正の一部。
+
     config UWB_TWR_DIAG_PLL_COARSE_CH9
         int "Diagnostic: force ch9 PLL VCO coarse-tune code after init and re-lock (0 = off)"
         range 0 127

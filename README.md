@@ -256,7 +256,7 @@ m5stamp_uwb_localizer/
 │   └── stampfly.h           StampFly 搭載時のタグ（M5StampS3A 背面の 12P FPC 経由）
 │
 ├── components/
-│   ├── qm33120w_sdk/        Qorvo 提供の QM33120W/DW3720 チップドライバ SDK
+│   ├── qm33120w_sdk/        Qorvo 提供の QM33120W チップドライバ SDK（ファイル名には旧称 DW3720 が残る）
 │   ├── uwb_port/            ESP-IDF 向けプラットフォーム抽象層（SPI/GPIO/IRQ/時刻/排他）
 │   ├── uwb_qm33120/         C++ ラッパ（初期化・PHY 設定・SS/DS-TWR・遅延プリセット）
 │   ├── uwb_ranging/         アンカー登録テーブル / スケジューラ / 測位パイプライン
@@ -308,7 +308,7 @@ firmware/tag ──┬─ uwb_ranging ─┬─ uwb_loc          （ハード非
 
 | 項目 | 値 |
 |---|---|
-| チップ | Qorvo **QM33120W**（DW3720 系。Device ID `0xDECA0314`） |
+| チップ | Qorvo **QM33120W**（DW3000 系。旧 Decawave コードネーム DW3720。Device ID `0xDECA0314`） |
 | ホスト I/F | **SPI 一択**（mode0 / MSB first、初期化 2MHz → 通常 16MHz、チップ上限 32MHz） |
 | **電源** | **公式仕様 DC 3.3V。パッド 2 はチップ直結（動作 2.4〜3.6V、絶対最大定格 4.0V）。5V は不可（壊れます）** |
 | 消費電流 | スリープ 75.9µA / アンカー動作 5.23mA / **タグ動作 58.0mA** @3.3V |
@@ -359,7 +359,7 @@ firmware/tag ──┬─ uwb_ranging ─┬─ uwb_loc          （ハード非
 > ### ⚠️ `LicenseRef-QORVO-2` の重要な制約
 >
 > **一般的なパーミッシブライセンスではありません。**
-> 条件 3 により、**Qorvo 製の集積回路（＝本モジュールが搭載する QM33120W/DW3720、
+> 条件 3 により、**Qorvo 製の集積回路（＝本モジュールが搭載する QM33120W（旧コードネーム DW3720）、
 > またはそれを内蔵するモジュール）とともに使用する場合に限り**利用が許可されます。
 > **他ベンダーのチップ向けに転用することはできません。**
 
