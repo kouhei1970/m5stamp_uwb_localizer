@@ -232,7 +232,11 @@ static uwb::Config makeConfigFromBoard()
  * TAG + SS-TWR : examples/SS_TWR_TAG/SS_TWR_TAG.ino 準拠
  * ========================================================================= */
 
-static constexpr uint32_t RANGE_INTERVAL_MS            = 200;
+// Poll interval. Configurable so the tag's period can be made incommensurate
+// with the anchor's poll-wait window, which is what a beat between the two
+// would need to show up as a change in success rate.
+// Poll 周期。アンカーの受信待ち窓と周期をずらせるように Kconfig 化した。
+static constexpr uint32_t RANGE_INTERVAL_MS            = CONFIG_UWB_TWR_RANGE_INTERVAL_MS;
 static constexpr uint32_t TAG_LOG_INTERVAL              = 10;
 static constexpr uint32_t RX_TIMEOUT_UUS                = 3000;
 static constexpr uint32_t RANGE_HOST_TIMEOUT_MS          = 10;
@@ -450,9 +454,34 @@ static void runRole(uwb::Qm33120& uwb)
 {
     uint32_t respCount = 0, failCount = 0;
     uint32_t consecutiveMisses = 0;
+    // Diagnostic: how much of the time is this anchor actually listening?
+    // respondRange() re-arms the receiver on every call, so any time spent
+    // between calls is time the poll cannot be heard. If the tag polls every
+    // 200ms and this loop also cycles every ~200ms, the two can beat against
+    // each other - which would look exactly like the intermittent success we
+    // measured. Log the cycle count and the mean cycle time every 5 seconds.
+    // 診断: このアンカーが実際に聞いている時間の割合。respondRange() は毎回
+    // 受信機を開き直すので、呼び出しの合間は Poll を聞けない。タグが 200ms
+    // 周期で、このループも約 200ms 周期だと両者がうなりを起こしうる。
+    // 5 秒ごとに周回数と平均周期を出す。
+    uint32_t cycles = 0;
+    uint32_t windowStartMs = static_cast<uint32_t>(esp_timer_get_time() / 1000);
 
     while (1) {
         const uwb::ResponderResult result = uwb.respondRange(makeRangeConfig());
+        cycles++;
+        {
+            const uint32_t nowMsLocal = static_cast<uint32_t>(esp_timer_get_time() / 1000);
+            const uint32_t spanMs      = nowMsLocal - windowStartMs;
+            if (spanMs >= 5000) {
+                ESP_LOGI(TAG, "SS_RESP_CYCLE cycles=%lu in %lums (mean %.1fms/cycle) ok=%lu fail=%lu temp=%.1fC",
+                         (unsigned long)cycles, (unsigned long)spanMs,
+                         (cycles == 0) ? 0.0 : (double)spanMs / (double)cycles, (unsigned long)respCount,
+                         (unsigned long)failCount, dieTempC());
+                cycles         = 0;
+                windowStartMs  = nowMsLocal;
+            }
+        }
         if (!result.success) {
             if (result.error == uwb::Error::RxTimeout) {
                 // まだPollが来ていないだけ。原本のANCHOR例と同じく無視して再ループ。

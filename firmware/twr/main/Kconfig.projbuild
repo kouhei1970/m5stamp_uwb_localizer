@@ -148,6 +148,24 @@ menu "UWB TWR Configuration"
             exactly as it did before this option existed. This is an
             experiment, not a fix - the real fix is task R10.
 
+    config UWB_TWR_RANGE_INTERVAL_MS
+        int "TAG poll interval [ms]"
+        range 20 5000
+        default 200
+        help
+            How often the TAG role starts a ranging exchange. 200 ms is the
+            original hard-coded value.
+
+            It is configurable because the ANCHOR re-arms its receiver on
+            every respondRange() call and waits up to pollHostTimeoutMs
+            (200 ms by default) for a poll. Two processes with nearly the
+            same period can beat against each other, which looks like long
+            dead stretches interrupted by short bursts of perfect success -
+            the pattern measured on real hardware. Setting an interval that
+            is not commensurate with the anchor's window (e.g. 137) tests
+            for that: if the success rate changes, the loss was scheduling,
+            not radio.
+
     config UWB_TWR_DIAG_ROBUST_PHY
         bool "Diagnostic: most robust PHY (preamble 1024, PAC32, 850kbps)"
         default n
