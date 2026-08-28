@@ -148,6 +148,24 @@ menu "UWB TWR Configuration"
             exactly as it did before this option existed. This is an
             experiment, not a fix - the real fix is task R10.
 
+    config UWB_TWR_DIAG_ROBUST_PHY
+        bool "Diagnostic: most robust PHY (preamble 1024, PAC32, 850kbps)"
+        default n
+        help
+            Replaces the default PHY settings (preamble 128 / PAC8 /
+            6.8 Mbps) with the most robust combination the chip offers:
+            preamble 1024 symbols, PAC 32, 850 kbps. This costs update rate
+            and airtime but gives preamble detection far more margin.
+
+            Use it to tell a marginal radio link apart from a timing or
+            addressing problem: if the success rate jumps, the link was the
+            limit. BOTH boards of a link must be flashed with the same
+            setting - a one-sided change simply stops ranging.
+
+            sfdTimeout is left at 0 so it is recomputed for the new preamble
+            length (task R8): a fixed sfdTimeout silently destroys the
+            reception rate when the preamble length changes.
+
     choice UWB_TIMING_PROFILE
         prompt "TWR timing preset"
         default UWB_TIMING_PROFILE_BOTH_IRQ

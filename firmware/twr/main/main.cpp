@@ -570,7 +570,22 @@ extern "C" void app_main(void)
 
     uwb::Qm33120 uwbDevice;
     const uwb::Config cfg = makeConfigFromBoard();
-    const uwb::PhyConfig phy; // defaults: ch9, preamble128, PAC8, 6.8Mbps (see uwb_qm33120_types.hpp)
+    uwb::PhyConfig phy; // defaults: ch9, preamble128, PAC8, 6.8Mbps (see uwb_qm33120_types.hpp)
+#if defined(CONFIG_UWB_TWR_DIAG_ROBUST_PHY) && CONFIG_UWB_TWR_DIAG_ROBUST_PHY
+    // Diagnostic: trade update rate for link margin. The default preamble of
+    // 128 symbols is the shortest the chip offers, so preamble detection has
+    // the least margin; 1024 symbols with PAC32 and 850 kbps is the most
+    // robust combination. Both boards of a link must use the same settings.
+    // sfdTimeout stays 0 so it is recomputed for the new preamble length
+    // (task R8 - a fixed sfdTimeout silently destroys the reception rate).
+    // 診断用: 更新レートを犠牲にして受信の余裕を増やす。既定のプリアンブル
+    // 128 シンボルはチップが出せる最短で、検出の余裕が最も小さい。
+    // 1024 + PAC32 + 850kbps が最も頑健な組み合わせ。両機を同じ設定にすること。
+    phy.preambleLength = uwb::PreambleLength::Len1024;
+    phy.pacSize        = uwb::PacSize::Pac32;
+    phy.dataRate       = uwb::DataRate::Rate850K;
+    ESP_LOGW(TAG, "DIAG_ROBUST_PHY: preamble=1024 PAC=32 rate=850kbps (both boards must match)");
+#endif
 
     // タスクD-2: 実際に使うSPI高速クロックを起動ログに出す(切り分け作業で
     // Kconfigの値が本当に反映されたかを確認できるように)。
