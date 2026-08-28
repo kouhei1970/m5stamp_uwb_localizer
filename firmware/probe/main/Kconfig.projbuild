@@ -62,4 +62,21 @@ menu "UWB Probe Configuration"
             reads back intermittently corrupted, by lowering the SPI
             clock. The QM33120W/DW3720 SPI clock ceiling is 32 MHz.
 
+    config UWB_PROBE_TEST_WAKEUP
+        bool "L10: exercise the WAKEUP pin (sleep -> WAKEUP pulse -> verify)"
+        default n
+        help
+            Puts the chip to sleep (dwt_configuresleep() + dwt_entersleep())
+            then pulses pin_wakeup high for 1ms, waits 100ms, and checks
+            that dwt_readdevid() still reads back correctly. The sleep is
+            configured to wake only on the WAKEUP pin (not on chip select),
+            so a successful read is unambiguous evidence that WAKEUP itself
+            did the waking.
+
+            Default off: if WAKEUP *and* RSTn are both unwired or broken,
+            recovering from a failed wake-up costs an extra hard-reset +
+            re-probe cycle before the rest of the board bring-up checklist
+            can continue running. Leave this off until RSTn (L4) has
+            already been confirmed working on a new board.
+
 endmenu
