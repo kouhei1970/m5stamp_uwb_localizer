@@ -404,6 +404,13 @@ RangeResult Qm33120::requestRange(const RangeConfig& range)
                 result.distanceMm =
                     static_cast<int32_t>((result.distanceM * 1000.0f) + (result.distanceM >= 0 ? 0.5f : -0.5f));
                 result.clockOffsetPpm = clockOffsetRatio * 1.0e6f; // 実機デバッグ用に可視化（R4）
+                {
+                    // Received-power indication for the frame just decoded.
+                    // 受信できたフレームの強さの指標。
+                    dwt_rxdiag_t diag = {};
+                    dwt_readdiagnostics(&diag);
+                    result.ipatovPower = diag.ipatovPower;
+                }
                 result.sequence        = pollSeq;
                 result.elapsedMs       = detail::nowMs() - startMs;
                 result.success         = true;
@@ -421,6 +428,9 @@ RangeResult Qm33120::requestRange(const RangeConfig& range)
         }
 
         if ((status & (SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR)) != 0) {
+            // Carry the raw status out before it is cleared (RangeResult::rxStatus).
+            // 消される前に生の status を持ち出す。
+            result.rxStatus = status;
             detail::stopRadioAndClearRxStatus();
             result.elapsedMs = detail::nowMs() - startMs;
             result.error     = detail::rxStatusToError(status);

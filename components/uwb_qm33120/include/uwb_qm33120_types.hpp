@@ -338,6 +338,26 @@ struct RangeResult {
      * (DW3720 API Guide §5.4.13) ため、その場合もここは0になる。
      */
     float clockOffsetPpm = 0.0f;
+    /**
+     * Raw SYS_STATUS (low word) captured at the moment the receive wait gave
+     * up, before stopRadioAndClearRxStatus() clears it. 0 when the exchange
+     * succeeded or the wait simply ran out of host time without the radio
+     * flagging anything. Lets the caller tell a PHY header error (RXPHE) from
+     * a CRC error (RXFCE) from a sync loss (RXFSL) - Error::RxError lumps
+     * them all together.
+     * 受信待ちを打ち切った瞬間の SYS_STATUS（下位ワード）を、消される前に
+     * そのまま持ち出す。Error::RxError では区別できない PHR エラー・CRC
+     * エラー・同期ロストを呼び出し側が見分けるため。成功時は 0。
+     */
+    uint32_t rxStatus     = 0;
+    /**
+     * Ipatov channel power estimate from dwt_readdiagnostics(), captured on a
+     * successful reception (0 otherwise). Raw register value - a relative
+     * indication of how strong the received frame was.
+     * 受信成功時の Ipatov チャネル電力推定（生値、失敗時は 0）。
+     * 受信フレームの強さの相対指標。
+     */
+    uint32_t ipatovPower  = 0;
 };
 
 /**

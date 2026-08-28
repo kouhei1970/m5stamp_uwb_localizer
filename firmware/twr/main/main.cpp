@@ -105,6 +105,41 @@ static const char* TAG = "uwb_twr";
  * ------------------------------------------------------------------------- */
 static constexpr uint32_t DIAG_REINIT_AFTER_FAILS = CONFIG_UWB_TWR_DIAG_REINIT_FAILS;
 
+/**
+ * @brief Decode the RX error bits of SYS_STATUS into a short name list.
+ *        Error::RxError lumps every receive failure together; these bits are
+ *        what actually tells them apart.
+ *        SYS_STATUS の受信エラービットを名前に開く。Error::RxError は受信
+ *        失敗を全部ひとまとめにするので、その内訳を見るために要る。
+ */
+static const char* rxStatusBits(uint32_t st, char* buf, size_t len)
+{
+    static const struct {
+        uint32_t mask;
+        const char* name;
+    } kBits[] = {
+        {DWT_INT_RXPHE_BIT_MASK, "RXPHE"},    // PHY header error / PHR の誤り
+        {DWT_INT_RXFCE_BIT_MASK, "RXFCE"},    // CRC error / CRC の誤り
+        {DWT_INT_RXFSL_BIT_MASK, "RXFSL"},    // Reed-Solomon / sync loss / 同期ロスト
+        {DWT_INT_RXSTO_BIT_MASK, "RXSTO"},    // SFD timeout
+        {DWT_INT_RXPTO_BIT_MASK, "RXPTO"},    // preamble timeout
+        {DWT_INT_ARFE_BIT_MASK, "ARFE"},      // frame filtering / フレームフィルタ
+        {DWT_INT_CIAERR_BIT_MASK, "CIAERR"},  // CIA timestamp estimator / タイムスタンプ推定
+        {DWT_INT_RXFTO_BIT_MASK, "RXFTO"},    // frame wait timeout
+    };
+    size_t n = 0;
+    buf[0]   = '\0';
+    for (size_t i = 0; i < (sizeof(kBits) / sizeof(kBits[0])); i++) {
+        if (((st & kBits[i].mask) != 0) && ((n + 8) < len)) {
+            n += static_cast<size_t>(snprintf(buf + n, len - n, "%s%s", (n != 0) ? "|" : "", kBits[i].name));
+        }
+    }
+    if (buf[0] == '\0') {
+        snprintf(buf, len, "none");
+    }
+    return buf;
+}
+
 /** @brief Read the on-chip die temperature [degC] / ダイ温度を読む */
 static float dieTempC()
 {
@@ -312,14 +347,20 @@ static void runRole(uwb::Qm33120& uwb)
         if (result.success) {
             ESP_LOGI(TAG,
                      "SS_RANGE_STAT count=%lu ok=%lu fail=%lu rate=%.1f%% last=OK seq=%u distance_mm=%ld "
-                     "distance_m=%.3f mean_mm=%.1f std_mm=%.1f n=%lu elapsed_ms=%lu temp=%.1fC clock_ppm=%.2f",
+                     "distance_m=%.3f mean_mm=%.1f std_mm=%.1f n=%lu elapsed_ms=%lu temp=%.1fC clock_ppm=%.2f "
+                     "ipatov_power=%lu",
                      (unsigned long)rangeCount, (unsigned long)rangeOkCount, (unsigned long)rangeFailCount, rate,
                      result.sequence, (long)result.distanceMm, result.distanceM, stats.mean, stats.stddev(),
-                     (unsigned long)stats.count, (unsigned long)result.elapsedMs, dieTempC(), result.clockOffsetPpm);
+                     (unsigned long)stats.count, (unsigned long)result.elapsedMs, dieTempC(), result.clockOffsetPpm,
+                     (unsigned long)result.ipatovPower);
         } else {
-            ESP_LOGW(TAG, "SS_RANGE_STAT count=%lu ok=%lu fail=%lu rate=%.1f%% last=FAIL seq=%u error=%s temp=%.1fC",
+            char statusBuf[72];
+            ESP_LOGW(TAG,
+                     "SS_RANGE_STAT count=%lu ok=%lu fail=%lu rate=%.1f%% last=FAIL seq=%u error=%s temp=%.1fC "
+                     "rx_status=0x%08lX [%s]",
                      (unsigned long)rangeCount, (unsigned long)rangeOkCount, (unsigned long)rangeFailCount, rate,
-                     result.sequence, uwb.lastErrorName(), dieTempC());
+                     result.sequence, uwb.lastErrorName(), dieTempC(), (unsigned long)result.rxStatus,
+                     rxStatusBits(result.rxStatus, statusBuf, sizeof(statusBuf)));
         }
     }
 }
