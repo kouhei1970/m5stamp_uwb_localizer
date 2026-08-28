@@ -18,7 +18,7 @@
 
 #include "deca_device_api.h"
 #include "deca_interface.h"
-#include "status_led.h"
+#include "uwb_status_led.h"
 #include "uwb_port.h"
 
 #if CONFIG_UWB_PROBE_BOARD_ATOMS3
@@ -50,11 +50,6 @@ static const char *TAG = "uwb_probe";
  * brighter (0-255).
  * ハートビートの点滅色と周期。WS2812 は緑が赤より明るく見えるので、
  * 黄緑に転ばないよう緑を赤より小さくしてある。両方を上げれば明るくなる。 */
-#define STATUS_LED_HEARTBEAT_R      12
-#define STATUS_LED_HEARTBEAT_G      8
-#define STATUS_LED_HEARTBEAT_B      0
-#define STATUS_LED_HEARTBEAT_ON_MS  250
-#define STATUS_LED_HEARTBEAT_OFF_MS 250
 #define PROBE_RETRY_COUNT     5
 #define PROBE_RETRY_DELAY_MS  20
 
@@ -162,10 +157,9 @@ void app_main(void)
      * つまり点滅は「起動して動作中」の意味であり、「疎通 OK」ではない。
      * 判定はログにしか出ない。 */
 #ifdef BOARD_STATUS_LED_GPIO
-    if (status_led_init(BOARD_STATUS_LED_GPIO) == ESP_OK) {
-        (void)status_led_start_blink(STATUS_LED_HEARTBEAT_R, STATUS_LED_HEARTBEAT_G, STATUS_LED_HEARTBEAT_B,
-                                     STATUS_LED_HEARTBEAT_ON_MS, STATUS_LED_HEARTBEAT_OFF_MS);
-    }
+    /* probe has no TAG/ANCHOR role, so it keeps the amber heartbeat.
+     * probe は役割を持たないので琥珀色のまま。 */
+    (void)uwb_status_led_start_role_heartbeat(BOARD_STATUS_LED_GPIO, UWB_STATUS_LED_ROLE_NONE);
 #endif
 
     uwb_port_config_t cfg = BOARD_UWB_PORT_CONFIG;

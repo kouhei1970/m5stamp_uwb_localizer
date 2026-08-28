@@ -8,6 +8,9 @@ idf_component_register(
         # resolves (same convention as firmware/probe and firmware/devtest).
         "../../.."
     REQUIRES
+        # 役割別ハートビート LED (タグ=緑 / アンカー=赤)
+        # Role heartbeat LED (tag = green, anchor = red)
+        uwb_status_led
         uwb_qm33120
         uwb_port
         qm33120w_sdk

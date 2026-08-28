@@ -1,7 +1,6 @@
 idf_component_register(
     SRCS
         "main.c"
-        "status_led.c"
     INCLUDE_DIRS
         "."
         # Repo root, three levels up from firmware/probe/main/, so that
@@ -9,9 +8,9 @@ idf_component_register(
         # resolves.
         "../../.."
     REQUIRES
+        # 役割別ハートビート LED (タグ=緑 / アンカー=赤)
+        # Role heartbeat LED (tag = green, anchor = red)
+        uwb_status_led
         uwb_port
         qm33120w_sdk
-        # 内蔵フルカラー LED のハートビート表示 (status_led.c) が使う
-        # ESP-IDF 内蔵 RMT ドライバ / built-in RMT driver used by status_led.c
-        esp_driver_rmt
 )

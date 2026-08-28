@@ -1,11 +1,11 @@
 /**
- * @file status_led.c
+ * @file uwb_status_led.c
  * @brief WS2812/SK6812 heartbeat LED over the ESP-IDF built-in RMT TX
  *        driver. See status_led.h for the rationale.
  *
  * WS2812 系 LED をハートビート表示に使う実装。意図は status_led.h を参照。
  */
-#include "status_led.h"
+#include "uwb_status_led.h"
 
 #include "driver/rmt_encoder.h"
 #include "driver/rmt_tx.h"
@@ -37,16 +37,16 @@ static rmt_encoder_handle_t s_encoder = NULL;
 static TaskHandle_t         s_task    = NULL;
 
 /* Blink parameters, read by the task and rewritten by
- * status_led_start_blink(). Each field is written atomically on a 32-bit
+ * uwb_status_led_start_blink(). Each field is written atomically on a 32-bit
  * core and the task only ever reads them, so no lock is needed - the worst
  * case is one blink cycle using a mix of the old and new values.
  *
- * 点滅パラメータ。タスクは読むだけ、書き換えは status_led_start_blink()
+ * 点滅パラメータ。タスクは読むだけ、書き換えは uwb_status_led_start_blink()
  * だけなので、ロックは要らない（最悪でも1周期だけ新旧が混ざる）。 */
 static volatile uint8_t  s_r = 0, s_g = 0, s_b = 0;
 static volatile uint32_t s_on_ms = 250, s_off_ms = 250;
 
-esp_err_t status_led_init(int gpio_num)
+esp_err_t uwb_status_led_init(int gpio_num)
 {
     if (s_chan != NULL) {
         return ESP_OK; /* already initialized / 初期化済み */
@@ -91,7 +91,7 @@ esp_err_t status_led_init(int gpio_num)
     return ESP_OK;
 }
 
-esp_err_t status_led_set(uint8_t r, uint8_t g, uint8_t b)
+esp_err_t uwb_status_led_set(uint8_t r, uint8_t g, uint8_t b)
 {
     if ((s_chan == NULL) || (s_encoder == NULL)) {
         return ESP_ERR_INVALID_STATE;
@@ -113,18 +113,18 @@ esp_err_t status_led_set(uint8_t r, uint8_t g, uint8_t b)
     return rmt_tx_wait_all_done(s_chan, pdMS_TO_TICKS(100));
 }
 
-static void status_led_blink_task(void *arg)
+static void uwb_status_led_blink_task(void *arg)
 {
     (void)arg;
     for (;;) {
-        (void)status_led_set(s_r, s_g, s_b);
+        (void)uwb_status_led_set(s_r, s_g, s_b);
         vTaskDelay(pdMS_TO_TICKS(s_on_ms));
-        (void)status_led_set(0, 0, 0);
+        (void)uwb_status_led_set(0, 0, 0);
         vTaskDelay(pdMS_TO_TICKS(s_off_ms));
     }
 }
 
-esp_err_t status_led_start_blink(uint8_t r, uint8_t g, uint8_t b, uint32_t on_ms, uint32_t off_ms)
+esp_err_t uwb_status_led_start_blink(uint8_t r, uint8_t g, uint8_t b, uint32_t on_ms, uint32_t off_ms)
 {
     if (s_chan == NULL) {
         return ESP_ERR_INVALID_STATE;
@@ -140,7 +140,7 @@ esp_err_t status_led_start_blink(uint8_t r, uint8_t g, uint8_t b, uint32_t on_ms
         return ESP_OK; /* task already running, parameters swapped above */
     }
 
-    BaseType_t ok = xTaskCreate(status_led_blink_task, "status_led", LED_TASK_STACK_BYTES, NULL, LED_TASK_PRIORITY,
+    BaseType_t ok = xTaskCreate(uwb_status_led_blink_task, "status_led", LED_TASK_STACK_BYTES, NULL, LED_TASK_PRIORITY,
                                 &s_task);
     if (ok != pdPASS) {
         s_task = NULL;
@@ -148,4 +148,41 @@ esp_err_t status_led_start_blink(uint8_t r, uint8_t g, uint8_t b, uint32_t on_ms
         return ESP_ERR_NO_MEM;
     }
     return ESP_OK;
+}
+
+/* --- Role heartbeat / 役割別のハートビート ------------------------------
+ * Brightness is deliberately low (the LED is a status indicator, not
+ * illumination) and green is kept dimmer than red because a WS2812's green
+ * die reads as brighter than its red one at the same value, which would
+ * otherwise make the tag look much louder than the anchor.
+ * 輝度は意図的に低くしてある（照明ではなく状態表示なので）。WS2812 は
+ * 同じ値でも緑が赤より明るく見えるため、タグだけが目立たないよう緑を
+ * 赤より小さくしてある。
+ * ---------------------------------------------------------------------- */
+#define ROLE_HEARTBEAT_ON_MS  250
+#define ROLE_HEARTBEAT_OFF_MS 250
+
+esp_err_t uwb_status_led_start_role_heartbeat(int gpio_num, uwb_status_led_role_t role)
+{
+    const esp_err_t err = uwb_status_led_init(gpio_num);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    uint8_t r = 12, g = 8, b = 0; /* UWB_STATUS_LED_ROLE_NONE: amber / 琥珀色 */
+    switch (role) {
+        case UWB_STATUS_LED_ROLE_TAG:
+            r = 0;
+            g = 10;
+            b = 0;
+            break;
+        case UWB_STATUS_LED_ROLE_ANCHOR:
+            r = 14;
+            g = 0;
+            b = 0;
+            break;
+        default:
+            break;
+    }
+    return uwb_status_led_start_blink(r, g, b, ROLE_HEARTBEAT_ON_MS, ROLE_HEARTBEAT_OFF_MS);
 }

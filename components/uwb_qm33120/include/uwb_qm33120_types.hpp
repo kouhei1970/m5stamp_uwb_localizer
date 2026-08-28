@@ -386,6 +386,15 @@ struct ResponderResult {
     uint16_t requester = 0;
     uint32_t elapsedMs = 0;
     Error error         = Error::Ok;
+    /**
+     * Raw SYS_STATUS (low word) captured when the poll wait gave up, before
+     * stopRadioAndClearRxStatus() clears it. Same purpose as
+     * RangeResult::rxStatus - tells "nothing arrived" (RXFTO, no RXPRD) apart
+     * from "arrived but could not be decoded" (RXPHE / RXFCE / RXFSL).
+     * Poll 待ちを打ち切った瞬間の SYS_STATUS（下位ワード）。
+     * 「何も来ていない」のか「来たが復調できない」のかを区別するため。
+     */
+    uint32_t rxStatus = 0;
 };
 
 /**

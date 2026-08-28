@@ -54,6 +54,7 @@
 
 #include "uwb_cfgstore.hpp"
 #include "uwb_port.h"
+#include "uwb_status_led.h"
 #include "uwb_qm33120.hpp"
 
 #if CONFIG_UWB_ANCHOR_CONSOLE
@@ -68,6 +69,7 @@
 #include "boards/stamps3.h"
 #define BOARD_UWB_PORT_CONFIG BOARD_STAMPS3_UWB_PORT_CONFIG
 #define BOARD_NAME            "M5StampS3A"
+#define BOARD_STATUS_LED_GPIO BOARD_STAMPS3_STATUS_LED_GPIO
 #endif
 
 #if CONFIG_UWB_ANCHOR_METHOD_DS
@@ -382,6 +384,16 @@ static void runRole(uwb::Qm33120& uwb)
 
 extern "C" void app_main(void)
 {
+#ifdef BOARD_STATUS_LED_GPIO
+/* Heartbeat colour tells the role apart once the boards are placed and no
+ * serial monitor is attached: TAG = green, ANCHOR = red (components/
+ * uwb_status_led). Only the M5StampS3A carries a WS2812 on a known GPIO -
+ * the AtomS3 has an LCD instead - so the heartbeat compiles out there.
+ * 設置後にシリアルを繋がない状態でも役割が分かるよう、ハートビートの色で
+ * タグ(緑)とアンカー(赤)を見分ける。フルカラー LED を持つのは M5StampS3A
+ * だけ(AtomS3 は LCD)なので、それ以外ではハートビートごと消える。 */
+    (void)uwb_status_led_start_role_heartbeat(BOARD_STATUS_LED_GPIO, UWB_STATUS_LED_ROLE_ANCHOR);
+#endif
     /* --- NVS からショートアドレスを読む（無ければKconfig既定値） ---
      * ConfigStore::init() が失敗しても loadAnchorAddr() は必ず既定値を返すので、
      * ここでは戻り値を見て中断しない。NVS破損で起動しなくなるのを避ける方針。 */

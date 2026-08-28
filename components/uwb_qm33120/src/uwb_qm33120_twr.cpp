@@ -597,6 +597,8 @@ ResponderResult Qm33120::respondRange(const RangeConfig& range)
         }
 
         if ((status & (SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR)) != 0) {
+            // 消される前に生の status を持ち出す / carry the raw status out
+            result.rxStatus = status;
             detail::stopRadioAndClearRxStatus();
             result.elapsedMs = detail::nowMs() - startMs;
             result.error     = detail::rxStatusToError(status);

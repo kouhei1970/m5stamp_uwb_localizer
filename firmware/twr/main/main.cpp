@@ -43,6 +43,7 @@
 
 #include "deca_device_api.h"
 #include "uwb_port.h"
+#include "uwb_status_led.h"
 #include "uwb_qm33120.hpp"
 
 #if CONFIG_UWB_TWR_BOARD_ATOMS3
@@ -53,10 +54,22 @@
 #include "boards/stampfly.h"
 #define BOARD_UWB_PORT_CONFIG BOARD_STAMPFLY_UWB_PORT_CONFIG
 #define BOARD_NAME            "StampFly"
+#define BOARD_STATUS_LED_GPIO BOARD_STAMPFLY_STATUS_LED_GPIO
 #else
 #include "boards/stamps3.h"
 #define BOARD_UWB_PORT_CONFIG BOARD_STAMPS3_UWB_PORT_CONFIG
 #define BOARD_NAME            "M5StampS3A"
+#define BOARD_STATUS_LED_GPIO BOARD_STAMPS3_STATUS_LED_GPIO
+#endif
+
+/* The unselected members of a Kconfig choice are undefined, not 0, so the
+ * role has to be folded into a constant with #if rather than a C expression.
+ * Kconfig の choice は選ばれなかった側が「未定義」になるので、C の式では
+ * なく #if で定数に畳む。 */
+#if CONFIG_UWB_TWR_ROLE_ANCHOR
+#define BOARD_STATUS_LED_ROLE UWB_STATUS_LED_ROLE_ANCHOR
+#else
+#define BOARD_STATUS_LED_ROLE UWB_STATUS_LED_ROLE_TAG
 #endif
 
 #if CONFIG_UWB_TWR_ROLE_ANCHOR
@@ -551,8 +564,10 @@ static void runRole(uwb::Qm33120& uwb)
             }
             failCount++;
             if ((failCount % ANCHOR_LOG_INTERVAL) == 0) {
-                ESP_LOGW(TAG, "SS_RESP_STAT ok=%lu fail=%lu last=FAIL error=%s", (unsigned long)respCount,
-                         (unsigned long)failCount, uwb.lastErrorName());
+                char statusBuf[72];
+                ESP_LOGW(TAG, "SS_RESP_STAT ok=%lu fail=%lu last=FAIL error=%s rx_status=0x%08lX [%s]",
+                         (unsigned long)respCount, (unsigned long)failCount, uwb.lastErrorName(),
+                         (unsigned long)result.rxStatus, rxStatusBits(result.rxStatus, statusBuf, sizeof(statusBuf)));
             }
             continue;
         }
@@ -649,6 +664,16 @@ static void runRole(uwb::Qm33120& uwb)
 
 extern "C" void app_main(void)
 {
+#ifdef BOARD_STATUS_LED_GPIO
+/* Heartbeat colour tells the role apart once the boards are placed and no
+ * serial monitor is attached: TAG = green, ANCHOR = red (components/
+ * uwb_status_led). Only the M5StampS3A carries a WS2812 on a known GPIO -
+ * the AtomS3 has an LCD instead - so the heartbeat compiles out there.
+ * 設置後にシリアルを繋がない状態でも役割が分かるよう、ハートビートの色で
+ * タグ(緑)とアンカー(赤)を見分ける。フルカラー LED を持つのは M5StampS3A
+ * だけ(AtomS3 は LCD)なので、それ以外ではハートビートごと消える。 */
+    (void)uwb_status_led_start_role_heartbeat(BOARD_STATUS_LED_GPIO, BOARD_STATUS_LED_ROLE);
+#endif
     ESP_LOGI(TAG, "Phase 2 Step 2 uwb_qm33120 TWR firmware, board=%s role=%s method=%s", BOARD_NAME, ROLE_NAME,
              METHOD_NAME);
 
