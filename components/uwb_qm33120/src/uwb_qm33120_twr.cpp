@@ -556,9 +556,19 @@ ResponderResult Qm33120::respondRange(const RangeConfig& range)
                     return result;
                 }
                 dwt_writetxfctrl(sizeof(respFrame) + FCS_LEN, 0, 1);
+
+                // 締切まで何µs残っているかを、予約する直前に測って持ち出す。
+                // 負なら dwt_starttx() は送信を取り消す（detail::delayedTxMarginUs()
+                // のコメント参照）ので、TxStartFailed の原因がここで確定する。
+                // Carry out how much of the deadline is left, measured just
+                // before arming: a negative margin is why dwt_starttx() fails.
+                result.txMarginUs = detail::delayedTxMarginUs(respTxTime);
+
                 if (dwt_starttx(DWT_START_TX_DELAYED) != DWT_SUCCESS) {
                     detail::stopRadioAndClearTxStatus();
-                    result.error = Error::TxStartFailed;
+                    result.requester = parsed.src;
+                    result.sequence   = parsed.sequence;
+                    result.error      = Error::TxStartFailed;
                     setError(result.error);
                     return result;
                 }
@@ -776,6 +786,11 @@ DSRangeResult Qm33120::requestDSRange(const DSRangeConfig& range)
         return result;
     }
     dwt_writetxfctrl(sizeof(finalFrame) + FCS_LEN, 0, 1);
+    // Final の遅延送信の締切まで何µs残っているか（detail::delayedTxMarginUs()）。
+    // 負なら dwt_starttx() は送信を取り消すので、下の TxStartFailed の原因が
+    // ここで確定する。DS-TWR はタグ側にもこの締切がある（Response -> Final）。
+    // How much of the Final deadline is left; negative is why starttx fails.
+    result.txMarginUs = detail::delayedTxMarginUs(finalTxTime);
     if (dwt_starttx(DWT_START_TX_DELAYED | DWT_RESPONSE_EXPECTED) != DWT_SUCCESS) {
         detail::stopRadioAndClearIoStatus();
         result.error = Error::TxStartFailed;
@@ -1004,6 +1019,11 @@ DSResponderResult Qm33120::respondDSRange(const DSRangeConfig& range)
         return result;
     }
     dwt_writetxfctrl(sizeof(respFrame) + FCS_LEN, 0, 1);
+    // Response の遅延送信の締切まで何µs残っているか（detail::delayedTxMarginUs()）。
+    // 負なら dwt_starttx() は送信を取り消し、タグ側は「電波が来ていない」と
+    // 区別できない失敗（RXFTO のみ）を見ることになる。
+    // How much of the Response deadline is left; negative is why starttx fails.
+    result.txMarginUs = detail::delayedTxMarginUs(respTxTime);
     if (dwt_starttx(DWT_START_TX_DELAYED | DWT_RESPONSE_EXPECTED) != DWT_SUCCESS) {
         detail::stopRadioAndClearIoStatus();
         result.error = Error::TxStartFailed;

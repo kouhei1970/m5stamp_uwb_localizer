@@ -186,6 +186,14 @@ static constexpr uwb::TimingProfile TIMING_PROFILE = uwb::TimingProfile::BothIrq
 static constexpr uwb::TimingProfile TIMING_PROFILE = uwb::TimingProfile::PollingBoth;
 #endif
 
+/* begin() 成功後に「実際に適用されたプリセット」で上書きする。
+ * IRQ 線が死んでいると init() が PollingBoth へ降格するため、
+ * コンパイル時の TIMING_PROFILE をそのまま使ってはいけない。
+ * The profile init() actually applied - init() downgrades IRQ presets to
+ * PollingBoth when the IRQ line turns out to be dead, so the compile-time
+ * TIMING_PROFILE must not be used directly. */
+static uwb::TimingProfile g_effectiveTimingProfile = TIMING_PROFILE;
+
 /* --- ネットワーク共通パラメータ（4組み合わせ共通。examples 配下の各 .ino と同じ値） --- */
 static constexpr uint16_t PAN_ID           = 0xDECA;
 // タスクD-1(docs/HANDOFF.md §5): Kconfig化。既定値は元のソース上の固定値
@@ -311,12 +319,15 @@ static uwb::RangeConfig makeRangeConfig()
     // the PollingBoth preset; uwb_qm33120_types.hpp). They look like values
     // copied from the DS-TWR block by mistake. requestRange() DOES use both
     // (dwt_setrxaftertxdelay / dwt_setrxtimeout, uwb_qm33120_twr.cpp), so the
-    // preset really does change this path: (1500, 4500) -> (500, 4500) even
-    // under the default Kconfig (PollingBoth). This is safe - the new values
-    // open the RX window earlier and keep it open longer, and they satisfy the
+    // preset really does change this path: (1500, 4500) -> (500, 4500)
+    // whenever the effective profile ends up PollingBoth - which is NOT the
+    // Kconfig default (that is BothIrq); it is what init() falls back to at
+    // runtime when the IRQ line turns out to be dead (Qm33120::verifyIrqLine()),
+    // or what a user explicitly selects. This is safe - the new values open
+    // the RX window earlier and keep it open longer, and they satisfy the
     // deadline inequality in docs/TIMING_PRESETS.md section 1.2 with more
     // margin than the old ones.
-    uwb::applyTimingProfile(range, TIMING_PROFILE);
+    uwb::applyTimingProfile(range, g_effectiveTimingProfile);
     return range;
 }
 
@@ -415,9 +426,11 @@ static uwb::DSRangeConfig makeRangeConfig()
     // assignments above (*Uus fields only; panId/addresses/hostTimeoutMs/
     // resultRepeatCount/resultRepeatGapMs are untouched). This DS-TWR
     // block's individual values already match the PollingBoth row of
-    // docs/TIMING_PRESETS.md SS2.2 exactly, so under the default Kconfig
-    // (PollingBoth) this call is effectively a no-op.
-    uwb::applyTimingProfile(range, TIMING_PROFILE);
+    // docs/TIMING_PRESETS.md SS2.2 exactly, so this call is a no-op only when
+    // the effective profile is PollingBoth (explicitly selected, or
+    // downgraded at runtime because the IRQ line is dead) - the Kconfig
+    // default is BothIrq, for which it does change the values.
+    uwb::applyTimingProfile(range, g_effectiveTimingProfile);
     return range;
 }
 
@@ -500,18 +513,27 @@ static uwb::RangeConfig makeRangeConfig()
     // hardcodes dwt_setrxaftertxdelay(0) / dwt_setrxtimeout(0)
     // (components/uwb_qm33120/src/uwb_qm33120_twr.cpp, respondRange()).
     // They were already dead here, so overriding them changes nothing on air.
-    uwb::applyTimingProfile(range, TIMING_PROFILE);
+    uwb::applyTimingProfile(range, g_effectiveTimingProfile);
     // How long this anchor keeps its receiver armed while waiting for a poll.
-    // The measured failure mode: the window opens a few ms after the previous
-    // exchange, so the next poll lands (window - t_exchange) into it. With the
-    // window equal to the tag's poll period the margin is only ~3ms, and the
-    // phase never re-centres itself - it sits either just inside (every poll
-    // heard) or just outside (none heard) for tens of seconds. Making the
-    // window comfortably longer than the poll period restores the margin.
-    // アンカーが Poll を待つ間、受信機を開けておく時間。窓が Poll 周期と
-    // 同じだと余裕が約 3ms しか無く、位相が自分で中央へ戻らないため、
-    // 「全部聞こえる」か「全く聞こえない」かが数十秒単位で入れ替わる。
-    // 窓を Poll 周期より十分長くすれば余裕が戻る。
+    //
+    // [2026-08-28 訂正] ここには以前「窓と Poll 周期がほぼ等しいために位相が
+    // うなり、数十秒単位で全部聞こえる/全く聞こえないが入れ替わる」という
+    // 説明が書いてあったが、これは誤りだった。respondRange() は
+    // dwt_setrxtimeout(0)（タイムアウト無効）で受信機を開き、窓が満了するまで
+    // 開けたままにする。呼び直しの合間に閉じている時間は SPI 数回ぶん
+    // （µs オーダー）しかないので、受信デューティは窓の長さによらず 99% 以上
+    // あり、窓と周期のうなりでは 1〜18% という成功率を説明できない。
+    // 実際に周期性を生んでいたのは**アンカー側の 1ms tick と遅延送信の締切**
+    // の関係である（docs/TIMING_PRESETS.md §4 / uwb_qm33120.cpp の
+    // Qm33120::init() 内コメント）。この窓はもはや主要因ではないので、
+    // 値は診断用に残すだけにする。
+    //
+    // The earlier comment here blamed a beat between this window and the tag's
+    // poll period. That was wrong: respondRange() arms the receiver with the
+    // frame-wait timeout disabled and leaves it armed for the whole window, so
+    // the receive duty cycle is >99% regardless of the window length. The real
+    // periodicity came from the anchor's 1 ms tick versus the delayed-TX
+    // deadline. This knob is kept for diagnostics only.
 #if CONFIG_UWB_TWR_POLL_WAIT_MS > 0
     range.pollHostTimeoutMs = CONFIG_UWB_TWR_POLL_WAIT_MS;
 #endif
@@ -565,9 +587,17 @@ static void runRole(uwb::Qm33120& uwb)
             failCount++;
             if ((failCount % ANCHOR_LOG_INTERVAL) == 0) {
                 char statusBuf[72];
-                ESP_LOGW(TAG, "SS_RESP_STAT ok=%lu fail=%lu last=FAIL error=%s rx_status=0x%08lX [%s]",
+                // tx_margin_us: 遅延送信を予約した瞬間の締切までの残り [µs]。
+                // error=TxStartFailed でこれが負なら、Poll は聞こえていたのに
+                // 折返しが間に合わず**送信が取り消された**ことの直接の証拠。
+                // Negative tx_margin_us with error=TxStartFailed is direct
+                // evidence that the poll WAS heard but the response was
+                // cancelled because the turnaround missed the deadline.
+                ESP_LOGW(TAG,
+                         "SS_RESP_STAT ok=%lu fail=%lu last=FAIL error=%s rx_status=0x%08lX [%s] tx_margin_us=%ld",
                          (unsigned long)respCount, (unsigned long)failCount, uwb.lastErrorName(),
-                         (unsigned long)result.rxStatus, rxStatusBits(result.rxStatus, statusBuf, sizeof(statusBuf)));
+                         (unsigned long)result.rxStatus, rxStatusBits(result.rxStatus, statusBuf, sizeof(statusBuf)),
+                         (long)result.txMarginUs);
             }
             continue;
         }
@@ -577,9 +607,15 @@ static void runRole(uwb::Qm33120& uwb)
         if ((respCount % ANCHOR_LOG_INTERVAL) != 0) {
             continue;
         }
-        ESP_LOGI(TAG, "SS_RESP_STAT ok=%lu fail=%lu last=OK seq=%u requester=0x%04X elapsed_ms=%lu temp=%.1fC",
+        // tx_margin_us: 成功時でも残りが小さければ締切ぎりぎりで動いている。
+        // docs/TIMING_PRESETS.md §1.3 の折返し時間の見積りは、この値と
+        // responseTxDelayUus の実µs値の差として実測できる。
+        // Even on success, a small margin means the deadline is nearly missed.
+        ESP_LOGI(TAG,
+                 "SS_RESP_STAT ok=%lu fail=%lu last=OK seq=%u requester=0x%04X elapsed_ms=%lu tx_margin_us=%ld "
+                 "temp=%.1fC",
                  (unsigned long)respCount, (unsigned long)failCount, result.sequence, result.requester,
-                 (unsigned long)result.elapsedMs, dieTempC());
+                 (unsigned long)result.elapsedMs, (long)result.txMarginUs, dieTempC());
     }
 }
 
@@ -618,9 +654,11 @@ static uwb::DSRangeConfig makeRangeConfig()
     // assignments above (*Uus fields only; panId/addresses/hostTimeoutMs/
     // resultRepeatCount/resultRepeatGapMs are untouched). This DS-TWR
     // block's individual values already match the PollingBoth row of
-    // docs/TIMING_PRESETS.md SS2.2 exactly, so under the default Kconfig
-    // (PollingBoth) this call is effectively a no-op.
-    uwb::applyTimingProfile(range, TIMING_PROFILE);
+    // docs/TIMING_PRESETS.md SS2.2 exactly, so this call is a no-op only when
+    // the effective profile is PollingBoth (explicitly selected, or
+    // downgraded at runtime because the IRQ line is dead) - the Kconfig
+    // default is BothIrq, for which it does change the values.
+    uwb::applyTimingProfile(range, g_effectiveTimingProfile);
     return range;
 }
 
@@ -729,6 +767,14 @@ extern "C" void app_main(void)
         ESP_LOGE(TAG, "PHY init did not complete (isInitialized()==false), aborting");
         return;
     }
+
+    // init() may have downgraded the requested TIMING_PROFILE to PollingBoth
+    // if the IRQ line turned out to be dead (Qm33120::verifyIrqLine()). Carry
+    // the profile that was actually applied forward from here on.
+    // IRQ 線が死んでいると init() が要求プリセットを PollingBoth へ降格させて
+    // いることがあるため、以降は「実際に適用されたプリセット」を使う。
+    g_effectiveTimingProfile = uwbDevice.config().timing_profile;
+
     ESP_LOGI(TAG, "begin() + PHY config OK, starting %s/%s loop", ROLE_NAME, METHOD_NAME);
 
     // --- Log whether IRQ actually ended up active (docs/IRQ_POLICY.md) ---
@@ -746,8 +792,33 @@ extern "C" void app_main(void)
     }
 
     // --- Timing preset (docs/TIMING_PRESETS.md, task D-2) ---
-    ESP_LOGI(TAG, "timing profile=%s (version=%u)", uwb::timingProfileName(TIMING_PROFILE),
-             (unsigned)uwb::kTimingPresetVersion);
+    // Logs g_effectiveTimingProfile (what init() actually applied), plus
+    // requested= (the compile-time TIMING_PROFILE) so a runtime downgrade to
+    // PollingBoth is visible from the boot log alone.
+    // g_effectiveTimingProfile（init() が実際に適用した値）と、
+    // requested=（コンパイル時の TIMING_PROFILE）の両方を出す。実行時の
+    // PollingBoth への降格が起きていないかを起動ログだけで判別できるように。
+#if CONFIG_UWB_TWR_METHOD_DS
+    {
+        const uwb::TimingPresetDs ds = uwb::timingPresetDs(g_effectiveTimingProfile);
+        ESP_LOGI(TAG,
+                 "timing profile=%s (version=%u, requested=%s) wait=%s response_tx_delay=%luuus(%.0fus) "
+                 "final_tx_delay=%luuus(%.0fus)",
+                 uwb::timingProfileName(g_effectiveTimingProfile), (unsigned)uwb::kTimingPresetVersion,
+                 uwb::timingProfileName(TIMING_PROFILE), uwbDevice.irqActive() ? "irq" : "polling",
+                 (unsigned long)ds.responseTxDelayUus, ds.responseTxDelayUus * 1.02564,
+                 (unsigned long)ds.finalTxDelayUus, ds.finalTxDelayUus * 1.02564);
+    }
+#else
+    {
+        const uwb::TimingPresetSs ss = uwb::timingPresetSs(g_effectiveTimingProfile);
+        ESP_LOGI(TAG,
+                 "timing profile=%s (version=%u, requested=%s) wait=%s response_tx_delay=%luuus(%.0fus)",
+                 uwb::timingProfileName(g_effectiveTimingProfile), (unsigned)uwb::kTimingPresetVersion,
+                 uwb::timingProfileName(TIMING_PROFILE), uwbDevice.irqActive() ? "irq" : "polling",
+                 (unsigned long)ss.responseTxDelayUus, ss.responseTxDelayUus * 1.02564);
+    }
+#endif
     // Diagnostics: the crystal trim and the die temperature this chip booted
     // at. A large trim difference between the two boards - or a large die
     // temperature difference, since the crystal drifts with temperature -

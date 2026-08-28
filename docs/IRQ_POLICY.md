@@ -18,9 +18,12 @@
 **ポーリング経路は残すが、位置づけは「フォールバック」である。**
 消さない理由は3つ:
 
-1. IRQ の極性が実機で未検証（下記）
+1. IRQ の極性は一次資料（データシート）で確認したが、実機での通電確認はまだ（下記）
 2. `pin_irq` を配線しない個体・構成があり得る
 3. ISR 登録に失敗しても測距だけは続けられるようにしておきたい
+4. （2026-08-28 追加）ISR 登録に成功しても IRQ 線が実際に生きているとは限らない。
+   `verifyIrqLine()` の実測に落ちても測距だけは続けられるようにしておきたい
+   （詳細は下記「実装要件 1」）
 
 `uwb_port_irq_wait()` は IRQ が無効なとき `vTaskDelay()` と完全に等価に
 振る舞うので、**待ちループのコードは1本**である。IRQ の有無で復号経路が
@@ -30,15 +33,37 @@
 
 ## 【重要】既定を IRQ にしたことの risk
 
-**IRQ の極性は実機で一度も検証していない。** 実装は `GPIO_INTR_POSEDGE`
-（アクティブ HIGH 前提）で、根拠は Qorvo SDK の記述
-（`components/qm33120w_sdk/deca_device_api.h`「The IRQ line has to be
-low/inactive (i.e., no pending events) otherwise device will not enter
-sleep」＝ active は HIGH）だが、実機で確かめてはいない。
+**IRQ の極性は一次資料（データシート）で裏付けたが、実機での通電確認はまだ
+していない。** 実装は `GPIO_INTR_POSEDGE`（アクティブ HIGH 前提）。従来この
+節は根拠を Qorvo SDK のコメント（`components/qm33120w_sdk/deca_device_api.h`
+「The IRQ line has to be low/inactive (i.e., no pending events) otherwise
+device will not enter sleep」から active は HIGH と類推）だけに置いていたが、
+これは状況証拠であって直接の裏付けではなかった。**2026-08-28、Qorvo 公式
+データシートの本文で直接裏付けが取れた:**
 
-さらに **遅延プリセットは IRQ の実際の有効／無効に追従しない**
-（`docs/TIMING_PRESETS.md`）。`BothIrq` は折返し時間を詰めた値なので、
-**IRQ が期待どおり動かないまま `BothIrq` の遅延で走ると測距が全く成立しない。**
+> `assets/QM33120W Data Sheet.pdf` (Rev. D, 2025-10) p.6, Section 2 "Pin
+> Configuration and Descriptions", Table 1, ball B1 (IRQ/GPIO8):
+> "Interrupt Request output from the QM33120W to the host processor. By
+> default, IRQ is an active-high output but may be configured to be
+> active-low if required. For correct operation in SLEEP and DEEPSLEEP
+> modes, it should be configured for active-high operation. This pin will
+> float in SLEEP and DEEPSLEEP states and may cause spurious interrupts
+> unless pulled low."
+
+**IRQ は既定でアクティブ HIGH の出力**であり、`GPIO_INTR_POSEDGE` の想定と
+一致している。**ただし「一次資料でチップの既定仕様を確認した」ことと
+「この個体で実際にその極性で動作していることを通電して確認した」ことは別
+であり、後者はまだ済んでいない。** この区別は本ドキュメント全体で維持する。
+
+**遅延プリセットは、2026-08-28 から既定で IRQ の実際の有効／無効に追従する
+ようになった**（`docs/TIMING_PRESETS.md` §4(b)、
+`Config::downgrade_timing_profile_when_polling` 既定 `true`）。待ちが
+ポーリングへ落ちたときは、`AnchorIrq`/`BothIrq` を要求していても `init()` が
+自動的に `PollingBoth` へ降格するため、既定のままなら「IRQ が期待どおり
+動かないまま `BothIrq` の遅延で走る」状態にはならない。この既定を `false`
+にして旧方針（自動で変えない・警告のみ）へ戻した場合は、従来どおり
+**IRQ が期待どおり動かないまま `BothIrq` の遅延で走ると測距が全く成立
+しない**ままなので注意（`docs/TIMING_PRESETS.md` §4(b)）。
 
 ### 測距が出ないときの切り分け
 
@@ -50,9 +75,14 @@ sleep」＝ active は HIGH）だが、実機で確かめてはいない。
 | `irq=active (pin=N)` | IRQ が有効。想定どおり |
 | `irq=polling (pin_irq unwired)` | `boards/*.h` の `pin_irq` が `UWB_PORT_PIN_UNUSED` |
 | `irq=polling (disabled by Kconfig)` | `CONFIG_UWB_ENABLE_IRQ=n` |
-| `irq=polling (enable failed)` | ISR 登録に失敗 |
+| `irq=polling (enable failed)` | ISR 登録に失敗、**または（2026-08-28〜）`verifyIrqLine()` の実測に失敗**。ログの文言だけではどちらか区別できない（`Qm33120::irqActive()` はどちらの場合も false を返す）。切り分けるには `Qm33120` タグの `irq self-test: ...` 行（`ESP_LOGW`/`ESP_LOGI`）を別途見る（`docs/TIMING_PRESETS.md` §4(a)） |
 
-**`irq=polling` なのに遅延プリセットが `BothIrq` のままなら、その組み合わせが原因。**
+**2026-08-28 以降、既定（`downgrade_timing_profile_when_polling=true`）では
+`irq=polling` になると遅延プリセットも自動で `PollingBoth` へ降格するため、
+「`irq=polling` なのに遅延プリセットが `BothIrq` のまま」という組み合わせは
+基本的に起きない。** 起動ログの `timing profile=` 行（`docs/TIMING_PRESETS.md`
+§5）で実際に適用された値を確認すること。この既定を `false` にしている場合や
+旧バージョンのファームでは、従来どおりこの組み合わせが原因になりうる。
 配布バイナリなら `*-polling` 版に差し替える
 （`anchor-stamps3-ds-polling` + `tag-stampfly-ds-polling`。**必ずペアで**）。
 自分でビルドするなら `CONFIG_UWB_ENABLE_IRQ=n` +
@@ -67,6 +97,23 @@ sleep」＝ active は HIGH）だが、実機で確かめてはいない。
 同一のコードを通す。IRQ は各待ちループの起床トリガとしてのみ使う。
 `dwt_setcallbacks()` / `dwt_isr()` は意図的に使わない（使うと復号ロジックが
 2本立てになり検証コストが倍になる）。
+
+**IRQ が使えないときはポーリングへ自動的にフォールバックする。**
+`pin_irq == UWB_PORT_PIN_UNUSED`、ISR（Interrupt Service Routine、割り込みが
+起きたときに呼ばれる処理）の登録失敗に加えて、**（2026-08-28 追加）
+`Qm33120::verifyIrqLine()` による実測で IRQ 線が生きていないと判定された場合**
+も、設定に関わらずポーリングへ落ちる。判定条件の全体像・2段階の実測手順の
+詳細は `docs/TIMING_PRESETS.md` §4(a) を参照。
+
+追加が必要だった理由: **「ISR を登録できた」ことは「IRQ が使える」ことを意味
+しない。** `uwb_port_irq_enable()` の成功は GPIO ドライバへ割り込みハンドラを
+登録できたことしか確認しておらず、QM33120W の IRQ 出力ピン（DW_IRQ）がホスト
+側の `pin_irq` に物理的に配線されているか、極性（アクティブ HIGH の想定）が
+合っているかまでは検出できない。従来はこの状態でも `irqActive()` が true を
+返し、起動ログには `irq=active` と出ていたが、実際には全ての待ちが 1 ms タイム
+アウトへ黙って劣化していた（症状に気づく手段が無かった）。`verifyIrqLine()` は
+`init()` の直後に実際にエッジが届くかを能動的に測ることで、この検出漏れを
+塞ぐ。**本追記はビルド確認のみで実機未検証。**
 
 ### 2. 遅延値は IRQ の有無に紐づける
 折返し時間が変わるので、プリセットは IRQ の有無とセットで選ぶ
@@ -99,7 +146,8 @@ sleep」＝ active は HIGH）だが、実機で確かめてはいない。
   `uwb_port_irq_wait()` を追加した。ISR (`IRAM_ATTR`) は
   `xSemaphoreGiveFromISR()` のみを行い、SPI・ログ呼び出しは一切しない。
   `gpio_config()` は `intr_type = GPIO_INTR_POSEDGE`（アクティブHIGH前提。
-  極性は実機未検証）、`pull_down_en = GPIO_PULLDOWN_DISABLE`（モジュール上の
+  一次資料での裏付けは済み・実機の通電確認は未実施。上記「既定を IRQ に
+  したことの risk」参照）、`pull_down_en = GPIO_PULLDOWN_DISABLE`（モジュール上の
   外付けプルアップに対抗できないため、詳細は下記「IRQ 外付けプルアップ」節）。
   `gpio_install_isr_service()` が既にインストール済み
   （`ESP_ERR_INVALID_STATE`）の場合は成功として扱う。
@@ -112,7 +160,10 @@ sleep」＝ active は HIGH）だが、実機で確かめてはいない。
   自体は失敗させない）。実際に有効化できたかは `Qm33120::irqActive()` で
   取得できる。`end()` は `uwb_port_irq_disable()` を必ず呼ぶ（
   `port_already_initialized==true` で `uwb_port` 自体の所有権が無い場合も、
-  IRQ の有効/無効はこのクラスが責任を持つ）。
+  IRQ の有効/無効はこのクラスが責任を持つ）。**（2026-08-28 追加）** 割り込み
+  有効化に成功した直後、`Qm33120::verifyIrqLine()` で実際にエッジが届くかを
+  実測し、失敗すればここで割り込みを無効化して `irqActive()` を false に戻す
+  （判定条件・2段階の実測手順は `docs/TIMING_PRESETS.md` §4(a)）。
 - **`dwt_setcallbacks()` / `dwt_isr()` は意図的に使っていない。**
   復号経路（ステータス判読・フレーム取得・エラー処理）をポーリングと
   IRQ とで1本に保つため（本ファイル冒頭「ポーリング経路は劣化版ではなく
@@ -141,8 +192,11 @@ sleep」＝ active は HIGH）だが、実機で確かめてはいない。
   / `irq=polling (disabled by Kconfig)` / `irq=polling (enable failed)`）
   を出す。
 - **既定は全ファームで有効。** 遅延プリセットの既定も `BothIrq`。
-  極性の実機検証は済んでいないので、駄目だったときの切り分け手順は
-  上の「既定を IRQ にしたことの risk」を参照。
+  極性は一次資料（データシート）で確認済みだが、実機での通電確認はまだなので、
+  駄目だったときの切り分け手順は上の「既定を IRQ にしたことの risk」を参照。
+  **（2026-08-28 追加）** 待ちがポーリングへ落ちたときは、既定で遅延プリセット
+  も自動的に `PollingBoth` へ降格する（`Config::downgrade_timing_profile_
+  when_polling`、`docs/TIMING_PRESETS.md` §4(b)）。
 
 ## 【重要】モジュール上の IRQ 外付けプルアップ
 
@@ -165,6 +219,24 @@ sleep」＝ active は HIGH）だが、実機で確かめてはいない。
   3.3V を (10k+45k) で分圧した約 60µA のリーク電流を常時流すだけ**になる。
   そのため `GPIO_PULLDOWN_DISABLE` にしてある
   （`components/uwb_port/src/uwb_port.c`）。
+- **（2026-08-28 追記）DW3720 側にも内部プルがあり、向きは逆**。データシート
+  で確認できた:
+
+  > `assets/QM33120W Data Sheet.pdf` (Rev. D, 2025-10) p.29, Section 5.13:
+  > "All the GPIO pins have a software controllable internal pull up/down
+  > resistor to ensure safe operation when input pins are not driven. This
+  > defaults to enabled and pull-down except for the SPICSn pin which defaults
+  > to pull-up. The value of the pull-up/down will vary with the VDD1 supply
+  > voltage over a range from 10 kΩ to 30 kΩ."
+
+  つまり **DW3720 の IRQ には既定で 10〜30kΩ の内部プルダウンが有効**であり、
+  モジュール上の 10kΩ 外付けプルアップと引っ張り合う。ピンが駆動されていない
+  状態（SLEEP/DEEPSLEEP、電源投入直後）では、10k:10k なら約 1.65V、
+  10k:30k なら約 2.48V という**中間電位になりうる**。ただし IRQ は
+  4〜6mA で能動駆動される出力なので（同 p.11 Table 5 "Digital Output Drive
+  Current" の `GPIOx, IRQ` 行）、**駆動中はどちらのプル抵抗も勝てず、
+  動作中の判定には影響しない**。本ファームは `dwt_configuresleep()` を
+  呼んでおらずスリープに入らないため、現状この中間電位の条件には入らない。
 - **`GPIO_INTR_POSEDGE`（アクティブ HIGH）前提は「動作中のみ」有効**という
   留保が付く。現状の実装（起床信号としてのみ IRQ を使い、チップを能動的に
   SLEEP させる運用はしていない）では実害は無いが、**将来 SLEEP/WAKEUP を

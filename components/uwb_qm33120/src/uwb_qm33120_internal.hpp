@@ -156,6 +156,40 @@ static inline bool parseShortAddressFrame(const uint8_t* frame, uint16_t frameLe
  * uwb_qm33120_frame_match.hpp に移した（同じ理由・同じ uwb::detail
  * 名前空間）。呼び出し側からの見え方・シグネチャは変わらない。 */
 
+/**
+ * @brief 遅延送信の締切まで何µs残っているかを、チップ自身の時計で測る。
+ *
+ * `dxTime` は dwt_setdelayedtrxtime() に渡した値（40bit システム時刻の
+ * 上位32bit = DX_TIME レジスタと同じ単位・同じ原点）。
+ * dwt_readsystimestamphi32() は SYS_TIME レジスタ（同じく上位32bit）を
+ * 読むので、両者は直接引き算できる。1単位 = 256 DTU = 256 x DWT_TIME_UNITS
+ * ≈ 4.0064 ns。符号付き32bitで引くことで、約17.2秒周期の巻き戻りを
+ * またいでも正しい残り時間になる（標準的な wraparound-safe idiom）。
+ *
+ * 戻り値が負なら締切に間に合っていない。その状態で dwt_starttx() を
+ * 呼ぶとチップは HPDWARN を立て、SDK は CMD_TXRXOFF を発行して
+ * **送信そのものを取り消し** DWT_ERROR を返す
+ * （components/qm33120w_sdk/dw3720/dw3720_device.c の ull_starttx()）。
+ * 相手からは「電波が来ていない」（RXFTO のみ・プリアンブル検出なし）と
+ * 区別できない失敗に見えるので、この値を持ち出さないと原因を切り分け
+ * られない。docs/TIMING_PRESETS.md §1.3 が見積りで置いた折返し時間
+ * （ポーリング 約1.2ms / IRQ 約0.3ms）を実機で直接検算するための計器。
+ *
+ * Measures, on the chip's own clock, how long is left before a scheduled
+ * delayed transmission. Negative means the deadline has passed, in which
+ * case dwt_starttx() cancels the frame instead of sending it late.
+ *
+ * @param dxTime dwt_setdelayedtrxtime() に渡した値。
+ * @return 締切までの残り時間 [µs]（負なら超過）。
+ */
+static inline int32_t delayedTxMarginUs(uint32_t dxTime)
+{
+    static constexpr double kDxTimeUnitUs = 256.0 * DWT_TIME_UNITS * 1.0e6;
+    const uint32_t nowHi                   = dwt_readsystimestamphi32();
+    const int32_t marginTicks              = static_cast<int32_t>(dxTime - nowHi);
+    return static_cast<int32_t>(marginTicks * kDxTimeUnitUs);
+}
+
 /* --- ステータス→エラー変換、無線停止＋ステータスクリア（cpp:358-386） --- */
 
 static inline Error rxStatusToError(uint32_t status)

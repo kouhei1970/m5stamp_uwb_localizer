@@ -91,6 +91,52 @@ R − (frame_len − SHR) − SHR  =  R − frame_len  ≈  R − 179 µs
 では 700 µs まで詰められるが、Qorvo と同じ 300 µs には**しない**
 （本実装は FreeRTOS のタスク切替を挟むため）。
 
+### 1.3.2 実機での検算: `txMarginUs`（2026-08-28 追加）
+
+上の §1.3 が置いた折返し時間（ポーリング 約1.2ms / IRQ 約0.3ms）はいずれも
+**見積もりであって実測ではなかった**。**遅延送信の締切までの残り時間を、
+チップ自身の時計で直接測る**診断値 `txMarginUs` を `ResponderResult` /
+`DSRangeResult` / `DSResponderResult`（`uwb_qm33120_types.hpp`）に追加した。
+
+計算は `detail::delayedTxMarginUs(dxTime)`
+（`components/uwb_qm33120/src/uwb_qm33120_internal.hpp`）が行う。`dxTime` は
+`dwt_setdelayedtrxtime()` に渡した値（40bit システム時刻の上位32bit = DX_TIME
+レジスタと同じ単位・同じ原点）で、これを `dwt_readsystimestamphi32()`
+（SYS_TIME レジスタの上位32bit）から符号付き32bitで引く。1単位 = 256 DTU
+（Device Time Unit、§1 冒頭で触れた単位系リファレンス `docs/GLOSSARY.md` の
+DTU）= 256 × DWT_TIME_UNITS ≈ 4.0064 ns なので、µs に換算して返す。符号付き
+32bit で引くことで、約17.2秒周期のシステム時計の巻き戻りをまたいでも正しい
+残り時間になる（標準的な wraparound-safe な実装方法）。戻り値が負なら、その
+時点で既に締切を過ぎている——すなわち §4(b) 2. で述べた「SDK が送信を取り
+消す」状態にある。
+
+測っている箇所は3つ:
+
+| 関数 | 測る遅延送信 | 対応する締切 |
+|---|---|---|
+| `respondRange()` | Response の遅延送信（SS-TWR アンカー） | `responseTxDelayUus` |
+| `requestDSRange()` | Final の遅延送信（DS-TWR タグ） | `finalTxDelayUus` |
+| `respondDSRange()` | Response の遅延送信（DS-TWR アンカー） | `responseTxDelayUus` |
+
+`firmware/twr` の SS-TWR ANCHOR ログ（`SS_RESP_STAT`）は、成功・失敗いずれの
+行にも `tx_margin_us=` を出す。失敗時に `error=TxStartFailed` かつ
+`tx_margin_us` が負であれば、「Poll は聞こえていたのに折返しが締切に間に合わ
+ず送信が取り消された」ことの直接の証拠になる。
+
+**これにより、§1.3 が見積もりで置いた折返し時間（ポーリング 約1.2ms / IRQ
+約0.3ms）を、実機で `tx_margin_us` と `responseTxDelayUus` の実µs値の差
+（＝ `responseTxDelayUus`（実µs）− `tx_margin_us` = 実際にかかった折返し時
+間）として検算できるようになった。**
+
+（実装: `components/uwb_qm33120/src/uwb_qm33120_internal.hpp` の
+`detail::delayedTxMarginUs()`、`components/uwb_qm33120/src/uwb_qm33120_twr.cpp`
+の `respondRange()` / `requestDSRange()` / `respondDSRange()`、
+`components/uwb_qm33120/include/uwb_qm33120_types.hpp` の `txMarginUs` メンバ、
+`firmware/twr/main/main.cpp` の `SS_RESP_STAT` ログ。**本節の記述はビルド確認
+のみで実機未検証。** §1.3 の見積もりと実測が実際にどの程度一致するか、締切
+超過時に本当に「RXFTO のみ」の失敗として観測されるかは、実機での確認が済ん
+でいない。）
+
 ### 1.4 【落とし穴】DWD（結果フレーム）は IRQ があると**早く来る**
 DWD はアンカーが Final を受信した直後に `DWT_START_TX_IMMEDIATE` で即時送信する
 （`respondDSRange()`）。つまり**アンカーの折返しが速くなるほど DWD は早く着く**。
@@ -218,11 +264,60 @@ Response にも載せる理由: 運用中に人が見ているのは**タグの 
 
 | | 対象 | 規則 |
 |---|---|---|
-| **(a) 待ち方のフォールバック** | IRQ 待ちか、ポーリング待ちか | **`pin_irq == UWB_PORT_PIN_UNUSED` または ISR 登録失敗なら、設定に関わらずポーリング。** ローカルに閉じた話なので自動で落として良い（`docs/IRQ_POLICY.md` 実装要件 1） |
-| **(b) 遅延プリセット** | §2 の数値 | **自動で変えてはいけない。** 相手と一致していることが要件なので、片側が勝手に変えたら §0 の破綻そのものになる |
+| **(a) 待ち方のフォールバック** | IRQ 待ちか、ポーリング待ちか | **次のいずれかに該当すれば、設定に関わらずポーリング。** ローカルに閉じた話なので自動で落として良い（`docs/IRQ_POLICY.md` 実装要件 1） |
+| **(b) 遅延プリセット** | §2 の数値 | **2026-08-28 に既定を変更した（詳細は下記）。** 待ちがポーリングへ落ちたときは、既定で IRQ 前提のプリセットも自動的に `PollingBoth` へ降格する |
 
-(b) が要件を満たせないとき（例: `AnchorIrq` を選んだのに `pin_irq` が未配線）は、
-**起動ログで目立つ警告を出す**が、値は変えない。
+### (a) 待ち方のフォールバックの判定条件
+
+`init()` が IRQ 待ちを諦めてポーリングへ落とすのは、次の**いずれか**に該当するときである。
+
+1. `pin_irq == UWB_PORT_PIN_UNUSED`（そのボードで IRQ ピンが定義されていない）
+2. ISR（Interrupt Service Routine、割り込みが起きたときに呼ばれる処理）の登録に失敗（`uwb_port_irq_enable()` が失敗）
+3. **（2026-08-28 追加）`Qm33120::verifyIrqLine()` による実測で IRQ 線が生きていないと判定された**
+
+1・2 は従来からの条件。3 が新設された理由は、1・2 をどちらもクリアしても
+「DW_IRQ（QM33120W の IRQ 出力ピン）が本当にホスト側の `pin_irq` に配線されて
+いるか」「極性（アクティブ HIGH）の想定が正しいか」までは分からないため。
+`uwb_port_irq_enable()` の成功は「ISR を GPIO ドライバへ登録できた」ことしか
+意味せず、線が未配線・フローティングのままでも成功する。**従来はこの状態でも
+`irqActive()` が true を返し、起動ログには `irq=active` と出ていた**
+（実際には全ての待ちが 1ms タイムアウトへ黙って劣化していた）。
+
+`verifyIrqLine()` は `init()` が `uwb_port_irq_enable()` + `dwt_setinterrupt()`
+に成功した直後に呼ばれ、2段階で実際にエッジが届くかを測る。「そうでなければ
+何がどう見えるか」を先に決めてから測る、という組み方になっている:
+
+- **段階0（前処理）**: `dwt_forcetrxoff()` + `dwt_writesysstatuslo(ALL_RX_TO |
+  ALL_RX_ERR | ALL_RX_GOOD | TXFRS)` で SYS_STATUS（チップの状態を示すレジス
+  タ）の該当ビットを掃除し、IRQ 線を必ず非アクティブ（Low）へ落とす。これを
+  せずに段階1へ入ると、既に立っているビットで線が High に張り付いたまま
+  「エッジが来ない」を判定することになり、線が生きていても偽陰性になる。
+- **段階1（静穏確認、5 ms）**: 何も事象を起こさずに 5 ms 待つ。この間にエッジ
+  が来たら「未配線でフロートしている」または「極性が逆」と判定し、false を
+  返す。
+- **段階2（事象確認、最大 50 ms）**: `dwt_setrxtimeout(2000 UUS)`（約 2.05 ms）
+  を設定して `dwt_rxenable()` で RX を開き、**必ず RXFTO（RX Frame Timeout、
+  受信タイムアウト）を起こす**。RXFTO は `init()` が有効化済みの割り込み種別
+  （`DWT_INT_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR`）
+  に含まれるので、線が生きていれば必ずエッジが1回来るはずである。SYS_STATUS
+  に事象（RXFTO・RX エラー・RX 成功のいずれか）が立っているのにエッジが来
+  なければ、線は死んでいると判定して false を返す。事象自体が立たなかった
+  場合は判定不能として安全側（false・ポーリング）に倒す。
+
+false と判定された場合は `dwt_setinterrupt(..., DWT_DISABLE_INT)` と
+`uwb_port_irq_disable()` を呼び戻し、`Qm33120::irqActive()` が false を返す
+状態にする。
+
+（実装: `components/uwb_qm33120/src/uwb_qm33120.cpp` の `Qm33120::verifyIrqLine()`。
+**本節の記述はビルド確認のみで実機未検証。** IRQ 線が実際に生きている個体で
+段階1・2が誤って false を返さないこと、未配線の個体で正しく false へ落ちる
+ことは、いずれも実機での確認が済んでいない。）
+
+### (b) 遅延プリセットのフォールバック（2026-08-28 方針変更）
+
+**旧方針（〜2026-08-27）**: 自動で変えない。§2 の数値は据え置き、起動ログで
+警告するだけ。根拠は「相手と一致していることが要件なので、片側が勝手に変えた
+ら §0 の破綻そのものになる」。警告の例:
 
 ```
 W (1234) uwb_anchor: timing profile=AnchorIrq は IRQ 前提だが pin_irq が未配線。
@@ -230,6 +325,53 @@ W (1234) uwb_anchor: timing profile=AnchorIrq は IRQ 前提だが pin_irq が�
                      responseTxDelayUus=878 (900us) の締切に間に合わない可能性が高い。
                      タグ・アンカー双方を PollingBoth で焼き直すこと。
 ```
+
+**新方針（2026-08-28〜、既定）**: (a) の判定でポーリングへ落ちたとき、要求
+プリセットが `AnchorIrq`/`BothIrq` であれば、`init()` が
+`Config::timing_profile` を `PollingBoth` へ自動的に書き換える。方針を変更
+した理由は次の4点:
+
+1. **据え置きは必ず失敗する。** IRQ プリセットの `responseTxDelayUus = 878
+   UUS`（約 900 µs）は §1.3 が見積もった「IRQ 駆動の折返し 約0.3 ms」を前提
+   に置いた値である。ところが同じ §1.3 は、ポーリングの折返しを「最大
+   1000 µs ＋ SPI 100〜200 µs ≈ 約 1.2 ms」と見積もっている。待ちがポーリング
+   へ落ちたのにプリセットだけ `AnchorIrq`/`BothIrq` のままだと、締切を構造的
+   に割る。
+2. **締切を割った遅延送信は SDK が送信ごと取り消す。**
+   `components/qm33120w_sdk/dw3720/dw3720_device.c` の `ull_starttx()` は
+   HPDWARN（Half Period Delay Warning、締切超過を示す SYS_STATUS のビット）
+   を見て `CMD_TXRXOFF` を発行し、`DWT_ERROR` を返す。フレームは一切送信さ
+   れない。相手からは「RXFTO のみが立ち、RXPRD（Preamble Detected、プリアン
+   ブル検出）も RXSFDD（SFD Detected、SFD 検出）も立たない」という、電波が
+   来ていないのと区別できない失敗に見える。
+3. **降格は両機が同じ挙動をする限り一致したままである。** アンカーとタグは
+   同じ基板・同じ配線・同じファームであり、(a) の判定条件は各個体のローカル
+   なハードウェア状態にしか依存しない。したがって両機が同じ理由で降格する限
+   り、降格後も §0 の「両側で値が一致している」という要件は保たれる。
+4. **万一片側だけ降格しても、§3 の不一致検出が働く。** 実際に適用した種別
+   （降格後の値）は Poll/Response フレームに載って相手へ伝わるので、片側だけ
+   降格した場合は §3 の仕組みが不一致を検出して警告する。
+
+降格が起きたときの起動時の警告ログ（ログタグ `Qm33120`、
+`components/uwb_qm33120/src/uwb_qm33120.cpp`）:
+
+```
+W (1234) Qm33120: timing profile AnchorIrq requires IRQ but the wait is polling;
+                  using PollingBoth instead. 対向機も同じ有効プリセットで動いている
+                  ことをログで確認すること (片側だけ落ちると測距は成立しない)。
+```
+
+**旧方針へ戻す方法**: `Config::downgrade_timing_profile_when_polling`（既定
+`true`）を `false` にすると、(b) は旧方針（自動で変えない・警告のみ）に戻る。
+アプリ側の起動時警告（`firmware/{anchor,tag,twr}/main/main.cpp`）は降格の有
+無に関わらず出るので、どちらの設定でもログから状況は分かる。
+
+（実装: `components/uwb_qm33120/include/uwb_qm33120_types.hpp` の
+`Config::downgrade_timing_profile_when_polling`、
+`components/uwb_qm33120/src/uwb_qm33120.cpp` の `init()`。**本節の記述は
+ビルド確認のみで実機未検証。** 降格が実際に測距成功率を改善するか、締切超過
+が実機でも「RXFTO のみ」の失敗として観測されるかは、実機での確認が済んで
+いない。）
 
 ## 5. 設定の入口
 
@@ -250,8 +392,10 @@ endchoice
 （`boards/stampfly.h`、`docs/IRQ_POLICY.md`）、`BothIrq` が実際に成立する構成になっている。
 
 **既定は `BothIrq`**（全ボードで IRQ が取れるため。`docs/IRQ_POLICY.md`）。
-**本ドキュメントの数値はいずれも実機未検証**であり、IRQ の極性も未検証なので、
-測距が成立しないときは `PollingBoth` へ落として切り分けること。
+**本ドキュメントの数値はいずれも実機未検証**である。IRQ の極性は
+データシートで既定値（アクティブ HIGH）を確認済みだが、実機での通電確認は
+まだ済んでいない（詳細は `docs/IRQ_POLICY.md`）ので、測距が成立しないときは
+`PollingBoth` へ落として切り分けること。
 
 `docs/GETTING_STARTED.md` に「**アンカーとタグは必ず同じプリセットで焼くこと**」を明記する。
 
@@ -300,6 +444,9 @@ IRQ が動かなかったとき用の**フォールバック**の2系統を配�
 | Kconfig（3アプリ共通） | `choice UWB_TIMING_PROFILE`（`UWB_TIMING_PROFILE_POLLING_BOTH` / `_ANCHOR_IRQ` / `_BOTH_IRQ`） | `firmware/{anchor,tag,twr}/main/Kconfig.projbuild` |
 | 起動時ログ・§4(b)の起動時チェック | `timingProfileName()`/`timingProfileNeedsAnchorIrq()`/`timingProfileNeedsTagIrq()` を使った `ESP_LOGI`/`ESP_LOGW` | `firmware/{anchor,tag,twr}/main/main.cpp` の `app_main()` |
 | プリセット表・締切式・往復のホスト検算 | シナリオ13〜17（188件中の一部。旧132件から+56） | `tests/host/pipeline/test_pipeline.cpp` |
+| IRQ 線の起動時自己診断（§4(a) の条件3） | `Qm33120::verifyIrqLine()` | `components/uwb_qm33120/src/uwb_qm33120.cpp` |
+| プリセットのポーリング降格（§4(b)、2026-08-28） | `Config::downgrade_timing_profile_when_polling`（既定 `true`） | `components/uwb_qm33120/include/uwb_qm33120_types.hpp`、`uwb_qm33120.cpp` の `init()` |
+| 遅延送信の締切までの残り時間の実測（§1.3.2、2026-08-28） | `detail::delayedTxMarginUs()`、`ResponderResult`/`DSRangeResult`/`DSResponderResult::txMarginUs` | `components/uwb_qm33120/src/uwb_qm33120_internal.hpp`、`uwb_qm33120_twr.cpp`、`uwb_qm33120_types.hpp` |
 
 **既知の制約（実機未検証）**: 本ドキュメントの数値導出と同じく、実機での検証はまだ済んでいない。
 `PollingBoth` は現在の既定値と数値上完全に一致するため実装前後で挙動は変わらないが、

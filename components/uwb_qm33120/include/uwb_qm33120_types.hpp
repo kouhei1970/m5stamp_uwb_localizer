@@ -118,12 +118,28 @@ struct Config {
     bool port_already_initialized = false;
 
     /**
-     * @brief IRQ を「起床信号」として使うか（docs/IRQ_POLICY.md）。
-     * true でも pin_irq が未配線 or ISR 登録に失敗したら**自動的にポーリングへ
-     * フォールバックする**（docs/IRQ_POLICY.md 実装要件1、docs/TIMING_PRESETS.md §4(a)）。
-     * 既定 false: 実機未検証のため（Phase 1〜2 が通ってから既定を上げる）。
+     * @brief IRQ を「起床信号」として使うか（docs/IRQ_POLICY.md）。**IRQ が本線。**
+     *
+     * true でも、次のいずれかなら **自動的にポーリングへフォールバックする**
+     * （docs/IRQ_POLICY.md 実装要件1、docs/TIMING_PRESETS.md §4(a)）:
+     *   - pin_irq が未配線（UWB_PORT_PIN_UNUSED）
+     *   - ISR の登録に失敗した
+     *   - **起動時の自己診断 Qm33120::verifyIrqLine() で、IRQ 線が実際には
+     *     エッジを運んでいないと分かった**（2026-08-28 追加）
+     *
+     * 【既定を false から true にした経緯・2026-08-28】旧コメントは
+     * 「既定 false: 実機未検証のため（Phase 1〜2 が通ってから既定を上げる）」
+     * だったが、Phase 1（SPI 疎通）は 2026-08-27 に実機で通っており、
+     * アンカー・タグとも IRQ 線を配線できることも確認済みで、ファーム側
+     * （firmware/twr・anchor・tag の Kconfig UWB_ENABLE_IRQ）は既に既定 y。
+     * この構造体既定だけがポーリング時代のまま取り残されていた。
+     * verifyIrqLine() が入って安全に倒せるようになったので true にする。
+     *
+     * IRQ is the intended path. This still falls back to polling by itself if
+     * the pin is unwired, the ISR cannot be installed, or the boot-time
+     * self-test finds the line does not actually deliver edges.
      */
-    bool use_irq = false;
+    bool use_irq = true;
 
     /**
      * @brief 本機が使う遅延プリセット（docs/TIMING_PRESETS.md）。
@@ -132,10 +148,51 @@ struct Config {
      * respondDSRange() は、この値（_impl->config.timing_profile）を
      * Poll/Response フレームの末尾に載せて相手へ伝え、受信側は自分の値と
      * 比較して不一致なら警告する（uwb_qm33120_twr.cpp、タスクC）。
-     * 既定 PollingBoth: 現在の RangeConfig/DSRangeConfig の既定値と完全に
-     * 一致するため、既定のままなら挙動は変わらない。
+     * 既定 PollingBoth: RangeConfig/DSRangeConfig のメンバ初期化子と完全に
+     * 一致する保守的な値。**実運用のファーム（firmware/twr・anchor・tag）は
+     * Kconfig UWB_TIMING_PROFILE でこれを上書きしており、その既定は BothIrq。**
+     * つまりこの構造体既定が実機に出ることは通常ない。
+     *
+     * init() は、IRQ が使えないと分かったときこのフィールドを PollingBoth へ
+     * 書き換える（downgrade_timing_profile_when_polling 参照）。したがって
+     * begin() 成功後にこのフィールドを読めば「実際に適用された種別」が得られ、
+     * アプリはそれを applyTimingProfile() へ渡すこと。
      */
     TimingProfile timing_profile = TimingProfile::PollingBoth;
+
+    /**
+     * @brief 待ちがポーリングに落ちたとき、IRQ 前提のプリセット
+     * (AnchorIrq / BothIrq) を PollingBoth へ**自動で降格**するか。既定 true。
+     *
+     * 【docs/TIMING_PRESETS.md §4(b) からの意図的な逸脱。2026-08-28】
+     * 同 §4(b) は「遅延プリセットは自動で変えてはいけない。相手と一致して
+     * いることが要件なので、片側が勝手に変えたら §0 の破綻そのものになる」と
+     * 定めており、警告だけ出して値は据え置く設計だった。それを既定で
+     * 降格する側へ変えた理由:
+     *
+     *  1. 据え置きは**必ず失敗する**。IRQ プリセットの responseTxDelayUus は
+     *     878 UUS（約900µs）で、これは折返し約0.3ms（IRQ 駆動）を前提にした
+     *     値である（同 §1.3）。ポーリングの折返しは同 §1.3 自身が「最大1000µs
+     *     ＋SPI 100〜200µs ＝ 約1.2ms」と見積もっており、締切を構造的に
+     *     割る。締切を割った遅延送信は dwt_starttx() が HPDWARN を見て
+     *     CMD_TXRXOFF で送信ごと取り消すので、相手には電波が届かない。
+     *     つまり「相手と値を揃えたまま両方とも動かない」状態になる。
+     *  2. 降格は**両機が同じ挙動をする限り一致したまま**である。2台は同じ
+     *     基板・同じ配線・同じファームなので、片方だけ降格する状況は考えにくい。
+     *  3. 万一片側だけ降格しても、実際に適用した種別は Poll/Response
+     *     フレームに載って相手へ伝わり、相手が不一致を警告する（同 §3）。
+     *     この検出機構はまさにこの場合のために作られている。
+     *
+     * §4(b) の元の挙動（警告のみ・値は据え置き）に戻したいときは false に
+     * する。アプリ側の起動時警告（firmware 各アプリの main.cpp）は降格の有無に
+     * 関わらず出るので、どちらの設定でもログから状況は分かる。
+     *
+     * If the wait falls back to polling, downgrade an IRQ-only preset to
+     * PollingBoth (default true). Set to false to restore the behaviour
+     * documented in docs/TIMING_PRESETS.md section 4(b) - warn, but leave the
+     * values alone.
+     */
+    bool downgrade_timing_profile_when_polling = true;
 };
 
 /**
@@ -374,6 +431,16 @@ struct DSRangeResult {
     float distanceM    = 0.0f;
     uint32_t elapsedMs = 0;
     Error error         = Error::Ok;
+    /**
+     * Microseconds left before the scheduled delayed transmission when
+     * dwt_starttx(DWT_START_TX_DELAYED) was issued. Negative means the
+     * deadline had passed, in which case the chip raises HPDWARN and the
+     * frame is CANCELLED, not sent late - so the peer sees "nothing arrived".
+     * Same meaning as ResponderResult::txMarginUs; see that comment.
+     * 遅延送信を予約した瞬間の締切までの残り [µs]。負なら送信は取り消される。
+     * 意味は ResponderResult::txMarginUs と同じ（そちらのコメント参照）。
+     */
+    int32_t txMarginUs = 0;
 };
 
 /**
@@ -395,6 +462,26 @@ struct ResponderResult {
      * 「何も来ていない」のか「来たが復調できない」のかを区別するため。
      */
     uint32_t rxStatus = 0;
+    /**
+     * How much time was left before the scheduled Response transmission when
+     * dwt_starttx(DWT_START_TX_DELAYED) was issued, in microseconds. Negative
+     * means the deadline had already passed, in which case the chip raises
+     * HPDWARN and dwt_starttx() CANCELS the frame (CMD_TXRXOFF) - the peer
+     * then hears nothing at all and reports RXFTO with no preamble detected.
+     * Only meaningful when a Poll was actually received (success, or
+     * error == TxStartFailed).
+     *
+     * 遅延送信を予約した瞬間に、予定送信時刻まで何µs残っていたか。負なら
+     * 締切に間に合っておらず、dwt_starttx() は HPDWARN を見て**送信ごと
+     * 取り消す**（dw3720_device.c の ull_starttx()）。相手からは「電波が
+     * 来ていない」のと区別がつかない失敗になる。
+     *
+     * これは docs/TIMING_PRESETS.md §1.3 が見積りで置いた「折返しに要る
+     * 時間」（ポーリング 約1.2ms / IRQ 約0.3ms）を実機で直接測るための値。
+     * responseTxDelayUus の実µs値からこの残りを引けば、折返しに実際に
+     * かかった時間が出る。
+     */
+    int32_t txMarginUs = 0;
 };
 
 /**
@@ -411,6 +498,16 @@ struct DSResponderResult {
     float distanceM    = 0.0f;
     uint32_t elapsedMs = 0;
     Error error         = Error::Ok;
+    /**
+     * Microseconds left before the scheduled delayed transmission when
+     * dwt_starttx(DWT_START_TX_DELAYED) was issued. Negative means the
+     * deadline had passed, in which case the chip raises HPDWARN and the
+     * frame is CANCELLED, not sent late - so the peer sees "nothing arrived".
+     * Same meaning as ResponderResult::txMarginUs; see that comment.
+     * 遅延送信を予約した瞬間の締切までの残り [µs]。負なら送信は取り消される。
+     * 意味は ResponderResult::txMarginUs と同じ（そちらのコメント参照）。
+     */
+    int32_t txMarginUs = 0;
 };
 
 } // namespace uwb

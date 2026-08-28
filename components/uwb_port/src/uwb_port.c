@@ -481,10 +481,35 @@ esp_err_t uwb_port_irq_enable(void)
      * be low/inactive (i.e., no pending events) otherwise device will not
      * enter sleep" -- sleep可能条件としてIRQ=low=inactiveと明記されており、
      * これはactive=highを意味する)。
-     * 【注意】この極性は実機でまだ検証していない。誤っていた場合の帰結は
-     * 「常にタイムアウト待ちになる」または「即座にIRQで起床し続ける」
-     * （後者は各待ちループの通常のステータス判定が不一致フレームとして
-     * 処理し続けるだけで、実害はvTaskDelay(1)相当に留まる想定）。
+     * 【2026-08-28 一次資料で裏取り済み】QM33120W データシート
+     * (assets/QM33120W Data Sheet.pdf, Rev. D 2025-10) p.6 Section 2
+     * "Pin Configuration and Descriptions" Table 1, ball B1 (IRQ/GPIO8):
+     *   "By default, IRQ is an active-high output but may be configured to be
+     *    active-low if required. For correct operation in SLEEP and DEEPSLEEP
+     *    modes, it should be configured for active-high operation. This pin
+     *    will float in SLEEP and DEEPSLEEP states and may cause spurious
+     *    interrupts unless pulled low."
+     * 本ドライバは極性を変更していないので既定のアクティブHIGHのままであり、
+     * GPIO_INTR_POSEDGE は正しい。スリープも使っていない
+     * (dwt_configuresleep() を呼んでいない) ので、上記のフロート条件にも
+     * 入らない。**ただし実機で通電して確認したわけではない**ので、起動時に
+     * Qm33120::verifyIrqLine() が実際にエッジが来るかを実測する
+     * (components/uwb_qm33120/src/uwb_qm33120.cpp)。極性が違っていた場合の
+     * 帰結は「常にタイムアウト待ちになる」または「即座にIRQで起床し続ける」
+     * で、どちらも verifyIrqLine() が検出してポーリングへ落とす。
+     *
+     * 【注意・DW3720側の内部プル】同データシート p.29 Section 5.13:
+     *   "All the GPIO pins have a software controllable internal pull up/down
+     *    resistor ... This defaults to enabled and pull-down except for the
+     *    SPICSn pin which defaults to pull-up. The value of the pull-up/down
+     *    will vary with the VDD1 supply voltage over a range from 10 kOhm to
+     *    30 kOhm."
+     * つまりDW3720側のIRQには既定で10〜30kΩの内部プルダウンが入っており、
+     * モジュール基板側の10kΩプルアップ(下記R2)とは向きが逆である。ただし
+     * IRQは4〜6mAで能動駆動される出力(同 p.11 Table 5 "Digital Output Drive
+     * Current" の GPIOx, IRQ 行)なので、駆動中はどちらのプル抵抗も勝てず、
+     * 動作中の判定には影響しない。効いてくるのはピンが駆動されていない状態
+     * (スリープ・電源投入直後)だけで、本ファームはそこに入らない。
      * pull_down_en = GPIO_PULLDOWN_DISABLE (2026-08-21訂正): 公式回路図
      * (assets/SCH_UWB_MODULE_SCH_main_V0.2_...pdf、docs/WIRING.md
      * §5.5(4)) で、M5Stamp UWB Module上にDW_IRQをVCC_3V3へプルアップする

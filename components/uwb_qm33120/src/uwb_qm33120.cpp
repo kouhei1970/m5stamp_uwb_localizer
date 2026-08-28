@@ -638,15 +638,142 @@ bool Qm33120::init(const PhyConfig& phy)
             // SYS_STATUS_ALL_RX_ERR、いずれもlo側32bitに収まる)。
             dwt_setinterrupt(DWT_INT_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR, 0,
                               DWT_ENABLE_INT);
-            _impl->irq_active = true;
+            // uwb_port_irq_enable() が成功しても、それは「ISR を登録できた」
+            // ことしか意味しない。DW_IRQ が pin_irq に本当に繋がっているか、
+            // 極性（アクティブHIGH）の仮定が正しいかは別問題なので、ここで
+            // 実際にエッジが届くかを測る（verifyIrqLine()）。
+            // Enabling the ISR only proves the handler was installed. Whether
+            // DW_IRQ is physically wired to pin_irq, and whether the assumed
+            // active-high polarity is right, is a separate question - measure it.
+            _impl->irq_active = verifyIrqLine();
+            if (!_impl->irq_active) {
+                dwt_setinterrupt(DWT_INT_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR, 0,
+                                  DWT_DISABLE_INT);
+                (void)uwb_port_irq_disable();
+            }
         } else {
             ESP_LOGW(TAG, "uwb_port_irq_enable failed (%s); falling back to polling", esp_err_to_name(irqErr));
         }
     }
 
+    // --- 実際に適用するタイミングプリセットを起床経路に合わせる ---
+    // AnchorIrq / BothIrq は「相手のフレームに気づいてから遅延送信を予約し
+    // 終えるまで 約0.3ms」を前提に responseTxDelayUus = 878 UUS（約900µs）を
+    // 置いている（docs/TIMING_PRESETS.md §1.3）。ところが待ちがポーリング
+    // （vTaskDelay(1ms) 相当）に落ちると、気づくまでの遅れだけで最大 1000µs、
+    // SPI と計算を足して約 1.2ms かかり、900µs の締切を常時割る。締切を割った
+    // 遅延送信は dwt_starttx() が HPDWARN を見て CMD_TXRXOFF で**送信ごと
+    // 取り消す**（components/qm33120w_sdk/dw3720/dw3720_device.c の
+    // ull_starttx()）ため、相手には電波が一切届かない。相手側から見ると
+    // 「RXFTO のみ・プリアンブル検出なし」という、電波が来ていないのと
+    // 区別できない失敗になる。
+    //
+    // よってポーリングで動くと決まった時点でプリセットを PollingBoth へ
+    // 落とす。ここで _impl->config.timing_profile 自体を書き換えるのは、
+    // この値が (a) Poll/Response フレームに載る種別、(b) 相手との不一致警告の
+    // 基準、(c) アプリが applyTimingProfile() に渡す値、の3つすべての出所に
+    // なるため。3つが同じ「実際に適用した種別」を指す状態を保つ。
+    //
+    // これは docs/TIMING_PRESETS.md §4(b)「遅延プリセットは自動で変えては
+    // いけない」からの意図的な逸脱である。理由と、元の挙動へ戻す方法は
+    // Config::downgrade_timing_profile_when_polling のコメントに書いた。
+    if (_impl->config.downgrade_timing_profile_when_polling && !_impl->irq_active &&
+        timingProfileNeedsAnchorIrq(_impl->config.timing_profile)) {
+        const TimingProfile requested = _impl->config.timing_profile;
+        _impl->config.timing_profile   = TimingProfile::PollingBoth;
+        ESP_LOGW(TAG,
+                 "timing profile %s requires IRQ but the wait is polling; falling back to %s. "
+                 "これは安全網であって目標状態ではない: IRQ 線を直して %s へ戻すこと "
+                 "(上の irq self-test の行が原因を示す)。当面この降格で動かす場合は、"
+                 "対向機も同じ有効プリセットで動いていることをログで確認すること "
+                 "(片側だけ落ちると測距は成立しない)。",
+                 timingProfileName(requested), timingProfileName(_impl->config.timing_profile),
+                 timingProfileName(requested));
+    }
+
     _impl->initialized = true;
     setError(Error::Ok);
     return true;
+}
+
+bool Qm33120::verifyIrqLine()
+{
+    // IRQ 線が本当に生きているかを2段階で確かめる。どちらの段階も
+    // 「そうでなければ何がどう見えるか」を先に決めてから測っている。
+    //
+    //  段階1（静穏確認）: 何も起こしていないのにエッジが来るなら、その線は
+    //    未配線でフロートしている（ノイズを拾っている）か、極性の仮定が
+    //    間違っている。→ 起床信号として使えない。
+    //  段階2（事象確認）: 受信をごく短いフレーム待ちタイムアウト付きで開き、
+    //    必ず RXFTO を起こす。RXFTO は上で有効化した割り込みに含まれるので、
+    //    線が生きていれば必ずエッジが1回来る。SYS_STATUS には事象が立って
+    //    いるのにエッジが来なければ、線は死んでいる。
+    //
+    // A floating / unwired IRQ pin is the dangerous case: uwb_port_irq_enable()
+    // succeeds, the firmware reports "irq=active", and every wait silently
+    // degrades to a 1 ms timeout - while the timing preset still assumes a
+    // 0.3 ms turnaround. Both stages below must pass.
+    static constexpr uint32_t kQuietWaitMs   = 5;    //!< 段階1: 無事象で待つ時間
+    static constexpr uint32_t kEventWaitMs   = 50;   //!< 段階2: エッジを待つ上限
+    static constexpr uint32_t kProbeRxTimeoutUus = 2000; //!< 約2.05ms でRXFTOを起こす
+
+    // 段階0: 先に SYS_STATUS を掃除して IRQ 線を必ず非アクティブ(Low)へ落とす。
+    // これをやらないと、既に立っているビットで線が High に張り付いたまま
+    // 段階1・2に入ってしまい、「エッジが来ない」の意味が決まらない
+    // （線が生きていても偽陰性になる）。
+    // Stage 0: drive the line inactive first. A status bit left set holds the
+    // line high, and then "no rising edge" would be meaningless.
+    dwt_forcetrxoff();
+    dwt_writesysstatuslo(SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR | SYS_STATUS_ALL_RX_GOOD |
+                          DWT_INT_TXFRS_BIT_MASK);
+
+    uwb_port_irq_clear_pending();
+    if (uwb_port_irq_wait(kQuietWaitMs)) {
+        ESP_LOGW(TAG,
+                 "irq self-test: spurious edge with no event pending (pin=%d). "
+                 "IRQ 線が未配線でフロートしているか極性が逆。ポーリングで続行する。",
+                 (int)_impl->config.pin_irq);
+        return false;
+    }
+
+    dwt_setpreambledetecttimeout(0);
+    dwt_setrxaftertxdelay(0);
+    dwt_setrxtimeout(kProbeRxTimeoutUus);
+    uwb_port_irq_clear_pending();
+
+    bool woken = false;
+    if (dwt_rxenable(DWT_START_RX_IMMEDIATE) == DWT_SUCCESS) {
+        woken = uwb_port_irq_wait(kEventWaitMs);
+    }
+    const uint32_t status = dwt_readsysstatuslo();
+
+    dwt_forcetrxoff();
+    dwt_writesysstatuslo(SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR | SYS_STATUS_ALL_RX_GOOD);
+    dwt_setrxtimeout(0);
+
+    // 事象が本当に起きたか（起きていなければ「エッジが来ない」ことの意味が
+    // 決まらないので、テスト自体を不成立として安全側=ポーリングへ倒す）。
+    const bool eventHappened =
+        (status & (SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR | (uint32_t)DWT_INT_RXFCG_BIT_MASK)) != 0;
+
+    if (woken && eventHappened) {
+        ESP_LOGI(TAG, "irq self-test: OK (pin=%d, status=0x%08lX)", (int)_impl->config.pin_irq,
+                 (unsigned long)status);
+        return true;
+    }
+    if (!eventHappened) {
+        ESP_LOGW(TAG,
+                 "irq self-test: inconclusive - no RX event was raised (status=0x%08lX). "
+                 "判定できないのでポーリングで続行する。",
+                 (unsigned long)status);
+        return false;
+    }
+    ESP_LOGW(TAG,
+             "irq self-test: FAILED - RX event raised (status=0x%08lX) but no edge on pin=%d. "
+             "DW_IRQ が繋がっていないか極性が逆。ポーリングで続行する "
+             "(docs/IRQ_POLICY.md)。",
+             (unsigned long)status, (int)_impl->config.pin_irq);
+    return false;
 }
 
 bool Qm33120::probe()

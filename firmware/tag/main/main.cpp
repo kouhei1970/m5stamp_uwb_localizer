@@ -94,6 +94,14 @@ static constexpr uwb::TimingProfile TIMING_PROFILE = uwb::TimingProfile::BothIrq
 static constexpr uwb::TimingProfile TIMING_PROFILE = uwb::TimingProfile::PollingBoth;
 #endif
 
+/* begin() 成功後に「実際に適用されたプリセット」で上書きする。
+ * IRQ 線が死んでいると init() が PollingBoth へ降格するため、
+ * コンパイル時の TIMING_PROFILE をそのまま使ってはいけない。
+ * The profile init() actually applied - init() downgrades IRQ presets to
+ * PollingBoth when the IRQ line turns out to be dead, so the compile-time
+ * TIMING_PROFILE must not be used directly. */
+static uwb::TimingProfile g_effectiveTimingProfile = TIMING_PROFILE;
+
 /* --- ネットワーク共通パラメータ（firmware/anchor と揃えること） --- */
 static constexpr uint16_t PAN_ID          = 0xDECA;
 static constexpr uint16_t TAG_SHORT_ADDR = 0x0001;
@@ -573,6 +581,13 @@ extern "C" void app_main(void)
         return;
     }
 
+    // init() may have downgraded the requested TIMING_PROFILE to PollingBoth
+    // if the IRQ line turned out to be dead (Qm33120::verifyIrqLine()). Carry
+    // the profile that was actually applied forward from here on.
+    // IRQ 線が死んでいると init() が要求プリセットを PollingBoth へ降格させて
+    // いることがあるため、以降は「実際に適用されたプリセット」を使う。
+    g_effectiveTimingProfile = uwbDevice.config().timing_profile;
+
     /* --- アンカー登録テーブルの構築 + 起動時チェック（必須） --- */
     static uwb::AnchorTable table; // .bss へ置いて app_main のスタックを節約する
     if (!applyAnchorTable(table, g_workEntries, entryCount)) {
@@ -599,10 +614,12 @@ extern "C" void app_main(void)
     schedCfg.cycleIntervalMs      = CONFIG_UWB_TAG_CYCLE_INTERVAL_MS;
     // ssDefaults/dsDefaultsは構造体既定値(=PollingBothの値と
     // 完全一致。docs/TIMING_PRESETS.md §2)のまま個別上書きされていないので、
-    // ここでプリセットを適用しても既定Kconfig(PollingBoth)ではno-op。
-    // AnchorIrq/BothIrqを選んだときにここで初めて反映される。
-    uwb::applyTimingProfile(schedCfg.ssDefaults, TIMING_PROFILE);
-    uwb::applyTimingProfile(schedCfg.dsDefaults, TIMING_PROFILE);
+    // 実効プリセットがPollingBoth(明示選択時、またはIRQ線が死んでいて
+    // init()が実行時に降格した場合)のときはここでのプリセット適用はno-op。
+    // Kconfigの既定はBothIrqであり、その場合やIRQが実際に生きている場合は
+    // ここで初めて値が反映される。
+    uwb::applyTimingProfile(schedCfg.ssDefaults, g_effectiveTimingProfile);
+    uwb::applyTimingProfile(schedCfg.dsDefaults, g_effectiveTimingProfile);
     static uwb::RangingScheduler scheduler(uwbDevice, table, schedCfg);
 
     ESP_LOGI(TAG, "begin() + PHY config OK, starting ranging loop");
@@ -622,8 +639,30 @@ extern "C" void app_main(void)
     }
 
     // --- タイミングプリセット(docs/TIMING_PRESETS.md) ---
-    ESP_LOGI(TAG, "timing profile=%s (version=%u)", uwb::timingProfileName(TIMING_PROFILE),
-             (unsigned)uwb::kTimingPresetVersion);
+    // g_effectiveTimingProfile（init()が実際に適用した値）と、requested=
+    // （コンパイル時のTIMING_PROFILE）の両方を出す。実行時のPollingBothへの
+    // 降格が起きていないかを起動ログだけで判別できるように。
+#if CONFIG_UWB_TAG_METHOD_DS
+    {
+        const uwb::TimingPresetDs ds = uwb::timingPresetDs(g_effectiveTimingProfile);
+        ESP_LOGI(TAG,
+                 "timing profile=%s (version=%u, requested=%s) wait=%s response_tx_delay=%luuus(%.0fus) "
+                 "final_tx_delay=%luuus(%.0fus)",
+                 uwb::timingProfileName(g_effectiveTimingProfile), (unsigned)uwb::kTimingPresetVersion,
+                 uwb::timingProfileName(TIMING_PROFILE), uwbDevice.irqActive() ? "irq" : "polling",
+                 (unsigned long)ds.responseTxDelayUus, ds.responseTxDelayUus * 1.02564,
+                 (unsigned long)ds.finalTxDelayUus, ds.finalTxDelayUus * 1.02564);
+    }
+#else
+    {
+        const uwb::TimingPresetSs ss = uwb::timingPresetSs(g_effectiveTimingProfile);
+        ESP_LOGI(TAG,
+                 "timing profile=%s (version=%u, requested=%s) wait=%s response_tx_delay=%luuus(%.0fus)",
+                 uwb::timingProfileName(g_effectiveTimingProfile), (unsigned)uwb::kTimingPresetVersion,
+                 uwb::timingProfileName(TIMING_PROFILE), uwbDevice.irqActive() ? "irq" : "polling",
+                 (unsigned long)ss.responseTxDelayUus, ss.responseTxDelayUus * 1.02564);
+    }
+#endif
     // 起動時チェック(docs/TIMING_PRESETS.md §4(b)): BothIrqはタグ側IRQも
     // 前提にしているのに、実際にはIRQが有効化されていない場合は目立つ
     // 警告を出す。**値は自動で変えない**(片側が勝手に変えると測距が壊れる)。

@@ -91,6 +91,14 @@ static constexpr uwb::TimingProfile TIMING_PROFILE = uwb::TimingProfile::BothIrq
 static constexpr uwb::TimingProfile TIMING_PROFILE = uwb::TimingProfile::PollingBoth;
 #endif
 
+/* begin() 成功後に「実際に適用されたプリセット」で上書きする。
+ * IRQ 線が死んでいると init() が PollingBoth へ降格するため、
+ * コンパイル時の TIMING_PROFILE をそのまま使ってはいけない。
+ * The profile init() actually applied - init() downgrades IRQ presets to
+ * PollingBoth when the IRQ line turns out to be dead, so the compile-time
+ * TIMING_PROFILE must not be used directly. */
+static uwb::TimingProfile g_effectiveTimingProfile = TIMING_PROFILE;
+
 #define UWB_DEV_ID_EXPECTED 0xDECA0314UL
 
 /* --- ネットワーク共通パラメータ --- */
@@ -250,9 +258,10 @@ static uwb::DSRangeConfig makeRangeConfig(uint16_t selfAddr)
     // 確実に効くようにする(*Uusフィールドのみ上書き。panId/アドレス/
     // hostTimeoutMs/resultRepeatCount/resultRepeatGapMsは触らない)。
     // このDS-TWRブロックの個別値はPollingBothの表(docs/TIMING_PRESETS.md §2.2)
-    // と完全に一致しているため、既定Kconfig(PollingBoth)ではこの1行は
-    // 実質no-op。
-    uwb::applyTimingProfile(range, TIMING_PROFILE);
+    // と完全に一致しているため、実効プリセットがPollingBoth(明示選択時、
+    // またはIRQ線が死んでいてinit()が実行時に降格した場合)のときはこの1行は
+    // 実質no-op。Kconfigの既定はBothIrqであり、その場合は値が変わる。
+    uwb::applyTimingProfile(range, g_effectiveTimingProfile);
     return range;
 }
 
@@ -338,7 +347,7 @@ static uwb::RangeConfig makeRangeConfig(uint16_t selfAddr)
     // (components/uwb_qm33120/src/uwb_qm33120_twr.cpp の respondRange())。
     // したがってアンカー役ではもともと無効な値であり、上書きしても電波の
     // 振る舞いは変わらない。値の出所を1本化するためにこの呼び出しを置く。
-    uwb::applyTimingProfile(range, TIMING_PROFILE);
+    uwb::applyTimingProfile(range, g_effectiveTimingProfile);
     return range;
 }
 
@@ -425,6 +434,14 @@ extern "C" void app_main(void)
         ESP_LOGE(TAG, "PHY init did not complete (isInitialized()==false), aborting");
         return;
     }
+
+    // init() may have downgraded the requested TIMING_PROFILE to PollingBoth
+    // if the IRQ line turned out to be dead (Qm33120::verifyIrqLine()). Carry
+    // the profile that was actually applied forward from here on.
+    // IRQ 線が死んでいると init() が要求プリセットを PollingBoth へ降格させて
+    // いることがあるため、以降は「実際に適用されたプリセット」を使う。
+    g_effectiveTimingProfile = uwbDevice.config().timing_profile;
+
     ESP_LOGI(TAG, "begin() + PHY config OK, starting ANCHOR/%s loop (short_addr=0x%04X)", METHOD_NAME,
              g_shortAddr);
 
@@ -443,8 +460,30 @@ extern "C" void app_main(void)
     }
 
     // --- タイミングプリセット(docs/TIMING_PRESETS.md) ---
-    ESP_LOGI(TAG, "timing profile=%s (version=%u)", uwb::timingProfileName(TIMING_PROFILE),
-             (unsigned)uwb::kTimingPresetVersion);
+    // g_effectiveTimingProfile（init()が実際に適用した値）と、requested=
+    // （コンパイル時のTIMING_PROFILE）の両方を出す。実行時のPollingBothへの
+    // 降格が起きていないかを起動ログだけで判別できるように。
+#if CONFIG_UWB_ANCHOR_METHOD_DS
+    {
+        const uwb::TimingPresetDs ds = uwb::timingPresetDs(g_effectiveTimingProfile);
+        ESP_LOGI(TAG,
+                 "timing profile=%s (version=%u, requested=%s) wait=%s response_tx_delay=%luuus(%.0fus) "
+                 "final_tx_delay=%luuus(%.0fus)",
+                 uwb::timingProfileName(g_effectiveTimingProfile), (unsigned)uwb::kTimingPresetVersion,
+                 uwb::timingProfileName(TIMING_PROFILE), uwbDevice.irqActive() ? "irq" : "polling",
+                 (unsigned long)ds.responseTxDelayUus, ds.responseTxDelayUus * 1.02564,
+                 (unsigned long)ds.finalTxDelayUus, ds.finalTxDelayUus * 1.02564);
+    }
+#else
+    {
+        const uwb::TimingPresetSs ss = uwb::timingPresetSs(g_effectiveTimingProfile);
+        ESP_LOGI(TAG,
+                 "timing profile=%s (version=%u, requested=%s) wait=%s response_tx_delay=%luuus(%.0fus)",
+                 uwb::timingProfileName(g_effectiveTimingProfile), (unsigned)uwb::kTimingPresetVersion,
+                 uwb::timingProfileName(TIMING_PROFILE), uwbDevice.irqActive() ? "irq" : "polling",
+                 (unsigned long)ss.responseTxDelayUus, ss.responseTxDelayUus * 1.02564);
+    }
+#endif
     // 起動時チェック(docs/TIMING_PRESETS.md §4(b)): このプリセットが
     // アンカー側IRQを前提にしているのに、実際にはIRQが有効化されていない
     // 場合は目立つ警告を出す。**値は自動で変えない**(プリセットは相手と

@@ -135,6 +135,15 @@ private:
     bool probe();
     void setError(Error error);
 
+    /**
+     * @brief IRQ 線が実際にエッジを届けているかを起動時に実測する
+     * （docs/IRQ_POLICY.md）。uwb_port_irq_enable() の成功は「ISR を登録
+     * できた」ことしか意味せず、未配線・極性誤り・断線を検出できないため。
+     * false のとき init() は IRQ を諦め、タイミングプリセットも
+     * PollingBoth へ落とす。init() からのみ呼ばれる。
+     */
+    bool verifyIrqLine();
+
     static Qm33120* _active;
 };
 

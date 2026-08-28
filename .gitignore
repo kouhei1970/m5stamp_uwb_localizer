@@ -29,3 +29,11 @@ third_party/
 # footers, so they must NOT be committed. Source URLs are recorded in the
 # research notes instead.
 docs/refs/
+
+# Vendor datasheets dropped into assets/ for research. assets/ itself is
+# tracked (M5Stack's own schematics and images live there), but Qorvo /
+# Decawave documents follow the same rule as docs/refs/ above: do not commit
+# them. Source URLs are recorded in the research notes instead.
+# assets/ 配下でも、Qorvo/Decawave のベンダ文書は docs/refs/ と同じ扱いで
+# コミットしない（M5Stack 自身の回路図・画像は従来どおり追跡する）。
+assets/QM33120W*.pdf
