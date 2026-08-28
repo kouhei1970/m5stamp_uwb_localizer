@@ -174,6 +174,28 @@ static const char* fmtDbmQ8(int16_t q8, char* buf, size_t len)
     return buf;
 }
 
+/**
+ * @brief Convert a PacSize enum value to the PAC length it represents, in
+ *        symbols (4/8/16/32), for logging.
+ *        PacSize の enum 値を、ログ表示用に実際の PAC 長（4/8/16/32
+ *        シンボル）へ変換する。
+ */
+static unsigned pacSizeCount(uwb::PacSize pac)
+{
+    switch (pac) {
+    case uwb::PacSize::Pac4:
+        return 4;
+    case uwb::PacSize::Pac8:
+        return 8;
+    case uwb::PacSize::Pac16:
+        return 16;
+    case uwb::PacSize::Pac32:
+        return 32;
+    default:
+        return 0;
+    }
+}
+
 /** @brief Read the on-chip die temperature [degC] / ダイ温度を読む */
 static float dieTempC()
 {
@@ -788,6 +810,40 @@ extern "C" void app_main(void)
     ESP_LOGW(TAG, "DIAG_ROBUST_PHY: preamble=1024 PAC=32 rate=850kbps (both boards must match)");
 #endif
 
+#if defined(CONFIG_UWB_TWR_DIAG_PHY_PREAMBLE) && (CONFIG_UWB_TWR_DIAG_PHY_PREAMBLE != 0)
+    // Diagnostic: vary the preamble length alone, to see how much margin it
+    // needs on its own. PAC size follows Qorvo's recommendation for the
+    // chosen length. sfdTimeout stays 0 so it keeps tracking the automatic
+    // calculation (task R8).
+    // 診断: プリアンブル長だけを振って、どこまで余裕が要るかを測るための
+    // 診断。PAC 長は Qorvo 推奨に従って長さから決める。sfdTimeout は 0 の
+    // ままにして自動計算に追随させる（R8）。
+#if CONFIG_UWB_TWR_DIAG_PHY_PREAMBLE == 128
+    phy.preambleLength = uwb::PreambleLength::Len128;
+    phy.pacSize        = uwb::PacSize::Pac8;
+#elif CONFIG_UWB_TWR_DIAG_PHY_PREAMBLE == 256
+    phy.preambleLength = uwb::PreambleLength::Len256;
+    phy.pacSize        = uwb::PacSize::Pac16;
+#elif CONFIG_UWB_TWR_DIAG_PHY_PREAMBLE == 512
+    phy.preambleLength = uwb::PreambleLength::Len512;
+    phy.pacSize        = uwb::PacSize::Pac16;
+#elif CONFIG_UWB_TWR_DIAG_PHY_PREAMBLE == 1024
+    phy.preambleLength = uwb::PreambleLength::Len1024;
+    phy.pacSize        = uwb::PacSize::Pac32;
+#else
+#error "CONFIG_UWB_TWR_DIAG_PHY_PREAMBLE must be 0, 128, 256, 512 or 1024"
+#endif
+    ESP_LOGW(TAG, "DIAG_PHY_PREAMBLE: preamble=%d (PAC follows) (both boards must match)",
+             CONFIG_UWB_TWR_DIAG_PHY_PREAMBLE);
+#endif
+
+#if defined(CONFIG_UWB_TWR_DIAG_PHY_850K) && CONFIG_UWB_TWR_DIAG_PHY_850K
+    // Diagnostic: drop the data rate alone.
+    // 診断: データ速度だけを落とす診断。
+    phy.dataRate = uwb::DataRate::Rate850K;
+    ESP_LOGW(TAG, "DIAG_PHY_850K: rate=850kbps (both boards must match)");
+#endif
+
     // タスクD-2: 実際に使うSPI高速クロックを起動ログに出す(切り分け作業で
     // Kconfigの値が本当に反映されたかを確認できるように)。
     ESP_LOGI(TAG, "spi_fast=%lu", (unsigned long)cfg.spi_fast_hz);
@@ -800,6 +856,16 @@ extern "C" void app_main(void)
     ESP_LOGI(TAG, "deviceId=0x%08lX (expect 0x%08lX) chipName=%s isConnected=%d isInitialized=%d",
              (unsigned long)uwbDevice.deviceId(), (unsigned long)UWB_DEV_ID_EXPECTED, uwbDevice.chipName(),
              uwbDevice.isConnected(), uwbDevice.isInitialized());
+
+    // 実機切り分け用: begin() に実際に効いた PHY 設定を1行で出す(DIAG_*
+    // オプションのどれが実際に効いたかを、起動ログだけから確認できるように)。
+    // Diagnostic: log the PHY settings that actually took effect in begin(),
+    // so which of the DIAG_* options (if any) actually applied is visible
+    // from the boot log alone.
+    ESP_LOGI(TAG, "phy: preamble=%u pac=%u rate=%s ch=%u code=%u/%u sfd=%u",
+             static_cast<unsigned>(phy.preambleLength), pacSizeCount(phy.pacSize),
+             (phy.dataRate == uwb::DataRate::Rate850K) ? "850kbps" : "6.8Mbps", static_cast<unsigned>(phy.channel),
+             phy.txPreambleCode, phy.rxPreambleCode, static_cast<unsigned>(phy.sfdType));
 
     if (uwbDevice.deviceId() != UWB_DEV_ID_EXPECTED) {
         ESP_LOGE(TAG, "unexpected device id, aborting");

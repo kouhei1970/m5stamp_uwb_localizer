@@ -217,6 +217,55 @@ menu "UWB TWR Configuration"
             length (task R8): a fixed sfdTimeout silently destroys the
             reception rate when the preamble length changes.
 
+    config UWB_TWR_DIAG_PHY_PREAMBLE
+        int "Diagnostic: preamble length override (0 = leave the default 128)"
+        default 0
+        help
+            Isolates the preamble-length half of UWB_TWR_DIAG_ROBUST_PHY so it
+            can be measured on its own. 0 leaves PhyConfig at its default
+            (128 / PAC8) untouched. 128, 256, 512 or 1024 sets that preamble
+            length together with the PAC size Qorvo recommends for it
+            (128->PAC8, 256->PAC16, 512->PAC16, 1024->PAC32).
+            診断用: UWB_TWR_DIAG_ROBUST_PHY のうちプリアンブル長だけを取り出して
+            単独で測れるようにする。0 なら PhyConfig の既定（128 / PAC8）の
+            まま。128 / 256 / 512 / 1024 のいずれかを指定すると、その長さと
+            Qorvo 推奨の PAC 長が一緒に設定される（128->PAC8、256->PAC16、
+            512->PAC16、1024->PAC32）。
+
+            BOTH boards must be flashed with the same value - a one-sided
+            change simply stops ranging.
+            両機を同じ値にすること。片側だけ変えると受信できない。
+
+            sfdTimeout is left at 0, so it is recomputed from
+            preambleLength/sfdType/pacSize (task R8): a fixed value silently
+            destroys the reception rate when the preamble length changes.
+            sfdTimeout は 0 のままにするので、preambleLength/sfdType/pacSize
+            から自動計算される（課題 R8。固定値だと preamble を変えたときに
+            受信率が黙って激減する）。
+
+            When combined with UWB_TWR_DIAG_ROBUST_PHY, this option is applied
+            afterwards and wins.
+            UWB_TWR_DIAG_ROBUST_PHY と併用した場合は、こちらが後から上書きする。
+
+    config UWB_TWR_DIAG_PHY_850K
+        bool "Diagnostic: use 850 kbps instead of 6.8 Mbps"
+        default n
+        help
+            Isolates the data-rate half of UWB_TWR_DIAG_ROBUST_PHY so it can
+            be measured on its own: drops the data rate to 850 kbps only,
+            leaving the preamble length unchanged.
+            診断用: UWB_TWR_DIAG_ROBUST_PHY のうちデータ速度だけを取り出して
+            単独で測れるようにする。データ速度だけを 850kbps へ落とし、
+            プリアンブル長は変えない。
+
+            BOTH boards must be flashed with the same value - a one-sided
+            change simply stops ranging.
+            両機を同じ値にすること。片側だけ変えると受信できない。
+
+            When combined with UWB_TWR_DIAG_ROBUST_PHY, this option is applied
+            afterwards and wins.
+            UWB_TWR_DIAG_ROBUST_PHY と併用した場合は、こちらが後から上書きする。
+
     choice UWB_TIMING_PROFILE
         prompt "TWR timing preset"
         default UWB_TIMING_PROFILE_BOTH_IRQ
