@@ -9,7 +9,7 @@
  * called uwb::Qm33120::begin(). That left docs/HANDOFF.md SS1's "not yet
  * verified on real hardware" list - RSTn(G6) / IRQ(G7) / WAKEUP(G8)
  * continuity, and the 16 MHz fast SPI rate - completely untested. This file
- * extends the same binary into a full board bring-up checklist (L1-L10),
+ * extends the same binary into a full board bring-up checklist (L1-L11),
  * each logging an explicit PASS / FAIL / SKIP, ending in one grep-able
  * summary line.
  *
@@ -17,7 +17,10 @@
  * main/Kconfig.projbuild), default M5StampS3A. Pin definitions live in
  * boards/stamps3.h / boards/atoms3.h / boards/stampfly.h at the repo root.
  *
- * --- Test order and why (L1 -> L10, strictly sequential) ---
+ * --- Test order and why (L1 -> L11 in the order they run, NOT in numeric
+ *     order - L11 runs before L10 because L10 puts the chip to sleep and
+ *     L11 needs to read the post-begin() state first; see the L11 comment
+ *     and its call site in app_main() below) ---
  *   L1  raw SPI DEV_ID read (slow SPI, no driver state needed)
  *   L2  dwt_probe() + dwt_readdevid() (slow SPI; this is what makes the
  *       static `dw` pointer in deca_compat.c valid - see the L3 comment)
@@ -28,6 +31,8 @@
  *   L7  part/lot ID + calibration dump (record only)
  *   L8  TX smoke test
  *   L9  3s ambient RX scan (record only)
+ *   L11 DGC (RX gain calibration) OTP-vs-SW path dump (record only) - runs
+ *       here, right after L9, for the reason given above
  *   L10 WAKEUP pin check (opt-in, Kconfig UWB_PROBE_TEST_WAKEUP)
  * L3/L4 call the vendored SDK's raw register accessors directly (same way
  * L1/L2 already did before this file existed), which only work once L2's
@@ -44,7 +49,7 @@
  * 一度も呼んでいなかった。そのため docs/HANDOFF.md §1 が「未確認」と挙げる
  * RSTn(G6) / IRQ(G7) / WAKEUP(G8) の導通と 16MHz SPI が一切検証できて
  * いなかった。本ファイルは同じバイナリを基板立ち上げ時の機能チェック一式
- * （L1〜L10）へ拡張する。各検査は PASS / FAIL / SKIP を明示し、最後に
+ * （L1〜L11）へ拡張する。各検査は PASS / FAIL / SKIP を明示し、最後に
  * grep しやすい1行のサマリへまとめる。
  */
 #include <cstdio>
@@ -61,6 +66,24 @@
 #include "uwb_port.h"
 #include "uwb_qm33120.hpp"
 #include "uwb_status_led.h"
+
+/* L11 (DGC dump) needs raw register access below deca_device_api.h's public
+ * surface: dwt_readfromdevice() (declared in deca_private.h, defined in
+ * components/qm33120w_sdk/deca_compat.c) and the DGC_* / OTP_CFG_ID register
+ * IDs plus the DWT_DGC_CFG0/1/2 and E0_CH5/CH9_DGC_LUT_* hardcoded-table
+ * constants (both in components/qm33120w_sdk/dw3720/dw3720_deca_regs.h,
+ * which itself pulls in dw3720_deca_vals.h). Both headers already wrap their
+ * contents in `extern "C" { ... }` guards, so including them directly from
+ * this .cpp compiles cleanly with no local re-declaration needed.
+ * L11（DGC ダンプ）は deca_device_api.h の公開 API より下、
+ * dwt_readfromdevice()（deca_private.h 宣言・deca_compat.c 定義）と
+ * DGC_* / OTP_CFG_ID のレジスタ ID、DWT_DGC_CFG0/1/2 および
+ * E0_CH5/CH9_DGC_LUT_* のハードコード表定数
+ * （どちらも dw3720_deca_regs.h、内部で dw3720_deca_vals.h を取り込む）に
+ * 生でアクセスする必要がある。両ヘッダとも extern "C" で囲まれているため、
+ * この .cpp から直接 include しても再宣言なしに問題なくコンパイルできる。 */
+#include "deca_private.h"
+#include "dw3720_deca_regs.h"
 
 /* Matches the Arduino reference's own top-of-file extern declaration
  * (M5Stamp_UWB.cpp) and components/uwb_qm33120/src/uwb_qm33120.cpp:
@@ -590,6 +613,213 @@ static void run_l9_rx_ambient_scan()
 }
 
 /* ===========================================================================
+ * L11: DGC (RX gain calibration) OTP-vs-SW path dump (record only)
+ * ===========================================================================
+ * Numbered L11 because it was added after L10, but it actually RUNS right
+ * after L9 in app_main() - before L10, which puts the chip to sleep. L11
+ * must read the post-begin() DGC state while it is still live, so it has to
+ * come first; see the call site comment in app_main() below.
+ * L10 の後に追加したため番号は L11 だが、実行順は L9 の直後（L10 より前）。
+ * L10 はチップをスリープさせるため、begin() 直後の DGC 状態が生きている
+ * うちに L11 で読んでおく必要がある。詳細は app_main() 内の呼び出し箇所の
+ * コメントを参照。
+ * =========================================================================== */
+
+/**
+ * @brief Read a 32-bit little-endian register via dwt_readfromdevice() (same
+ * byte order as the SDK's own dwt_read32bitoffsetreg() - see
+ * dw3720_device.c). Local to L11 only.
+ */
+static uint32_t l11_read_reg32(uint32_t regFileID)
+{
+    uint8_t buf[4] = {0, 0, 0, 0};
+    dwt_readfromdevice(regFileID, 0, sizeof(buf), buf);
+    return ((uint32_t)buf[3] << 24) | ((uint32_t)buf[2] << 16) | ((uint32_t)buf[1] << 8) | (uint32_t)buf[0];
+}
+
+/**
+ * @brief Read a 16-bit little-endian register via dwt_readfromdevice().
+ * Local to L11 only (OTP_CFG_ID is a 32-bit register, but the bits L11
+ * cares about - OTP_CFG_DGC_KICK_BIT_MASK=0x100 - all live in the low 16
+ * bits, so 16 bits is enough per the task spec).
+ */
+static uint16_t l11_read_reg16(uint32_t regFileID)
+{
+    uint8_t buf[2] = {0, 0};
+    dwt_readfromdevice(regFileID, 0, sizeof(buf), buf);
+    return (uint16_t)(((uint16_t)buf[1] << 8) | (uint16_t)buf[0]);
+}
+
+/**
+ * @brief L11: dump whether DGC (Digital Gain Control = the receiver's gain
+ * calibration table) is running from per-unit OTP calibration or from a
+ * generic hardcoded table, plus the raw register contents either way
+ * (record only, no PASS/FAIL - like L7/L9). Background: TWR ranging
+ * currently succeeds only ~22% of the time at 540mm, implying effective RX
+ * sensitivity is ~30dB worse than spec (see docs/HANDOFF.md); the DGC path
+ * was an unverified suspect and nobody had checked which path real hardware
+ * takes.
+ *
+ * During dwt_initialise() the SDK (dw3720_device.c, ~line 967) reads OTP
+ * word 0x20 and, ONLY if it equals DWT_DGC_CFG0 (0x00000240), trusts the
+ * per-unit calibration baked into OTP at manufacture time ("path=OTP").
+ * Otherwise it falls back to a hardcoded generic table for whichever
+ * channel is active ("path=SW" - see ull_configmrxlut() in the same file).
+ *
+ * 読み方 / how to read the output:
+ *  - path=OTP: この個体は OTP に工場較正された DGC 値を持ち、それを使って
+ *    いる。 This unit has a factory DGC calibration in OTP and is using it.
+ *  - path=SW: この個体には OTP 上の個体別 DGC 較正が **無く**、汎用
+ *    ハードコード表（ch9 または ch5）のまま動作している。他個体のログと
+ *    比較すること。 If path=SW, the chip has no per-unit DGC calibration in
+ *    OTP and runs on generic table values instead; compare with the other
+ *    unit.
+ *  - WARN 行は内部矛盾（例: path=SW なのに LUT がハードコード表と違う、
+ *    RX_TUNE イネーブルが落ちている等）を示す。RX_TUNE が落ちていれば、
+ *    それだけで感度不足を直接説明できる。 The WARN lines flag internal
+ *    inconsistencies; a clear RX_TUNE enable bit alone would directly
+ *    explain poor sensitivity.
+ *  - OTP_CFG の kick ビット (LDO/BIAS/DGC) は「1 を書くと OTP から
+ *    レジスタへ転送し、その後自動で 0 に戻る」自己クリア型。初期化後に
+ *    0 と読めるのは正常で、矛盾ではない。その裏付けとして LDO/BIAS の
+ *    OTP 語も併記する: これらが非ゼロなら init が LDO/BIAS kick (0x600)
+ *    を書いたはずで、それでも OTP_CFG が 0 なら自己クリアの実証になる。
+ *    The OTP_CFG kick bits (LDO/BIAS/DGC) are self-clearing: writing 1
+ *    transfers OTP data into the registers and the bit reads back 0
+ *    afterwards. Reading 0 after init is normal, not an inconsistency.
+ *    The LDO/BIAS OTP words are printed as supporting evidence: if they
+ *    are non-zero, init must have written the LDO/BIAS kicks (0x600), and
+ *    OTP_CFG still reading 0 demonstrates the self-clearing behaviour.
+ *
+ * @return true if this unit is on the OTP calibration path, false if it
+ * fell back to the SW hardcoded table. Used only to annotate the summary
+ * line token (L11=rec(dgc=OTP|SW)) - this is data, not a verdict.
+ */
+static bool run_l11_dgc_check()
+{
+    uint32_t otp[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+    dwt_otpread(0x20U, otp, 8U);
+
+    char otp_line[192];
+    size_t n    = 0;
+    otp_line[0] = '\0';
+    for (int i = 0; i < 8; ++i) {
+        n += static_cast<size_t>(snprintf(otp_line + n, sizeof(otp_line) - n, "%s0x%02X=0x%08lX", (i != 0) ? " " : "",
+                                           (unsigned)(0x20 + i), (unsigned long)otp[i]));
+    }
+    ESP_LOGI(TAG, "L11: OTP[0x20..0x27] = %s", otp_line);
+
+    /* Supporting OTP words: LDO tune lo/hi (0x04/0x05), bias tune (0x0A),
+     * xtal trim (0x1E). Addresses as in dw3720_device.c (LDOTUNELO_ADDRESS,
+     * LDOTUNEHI_ADDRESS, BIAS_TUNE_ADDRESS, XTRIM_ADDRESS).
+     * 補助の OTP 語: LDO tune lo/hi (0x04/0x05)、bias tune (0x0A)、
+     * 水晶トリム (0x1E)。番地は dw3720_device.c の定義と同じ。 */
+    uint32_t otp_ldo_lo = 0, otp_ldo_hi = 0, otp_bias = 0, otp_xtrim = 0;
+    dwt_otpread(0x04U, &otp_ldo_lo, 1U);
+    dwt_otpread(0x05U, &otp_ldo_hi, 1U);
+    dwt_otpread(0x0AU, &otp_bias, 1U);
+    dwt_otpread(0x1EU, &otp_xtrim, 1U);
+    ESP_LOGI(TAG, "L11: OTP ldo_tune_lo(0x04)=0x%08lX ldo_tune_hi(0x05)=0x%08lX bias_tune(0x0A)=0x%08lX xtrim(0x1E)=0x%08lX",
+             (unsigned long)otp_ldo_lo, (unsigned long)otp_ldo_hi, (unsigned long)otp_bias, (unsigned long)otp_xtrim);
+
+    const bool otp_path = (otp[0] == DWT_DGC_CFG0);
+    ESP_LOGI(TAG, "L11: dgc_otp_tune=0x%08lX (expect 0x00000240 for OTP path) -> path=%s", (unsigned long)otp[0],
+             otp_path ? "OTP" : "SW");
+
+    const uint32_t dgc_cfg  = l11_read_reg32(DGC_CFG_ID);
+    const uint32_t dgc_cfg0 = l11_read_reg32(DGC_CFG0_ID);
+    const uint32_t dgc_cfg1 = l11_read_reg32(DGC_CFG1_ID);
+    const uint32_t dgc_cfg2 = l11_read_reg32(DGC_CFG2_ID);
+    const uint32_t lut0     = l11_read_reg32(DGC_LUT_0_CFG_ID);
+    const uint32_t lut1     = l11_read_reg32(DGC_LUT_1_CFG_ID);
+    const uint32_t lut2     = l11_read_reg32(DGC_LUT_2_CFG_ID);
+    const uint32_t lut3     = l11_read_reg32(DGC_LUT_3_CFG_ID);
+    const uint32_t lut4     = l11_read_reg32(DGC_LUT_4_CFG_ID);
+    const uint32_t lut5     = l11_read_reg32(DGC_LUT_5_CFG_ID);
+    const uint32_t lut6     = l11_read_reg32(DGC_LUT_6_CFG_ID);
+    const uint32_t dgc_dbg  = l11_read_reg32(DGC_DBG_ID);
+    const uint16_t otp_cfg  = l11_read_reg16(OTP_CFG_ID);
+
+    ESP_LOGI(TAG, "L11: DGC_CFG=0x%08lX DGC_CFG0=0x%08lX DGC_CFG1=0x%08lX DGC_CFG2=0x%08lX", (unsigned long)dgc_cfg,
+             (unsigned long)dgc_cfg0, (unsigned long)dgc_cfg1, (unsigned long)dgc_cfg2);
+    ESP_LOGI(TAG, "L11: DGC_LUT_0..6 = 0x%05lX 0x%05lX 0x%05lX 0x%05lX 0x%05lX 0x%05lX 0x%05lX", (unsigned long)lut0,
+             (unsigned long)lut1, (unsigned long)lut2, (unsigned long)lut3, (unsigned long)lut4, (unsigned long)lut5,
+             (unsigned long)lut6);
+    ESP_LOGI(TAG, "L11: DGC_DBG=0x%08lX OTP_CFG=0x%04X", (unsigned long)dgc_dbg, (unsigned)otp_cfg);
+
+    const uint8_t dgc_decision =
+        (uint8_t)((dgc_dbg & DGC_DBG_DGC_DECISION_BIT_MASK) >> DGC_DBG_DGC_DECISION_BIT_OFFSET);
+    const bool rx_tune_en      = ((dgc_cfg & DGC_CFG_RX_TUNE_EN_BIT_MASK) != 0U);
+    const bool otp_cfg_dgc_kick = ((otp_cfg & OTP_CFG_DGC_KICK_BIT_MASK) != 0U);
+    ESP_LOGI(TAG, "L11: dgc_decision=%u rx_tune_en=%d otp_cfg_dgc_kick=%d", (unsigned)dgc_decision, rx_tune_en ? 1 : 0,
+             otp_cfg_dgc_kick ? 1 : 0);
+
+    const bool cfg_matches_hardcoded =
+        (dgc_cfg0 == DWT_DGC_CFG0) && (dgc_cfg1 == DWT_DGC_CFG1) && (dgc_cfg2 == DWT_DGC_CFG2);
+
+    /* begin() configures the default Channel9 (see uwb_qm33120.cpp), so the
+     * expected SW-path table is the ch9 one; ch5 match is reported too since
+     * seeing it would itself be a symptom of a channel mis-configuration.
+     * begin() は既定で Channel9 を使う（uwb_qm33120.cpp 参照）ため、SW 側で
+     * 期待されるのは ch9 表。ch5 に一致した場合もチャネル設定の不整合の
+     * 兆候として報告する。 */
+    const bool lut_matches_ch9 = (lut0 == (uint32_t)E0_CH9_DGC_LUT_0) && (lut1 == (uint32_t)E0_CH9_DGC_LUT_1) &&
+                                  (lut2 == (uint32_t)E0_CH9_DGC_LUT_2) && (lut3 == (uint32_t)E0_CH9_DGC_LUT_3) &&
+                                  (lut4 == (uint32_t)E0_CH9_DGC_LUT_4) && (lut5 == (uint32_t)E0_CH9_DGC_LUT_5) &&
+                                  (lut6 == (uint32_t)E0_CH9_DGC_LUT_6);
+    const bool lut_matches_ch5 = (lut0 == (uint32_t)E0_CH5_DGC_LUT_0) && (lut1 == (uint32_t)E0_CH5_DGC_LUT_1) &&
+                                  (lut2 == (uint32_t)E0_CH5_DGC_LUT_2) && (lut3 == (uint32_t)E0_CH5_DGC_LUT_3) &&
+                                  (lut4 == (uint32_t)E0_CH5_DGC_LUT_4) && (lut5 == (uint32_t)E0_CH5_DGC_LUT_5) &&
+                                  (lut6 == (uint32_t)E0_CH5_DGC_LUT_6);
+    const char *lut_class = lut_matches_ch9 ? "ch9-hardcoded" : (lut_matches_ch5 ? "ch5-hardcoded" : "other(OTP?)");
+
+    ESP_LOGI(TAG, "L11: cfg0/1/2==DWT_DGC_CFG0/1/2(hardcoded)? %s, lut=%s", cfg_matches_hardcoded ? "yes" : "no",
+             lut_class);
+
+    /* The kick bits are self-clearing (see the section comment), so a clear
+     * bit after init is the expected state on either path. Only a bit that
+     * is still set is anomalous (a kick that never completed).
+     * kick ビットは自己クリア型なので、初期化後に 0 なのはどちらの経路でも
+     * 正常。立ったままなら異常（転送が完了していない）。 */
+    if (otp_path && !otp_cfg_dgc_kick) {
+        const bool ldo_bias_present = (otp_ldo_lo != 0UL) && (otp_ldo_hi != 0UL) && (otp_bias != 0UL);
+        ESP_LOGI(TAG, "L11: path=OTP, DGC kick bit reads 0 - expected (self-clearing)%s",
+                 ldo_bias_present ? "; LDO/BIAS kicks (0x600) were also written at init and read back 0, "
+                                    "confirming self-clearing"
+                                  : "");
+    }
+    if (otp_cfg_dgc_kick) {
+        ESP_LOGW(TAG, "L11: OTP_CFG DGC kick bit is still SET after init - the OTP->register transfer may not have "
+                      "completed");
+    }
+    if (!otp_path && !lut_matches_ch9) {
+        ESP_LOGW(TAG, "L11: path=SW but LUTs do not match the hardcoded ch9 table (classified as %s) - unexpected",
+                 lut_class);
+    }
+    if (!rx_tune_en) {
+        ESP_LOGW(TAG, "L11: DGC_CFG RX_TUNE_EN bit is CLEAR - DGC is disabled, which would directly explain poor "
+                      "RX sensitivity");
+    }
+    bool otp_all_zero = true;
+    bool otp_all_ff    = true;
+    for (int i = 0; i < 8; ++i) {
+        if (otp[i] != 0x00000000UL) {
+            otp_all_zero = false;
+        }
+        if (otp[i] != 0xFFFFFFFFUL) {
+            otp_all_ff = false;
+        }
+    }
+    if (otp_all_zero || otp_all_ff) {
+        ESP_LOGW(TAG, "L11: all 8 OTP words are %s - looks like an OTP read failure",
+                 otp_all_zero ? "0x00000000" : "0xFFFFFFFF");
+    }
+
+    ESP_LOGI(TAG, "L11: dgc path=%s lut=%s -> rec", otp_path ? "OTP" : "SW", lut_class);
+    return otp_path;
+}
+
+/* ===========================================================================
  * L10: WAKEUP pin check (opt-in, default off)
  * =========================================================================== */
 
@@ -750,14 +980,15 @@ extern "C" void app_main(void)
                  uwbDevice.irqActive());
         snprintf(l5_note, sizeof(l5_note), "(irq=%s)", uwbDevice.irqActive() ? "active" : "polling");
     } else {
-        ESP_LOGE(TAG, "L5: begin() FAILED, error=%s -> FAIL. L6-L10 will be SKIPped.", uwbDevice.lastErrorName());
+        ESP_LOGE(TAG, "L5: begin() FAILED, error=%s -> FAIL. L6-L11 will be SKIPped.", uwbDevice.lastErrorName());
         snprintf(l5_note, sizeof(l5_note), "(%s)", uwbDevice.lastErrorName());
     }
 
-    /* --- L6-L10: only meaningful once begin() succeeded ------------------ */
+    /* --- L6-L11: only meaningful once begin() succeeded ------------------ */
     bool l6_ok = false;
     uint32_t l6_bad = 0;
     bool l8_ok = false;
+    bool l11_dgc_otp_path = false;
     bool l10_ok = false;
     bool l10_skip = false;
 #if defined(CONFIG_UWB_PROBE_TEST_WAKEUP) && CONFIG_UWB_PROBE_TEST_WAKEUP
@@ -771,6 +1002,15 @@ extern "C" void app_main(void)
         run_l7_calibration_dump();
         l8_ok = run_l8_tx_smoke_test();
         run_l9_rx_ambient_scan();
+        /* L11 must run here, before L10: L10 puts the chip to sleep, and L11
+         * reads the live post-begin() DGC state (see the L11 section comment
+         * above for the full reasoning). Numbered L11 only because it was
+         * added after L10 already existed.
+         * L11 はここ、L10 より前に置く必要がある: L10 はチップをスリープ
+         * させるため、L11 は begin() 直後の生きた DGC 状態を読む必要がある
+         * （詳細は上の L11 セクションのコメント）。番号が L11 なのは単に
+         * L10 が先に存在していたため。 */
+        l11_dgc_otp_path = run_l11_dgc_check();
 #if defined(CONFIG_UWB_PROBE_TEST_WAKEUP) && CONFIG_UWB_PROBE_TEST_WAKEUP
         l10_skip = (port_cfg.pin_wakeup == UWB_PORT_PIN_UNUSED);
         l10_ok    = run_l10_wakeup_check(port_cfg);
@@ -778,7 +1018,7 @@ extern "C" void app_main(void)
         ESP_LOGI(TAG, "L10: SKIP (CONFIG_UWB_PROBE_TEST_WAKEUP disabled)");
 #endif
     } else {
-        ESP_LOGW(TAG, "L6-L10: SKIP (L5 begin() failed)");
+        ESP_LOGW(TAG, "L6-L11: SKIP (L5 begin() failed)");
     }
 
     /* --- summary ----------------------------------------------------------
@@ -789,6 +1029,7 @@ extern "C" void app_main(void)
     char l6_tok[24] = "SKIP";
     char l8_tok[8]  = "SKIP";
     char l10_tok[24] = "SKIP";
+    char l11_tok[24] = "SKIP";
 
     if (l2_ok) {
         snprintf(l3_tok, sizeof(l3_tok), "%s", l3_ok ? "PASS" : "FAIL");
@@ -802,14 +1043,16 @@ extern "C" void app_main(void)
     if (l5_ok) {
         snprintf(l6_tok, sizeof(l6_tok), "%s(%lu/1000 bad)", l6_ok ? "PASS" : "FAIL", (unsigned long)l6_bad);
         snprintf(l8_tok, sizeof(l8_tok), "%s", l8_ok ? "PASS" : "FAIL");
+        snprintf(l11_tok, sizeof(l11_tok), "rec(dgc=%s)", l11_dgc_otp_path ? "OTP" : "SW");
         if (l10_enabled) {
             snprintf(l10_tok, sizeof(l10_tok), "%s", l10_skip ? "SKIP" : (l10_ok ? "PASS" : "FAIL"));
         }
     }
 
     ESP_LOGI(TAG,
-             "=== PROBE SUMMARY L1=%s L2=%s L3=%s L4=%s L5=%s L6=%s L7=rec L8=%s L9=rec L10=%s ===",
-             l1_ok ? "PASS" : "FAIL", l2_ok ? "PASS" : "FAIL", l3_tok, l4_tok, l5_tok, l6_tok, l8_tok, l10_tok);
+             "=== PROBE SUMMARY L1=%s L2=%s L3=%s L4=%s L5=%s L6=%s L7=rec L8=%s L9=rec L10=%s L11=%s ===",
+             l1_ok ? "PASS" : "FAIL", l2_ok ? "PASS" : "FAIL", l3_tok, l4_tok, l5_tok, l6_tok, l8_tok, l10_tok,
+             l11_tok);
 
     /* --- periodic loop -----------------------------------------------------
      * Ongoing stability observation. If L5 succeeded, SPI is now at the
