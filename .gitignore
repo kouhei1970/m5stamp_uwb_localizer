@@ -37,3 +37,7 @@ docs/refs/
 # assets/ 配下でも、Qorvo/Decawave のベンダ文書は docs/refs/ と同じ扱いで
 # コミットしない（M5Stack 自身の回路図・画像は従来どおり追跡する）。
 assets/QM33120W*.pdf
+
+# Qorvo official SDK (1.1 GB, Qorvo license; obtain from Qorvo, keep local only)
+# Qorvo 純正 SDK (1.1 GB、Qorvo ライセンス。Qorvo から入手しローカルにのみ置く)
+assets/DW3_QM33_SDK_1.1.1/
