@@ -41,6 +41,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include "deca_device_api.h"
 #include "uwb_port.h"
 #include "uwb_qm33120.hpp"
 
@@ -71,6 +72,58 @@
 #endif
 
 static const char* TAG = "uwb_twr";
+
+/* ---------------------------------------------------------------------------
+ * Diagnostics for the SS-TWR success rate seen on real hardware
+ * (2026-08-28: 0-9% over 60cm..1.7m, independent of distance, orientation,
+ * which board plays which role, and of re-running the PHY configuration).
+ *
+ * Logs the die temperature, the crystal trim and the measured clock offset,
+ * and - when CONFIG_UWB_TWR_DIAG_REINIT_FAILS > 0 - re-runs the PHY
+ * configuration (and with it the PLL calibration) after N consecutive
+ * failures. That re-run was the test for task R10 (docs/GETTING_STARTED.md:
+ * 1380): on channel 9, the only channel this module supports, the PLL must
+ * be recalibrated whenever the die temperature moves by 20 degC (user manual
+ * 10.4), which this repo does not do.
+ *
+ * MEASURED RESULT (2026-08-28): the die temperature is stable in time
+ * (tag 34.5-35.5 degC, anchor 51-57 degC), and 13 re-runs of init() did not
+ * restore the link. So a *drift over time* of one chip's PLL is NOT the
+ * cause. What remains unexplained is the ~17-21 degC standing difference
+ * between the two chips (the anchor self-heats in continuous RX).
+ *
+ * 実機の SS-TWR 成功率（2026-08-28: 60cm〜1.7m で 0〜9%。距離・向き・役割の
+ * 割当て・PHY 再設定のいずれとも無関係）を切り分けるための診断。
+ * ダイ温度・水晶トリム・クロックオフセットをログに出し、
+ * CONFIG_UWB_TWR_DIAG_REINIT_FAILS > 0 のときは連続 N 回失敗で PHY 設定を
+ * やり直す（＝課題 R10 の検証。ch9 は 20°C 変化で PLL 再校正が要る）。
+ * 実測結果（2026-08-28）: ダイ温度は時間的に安定（タグ 34.5〜35.5°C、
+ * アンカー 51〜57°C）で、init() を 13 回やり直しても復帰しなかった。
+ * よって「片方の PLL が時間とともにずれる」ことは原因ではない。
+ * 未解明なのは 2 個体間に定常的にある 17〜21°C の温度差のほう
+ * （アンカーは連続受信で自己発熱する）。
+ * ------------------------------------------------------------------------- */
+static constexpr uint32_t DIAG_REINIT_AFTER_FAILS = CONFIG_UWB_TWR_DIAG_REINIT_FAILS;
+
+/** @brief Read the on-chip die temperature [degC] / ダイ温度を読む */
+static float dieTempC()
+{
+    const uint16_t raw = dwt_readtempvbat();
+    return dwt_convertrawtemperature(static_cast<uint8_t>(raw >> 8));
+}
+
+/**
+ * @brief Re-run the PHY configuration (and with it the PLL calibration), and
+ *        log the die temperature before and after.
+ *        PHY 設定（＝PLL 再校正）をやり直し、前後のダイ温度をログに出す。
+ */
+static void diagReinit(uwb::Qm33120& uwb, uint32_t consecutiveFails)
+{
+    const float before = dieTempC();
+    const bool ok      = uwb.init();
+    ESP_LOGW(TAG, "DIAG_REINIT after %lu consecutive failures: init()=%s temp_before=%.1fC temp_after=%.1fC",
+             (unsigned long)consecutiveFails, ok ? "OK" : "FAILED", before, dieTempC());
+}
 
 #define UWB_DEV_ID_EXPECTED 0xDECA0314UL
 
@@ -219,6 +272,7 @@ static void runRole(uwb::Qm33120& uwb)
 {
     uint32_t lastRangeMs = 0;
     uint32_t rangeCount = 0, rangeOkCount = 0, rangeFailCount = 0;
+    uint32_t consecutiveFails = 0;
     DistanceStats stats;
 
     while (1) {
@@ -232,9 +286,17 @@ static void runRole(uwb::Qm33120& uwb)
         rangeCount++;
         if (result.success) {
             rangeOkCount++;
+            consecutiveFails = 0;
             stats.add(result.distanceM * 1000.0f);
         } else {
             rangeFailCount++;
+            consecutiveFails++;
+            // Diagnostic only; disabled unless CONFIG_UWB_TWR_DIAG_REINIT_FAILS > 0.
+            // 診断用。既定 (0) では何も起きない。
+            if (DIAG_REINIT_AFTER_FAILS > 0 && consecutiveFails >= DIAG_REINIT_AFTER_FAILS) {
+                diagReinit(uwb, consecutiveFails);
+                consecutiveFails = 0;
+            }
         }
 
         if ((rangeCount % TAG_LOG_INTERVAL) != 0) {
@@ -246,14 +308,14 @@ static void runRole(uwb::Qm33120& uwb)
         if (result.success) {
             ESP_LOGI(TAG,
                      "SS_RANGE_STAT count=%lu ok=%lu fail=%lu rate=%.1f%% last=OK seq=%u distance_mm=%ld "
-                     "distance_m=%.3f mean_mm=%.1f std_mm=%.1f n=%lu elapsed_ms=%lu",
+                     "distance_m=%.3f mean_mm=%.1f std_mm=%.1f n=%lu elapsed_ms=%lu temp=%.1fC clock_ppm=%.2f",
                      (unsigned long)rangeCount, (unsigned long)rangeOkCount, (unsigned long)rangeFailCount, rate,
                      result.sequence, (long)result.distanceMm, result.distanceM, stats.mean, stats.stddev(),
-                     (unsigned long)stats.count, (unsigned long)result.elapsedMs);
+                     (unsigned long)stats.count, (unsigned long)result.elapsedMs, dieTempC(), result.clockOffsetPpm);
         } else {
-            ESP_LOGW(TAG, "SS_RANGE_STAT count=%lu ok=%lu fail=%lu rate=%.1f%% last=FAIL seq=%u error=%s",
+            ESP_LOGW(TAG, "SS_RANGE_STAT count=%lu ok=%lu fail=%lu rate=%.1f%% last=FAIL seq=%u error=%s temp=%.1fC",
                      (unsigned long)rangeCount, (unsigned long)rangeOkCount, (unsigned long)rangeFailCount, rate,
-                     result.sequence, uwb.lastErrorName());
+                     result.sequence, uwb.lastErrorName(), dieTempC());
         }
     }
 }
@@ -387,12 +449,20 @@ static uwb::RangeConfig makeRangeConfig()
 static void runRole(uwb::Qm33120& uwb)
 {
     uint32_t respCount = 0, failCount = 0;
+    uint32_t consecutiveMisses = 0;
 
     while (1) {
         const uwb::ResponderResult result = uwb.respondRange(makeRangeConfig());
         if (!result.success) {
             if (result.error == uwb::Error::RxTimeout) {
                 // まだPollが来ていないだけ。原本のANCHOR例と同じく無視して再ループ。
+                // Diagnostic only; disabled unless CONFIG_UWB_TWR_DIAG_REINIT_FAILS > 0.
+                // 診断用。既定 (0) では何も起きない。
+                consecutiveMisses++;
+                if (DIAG_REINIT_AFTER_FAILS > 0 && consecutiveMisses >= DIAG_REINIT_AFTER_FAILS) {
+                    diagReinit(uwb, consecutiveMisses);
+                    consecutiveMisses = 0;
+                }
                 continue;
             }
             failCount++;
@@ -404,12 +474,13 @@ static void runRole(uwb::Qm33120& uwb)
         }
 
         respCount++;
+        consecutiveMisses = 0;
         if ((respCount % ANCHOR_LOG_INTERVAL) != 0) {
             continue;
         }
-        ESP_LOGI(TAG, "SS_RESP_STAT ok=%lu fail=%lu last=OK seq=%u requester=0x%04X elapsed_ms=%lu",
+        ESP_LOGI(TAG, "SS_RESP_STAT ok=%lu fail=%lu last=OK seq=%u requester=0x%04X elapsed_ms=%lu temp=%.1fC",
                  (unsigned long)respCount, (unsigned long)failCount, result.sequence, result.requester,
-                 (unsigned long)result.elapsedMs);
+                 (unsigned long)result.elapsedMs, dieTempC());
     }
 }
 
@@ -541,6 +612,13 @@ extern "C" void app_main(void)
     // --- Timing preset (docs/TIMING_PRESETS.md, task D-2) ---
     ESP_LOGI(TAG, "timing profile=%s (version=%u)", uwb::timingProfileName(TIMING_PROFILE),
              (unsigned)uwb::kTimingPresetVersion);
+    // Diagnostics: the crystal trim and the die temperature this chip booted
+    // at. A large trim difference between the two boards - or a large die
+    // temperature difference, since the crystal drifts with temperature -
+    // shows up as a carrier frequency offset the receiver has to track.
+    // 診断: この個体の水晶トリム値と起動時のダイ温度。2 個体間でこれらが
+    // 大きく違うと搬送波の周波数ずれになり、受信側の追従範囲を超えうる。
+    ESP_LOGI(TAG, "xtal_trim=%u die_temp=%.1fC", (unsigned)dwt_getxtaltrim(), dieTempC());
     // Boot-time check (docs/TIMING_PRESETS.md SS4(b)): warn loudly if the
     // selected preset needs IRQ on this device's role but it did not
     // actually come up active. **Never change the preset value

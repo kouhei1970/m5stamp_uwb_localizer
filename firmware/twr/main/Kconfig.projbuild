@@ -127,6 +127,27 @@ menu "UWB TWR Configuration"
             reads back intermittently corrupted, by lowering the SPI
             clock. The QM33120W/DW3720 SPI clock ceiling is 32 MHz.
 
+    config UWB_TWR_DIAG_REINIT_FAILS
+        int "Diagnostic: re-run the PHY config after N consecutive failures (0 = off)"
+        range 0 10000
+        default 0
+        help
+            Diagnostic aid for task R10 (docs/GETTING_STARTED.md:1380). The
+            M5Stamp UWB Module is channel-9 only, and on channel 9 the PLL
+            must be recalibrated whenever the die temperature moves by
+            20 degC (user manual 10.4) - which this repo does not do yet.
+
+            With a non-zero N, the TAG re-runs uwb::Qm33120::init() after N
+            consecutive failed ranging attempts, and the ANCHOR after N
+            consecutive poll-wait timeouts. init() re-runs dwt_configure(),
+            and with it the PLL calibration, at the current die temperature.
+            Each attempt is logged as DIAG_REINIT with the die temperature
+            before and after.
+
+            The default, 0, disables this entirely: the build behaves
+            exactly as it did before this option existed. This is an
+            experiment, not a fix - the real fix is task R10.
+
     choice UWB_TIMING_PROFILE
         prompt "TWR timing preset"
         default UWB_TIMING_PROFILE_BOTH_IRQ
