@@ -313,6 +313,187 @@ menu "UWB TWR Configuration"
 
             両機を同じ値にすること。片側だけ変えるとA/B比較が成立しない。
 
+    config UWB_TWR_DIAG_PLL_COARSE_CH9
+        int "Diagnostic: force ch9 PLL VCO coarse-tune code after init and re-lock (0 = off)"
+        range 0 127
+        default 0
+        help
+            Diagnostic for the "SS-TWR success rate is fixed at the TAG's
+            init() time by die temperature" finding documented next to
+            logCalibrationDump() in main.cpp: boots with die temp <=31degC
+            get PLL_COARSE_CODE's ch9 VCO coarse-tune field (bits[6:0]) =
+            0x23 (35, equal to the OTP-programmed value) and 38-65% SS-TWR
+            success; boots at >=32degC get 0x24 (36) and 10-20% success.
+            Hypothesis: 0x24 leaves the VCO on a sub-band edge, giving worse
+            phase noise, and that is what fails 6.8 Mbps data decode.
+
+            With a non-zero value N, right after the boot "cal:" dump the
+            device forces the ch9 coarse-tune code to N and re-locks the PLL
+            on it via a raw register sequence (PLL_COARSE_CODE + PLL_CAL's
+            USE_OLD/TUNE_OVR bits, escalating through up to three variants
+            A/B/C if the previous one's readback did not match - see
+            diagForcePllCoarseCh9()'s doc comment in main.cpp for the exact
+            register-level sequence and SDK evidence for each write). The
+            SDK's own public entry point for this, dwt_pll_chx_auto_cal(),
+            was tried first but returned 254 (not a documented status code)
+            and left PLL_COARSE_CODE unchanged on real hardware - it never
+            actually forced anything, hence the raw-register replacement.
+            Each sequence's result (requested vs. readback code, PLL_CAL
+            before/after, PLL_STATUS, lock flag, return code) is logged as
+            DIAG_PLL_COARSE(A)/(B)/(C), followed by a final DIAG_PLL_COARSE
+            summary line and another full logCalibrationDump().
+
+            This does not fix the underlying temperature dependency (task
+            R10) - it only tests, at whatever temperature this boot happened
+            to be at, whether forcing the code the cold-boot case gets
+            changes the SS-TWR success rate. Since which board(s) boot warm
+            is not controlled, both TAG and ANCHOR read this same option;
+            set it on whichever board(s) need it (harmless, if unnecessary,
+            to also set it on a board that already got 0x23 on its own -
+            the forced value simply matches what the hardware search already
+            picked). The default, 0, disables this entirely: the build
+            behaves exactly as it did before this option existed.
+            診断用。main.cppのlogCalibrationDump()近くに記載した「SS-TWRの
+            成功率はタグのinit()時点のダイ温度で決まる」という測定結果への
+            切り分け: ダイ温度31度以下で起動すると、PLL_COARSE_CODEのch9
+            VCO粗調整フィールド（bits[6:0]）が0x23（35、OTP書き込み値と
+            一致）になり成功率38-65%、32度以上で起動すると0x24（36）に
+            なり成功率10-20%になる（実測）。仮説: 0x24はVCOがサブバンドの
+            境界に乗っており位相雑音が悪化し、それが6.8Mbpsのデータ部
+            復号失敗を招いている、というもの。
+
+            0以外の値Nを設定すると、起動時の"cal:"ダンプの直後に、ch9の
+            粗調整コードをNへ強制し、生のレジスタ操作（PLL_COARSE_CODEと
+            PLL_CALのUSE_OLD/TUNE_OVRビット）でPLLを再ロックする。前段の
+            読み戻しが一致しなければ最大3段階A/B/Cへ段階的にエスカレート
+            する（各書き込みの正確なレジスタ順序とSDK上の根拠は
+            main.cppのdiagForcePllCoarseCh9()のドキュメントコメント
+            参照）。任意の粗調整コードをロックするためのSDK公開API
+            dwt_pll_chx_auto_cal()を最初に試したが、実機では254
+            （文書化されたステータスコードではない）を返しPLL_COARSE_CODE
+            は変化しなかった - 実際には何も強制していなかったため、生の
+            レジスタ操作へ置き換えた。各シーケンスの結果（要求コード対
+            読み戻しコード、前後のPLL_CAL、PLL_STATUS、ロックフラグ、
+            戻り値）をDIAG_PLL_COARSE(A)/(B)/(C)としてログに出し、最後に
+            DIAG_PLL_COARSEのまとめ行と、logCalibrationDumpをもう一度
+            出す。
+
+            温度依存性そのものの修正ではない（本命はタスクR10) -
+            そのブートがたまたま何度だったかにかかわらず、コールドブート
+            時のコードへ強制すると成功率が変わるかだけを見る診断。どちらの
+            機体がウォームブートするかは制御できないため、TAGとANCHORの
+            両方が同じオプションを読む。必要な機体だけに設定すればよい
+            （既に自力で0x23を得ている機体に設定しても、強制値がハード
+            ウェア探索の結果と一致するだけで無害）。既定の0ではこの機能は
+            完全に無効 - このオプションが追加される前と同じ挙動になる。
+
+    choice UWB_TWR_DIAG_RECAL_KIND
+        prompt "Diagnostic: re-run one chip calibration once at runtime (NONE = off)"
+        default UWB_TWR_DIAG_RECAL_NONE
+        help
+            Diagnostic for the "which one-shot init-time calibration makes
+            the SS-TWR success rate depend on die temperature at init()"
+            question documented next to logCalibrationDump() in main.cpp
+            (cold boot ~30degC -> 47-65%, warm reboot ~37degC -> 10-25%,
+            unchanged afterwards). With a choice other than NONE, the TAG
+            re-runs the selected calibration exactly once,
+            UWB_TWR_DIAG_RECAL_SEC seconds after boot, and re-dumps the
+            "cal:" register lines (logCalibrationDump()) so the run can be
+            compared against the boot-time dump from the same log. The
+            success rate before/after can be read off the cumulative
+            count/ok fields already logged in SS_RANGE_STAT, using the
+            count=/ok= values the "RECAL(...)" log line reports at the
+            moment it fires as the split point.
+
+            The default, NONE, disables this entirely - the build behaves
+            exactly as it did before this option existed.
+            診断用: SS-TWR成功率がタグのinit()時点のダイ温度に依存する現象
+            （main.cppのlogCalibrationDump()近くに記載。コールドブート約30度
+            →47-65%、ウォームリブート約37度→10-25%、その後は変化しない）の
+            原因が、init()内で一度だけ走るキャリブレーションのどれにあるかを
+            切り分ける。NONE以外を選ぶと、起動からUWB_TWR_DIAG_RECAL_SEC秒後
+            にタグが選択したキャリブレーションを1回だけやり直し、"cal:"
+            レジスタダンプ（logCalibrationDump()）を出し直すので、同じログ
+            内で起動時ダンプと比較できる。前後の成功率は、SS_RANGE_STATに
+            既に出ている累積count/okのうち、"RECAL(...)" 行がその時点で
+            報告するcount=/ok=を境目として読み取ればよい。
+
+            既定のNONEでは何も起きない。このオプションが追加される前と
+            完全に同一の挙動になる。
+
+        config UWB_TWR_DIAG_RECAL_NONE
+            bool "Off (no re-calibration)"
+
+        config UWB_TWR_DIAG_RECAL_ADC
+            bool "ADC offset: dwt_restoreconfig(DWT_RESTORE_TXRX_MODE | DWT_FORCE_ADCOFFSET_CAL)"
+            help
+                Forces the ADC offset calibration - the one calibration the
+                SDK's own comment documents as temperature-dependent in this
+                range (dw3720_device.c:1716-1718, "force ADC cal ... once
+                when temperature >= 20C") - via
+                dwt_restoreconfig(DWT_RESTORE_TXRX_MODE |
+                DWT_FORCE_ADCOFFSET_CAL) (deca_device_api.h:1882). Along the
+                way this also unconditionally re-runs the PGF cal, and
+                restores the PLL only if PLL_STATUS_PLL_LOCK_FLAG is
+                currently clear - so it does not force a PLL recalibration
+                (dw3720_device.c:1656 ull_restoreconfig() -> :1730
+                ull_restore_txrx() -> :1690 ull_restore_pll()).
+                最も温度依存性が明記されているADCオフセット校正を強制する
+                （dw3720_device.c:1716-1718: 「温度20度以上で1回ADC校正を
+                強制」）。途中でPGF校正も無条件に走るが、PLLは現在ロックが
+                外れているときだけ復元される（＝PLLの強制再校正ではない）。
+
+        config UWB_TWR_DIAG_RECAL_PGF
+            bool "PGF RX I/Q: dwt_pgf_cal(1)"
+            help
+                Re-runs only the receive pulse-generator filter (PGF) I/Q
+                calibration, via dwt_pgf_cal(1) (deca_device_api.h:3301 ->
+                dw3720_device.c:2133 ull_pgf_cal() -> :2172
+                ull_run_pgfcal()).
+                PGF校正（受信I/Q校正）だけをやり直す。
+
+        config UWB_TWR_DIAG_RECAL_PLL
+            bool "Hardware PLL: dwt_pll_cal()"
+            help
+                Re-runs only the hardware PLL calibration, via
+                dwt_pll_cal() (deca_device_api.h:3326 ->
+                dw3720_device.c:6683 ull_pll_cal(): forces IDLE_RC then
+                IDLE, the latter re-triggering the same hardware PLL-cal
+                state machine documented in main.cpp's logCalibrationDump()
+                PLL comment).
+                ハードウェアPLL校正だけをやり直す。
+
+        config UWB_TWR_DIAG_RECAL_FULL
+            bool "Full re-init: uwb::Qm33120::init() (same path as UWB_TWR_DIAG_REINIT_FAILS)"
+            help
+                Re-runs uwb::Qm33120::init() - the same call
+                UWB_TWR_DIAG_REINIT_FAILS already uses (diagReinit() in
+                main.cpp) - which redoes dwt_configure() and with it the
+                PLL/PGF/ADC calibrations together, at the current die
+                temperature.
+                uwb::Qm33120::init()を丸ごとやり直す
+                （UWB_TWR_DIAG_REINIT_FAILSと同じ経路。main.cppの
+                diagReinit()参照）。PLL/PGF/ADCのキャリブレーションが
+                まとめて走る。
+
+    endchoice
+
+    config UWB_TWR_DIAG_RECAL_SEC
+        int "Diagnostic: seconds after start to run the re-calibration (UWB_TWR_DIAG_RECAL_KIND)"
+        range 5 600
+        default 40
+        help
+            How long after boot (esp_timer_get_time()) the TAG performs the
+            UWB_TWR_DIAG_RECAL_KIND calibration once (ignored when
+            UWB_TWR_DIAG_RECAL_KIND is NONE). Long enough to collect a
+            "before" success-rate sample - a few hundred ranging attempts at
+            the default 200ms poll interval - before it fires.
+            起動（esp_timer_get_time()）から何秒後に、TAGが
+            UWB_TWR_DIAG_RECAL_KINDのキャリブレーションを1回だけ実行するか
+            （UWB_TWR_DIAG_RECAL_KINDがNONEのときは無視される）。発火前に
+            「前」側の成功率サンプル（既定200ms間隔で数百回分）を集められる
+            だけの長さにしてある。
+
     choice UWB_TIMING_PROFILE
         prompt "TWR timing preset"
         default UWB_TIMING_PROFILE_BOTH_IRQ

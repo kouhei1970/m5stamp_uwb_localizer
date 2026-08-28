@@ -206,6 +206,219 @@ static float dieTempC()
 }
 
 /**
+ * @brief Read a register via dwt_readfromdevice() (little-endian byte order,
+ * same as the SDK's own dwt_read32bitoffsetreg()/dwt_read16bitoffsetreg() -
+ * see dw3720_device.c). Local to the boot-time calibration dump below;
+ * firmware/probe has an equivalent (l11_read_reg32/16) but it lives in a
+ * different component and is not included here, so it is duplicated
+ * locally instead.
+ * dwt_readfromdevice() 経由でレジスタを読む（リトルエンディアン、SDK自身の
+ * dwt_read32bitoffsetreg()/dwt_read16bitoffsetreg() と同じ並び -
+ * dw3720_device.c 参照）。下記の起動時キャリブレーションダンプ専用のローカル
+ * ヘルパー。firmware/probe に同等品(l11_read_reg32/16)があるが別コンポーネント
+ * なのでここには include せず、ローカルに複製する。
+ */
+static uint32_t calReadReg32(uint32_t regFileID)
+{
+    uint8_t buf[4] = {0, 0, 0, 0};
+    dwt_readfromdevice(regFileID, 0, sizeof(buf), buf);
+    return ((uint32_t)buf[3] << 24) | ((uint32_t)buf[2] << 16) | ((uint32_t)buf[1] << 8) | (uint32_t)buf[0];
+}
+
+/** @brief 16-bit version of calReadReg32() / calReadReg32()の16-bit版 */
+static uint16_t calReadReg16(uint32_t regFileID)
+{
+    uint8_t buf[2] = {0, 0};
+    dwt_readfromdevice(regFileID, 0, sizeof(buf), buf);
+    return (uint16_t)(((uint16_t)buf[1] << 8) | (uint16_t)buf[0]);
+}
+
+/** @brief 8-bit version of calReadReg32() / calReadReg32()の8-bit版 */
+static uint8_t calReadReg8(uint32_t regFileID)
+{
+    uint8_t buf[1] = {0};
+    dwt_readfromdevice(regFileID, 0, sizeof(buf), buf);
+    return buf[0];
+}
+
+#if defined(CONFIG_UWB_TWR_DIAG_PLL_COARSE_CH9) && (CONFIG_UWB_TWR_DIAG_PLL_COARSE_CH9 != 0)
+/**
+ * @brief Write a 32-bit register via dwt_writetodevice() (little-endian byte
+ * order, matching calReadReg32()). Used by diagForcePllCoarseCh9() to
+ * snapshot/restore registers around the forced PLL coarse-code test. Only
+ * compiled in when that diagnostic is enabled, so it does not sit unused
+ * otherwise.
+ * dwt_writetodevice()経由で32bitレジスタを書く（calReadReg32()と同じ
+ * リトルエンディアン）。diagForcePllCoarseCh9()が、強制PLL粗調整コード
+ * テストの前後でレジスタを退避・復元するのに使う。この診断を無効化した
+ * ビルドでは未使用のまま残らないよう、有効時のみコンパイルする。
+ */
+static void calWriteReg32(uint32_t regFileID, uint32_t value)
+{
+    uint8_t buf[4] = {(uint8_t)(value & 0xFFU), (uint8_t)((value >> 8) & 0xFFU), (uint8_t)((value >> 16) & 0xFFU),
+                       (uint8_t)((value >> 24) & 0xFFU)};
+    dwt_writetodevice(regFileID, 0, sizeof(buf), buf);
+}
+
+/** @brief 16-bit version of calWriteReg32() / calWriteReg32()の16-bit版 */
+static void calWriteReg16(uint32_t regFileID, uint16_t value)
+{
+    uint8_t buf[2] = {(uint8_t)(value & 0xFFU), (uint8_t)((value >> 8) & 0xFFU)};
+    dwt_writetodevice(regFileID, 0, sizeof(buf), buf);
+}
+
+/** @brief 8-bit version of calWriteReg32() / calWriteReg32()の8-bit版 */
+static void calWriteReg8(uint32_t regFileID, uint8_t value)
+{
+    dwt_writetodevice(regFileID, 0, sizeof(value), &value);
+}
+#endif // defined(CONFIG_UWB_TWR_DIAG_PLL_COARSE_CH9) && (CONFIG_UWB_TWR_DIAG_PLL_COARSE_CH9 != 0)
+
+/**
+ * @brief Boot-time dump of the chip's one-shot init/config-time calibration
+ * results (PLL coarse-tune + lock, PGF RX I/Q calibration, ADC offset
+ * calibration, xtal trim, LDO/BIAS trim) so a cold boot and a warm reboot
+ * can be diffed from the log alone.
+ *
+ * Why: measured today, the SS-TWR success rate is fixed at the tag's
+ * init() time and depends on die temperature at that moment (cold boot at
+ * 30degC -> 47-65%, warm reboot at 36-38degC -> 12-25%; unchanged afterwards
+ * even as the chip warms up). One of the one-shot calibrations run inside
+ * dwt_initialise()/dwt_configure() must be producing a temperature-dependent
+ * result - this dump makes the raw register values visible so cold-boot and
+ * warm-boot runs can be compared directly.
+ *
+ * ADC offset calibration is the highest-priority item here: the SDK's own
+ * comment at dw3720_device.c:1716-1718 explicitly documents it as
+ * temperature-dependent ("force ADC cal ... once when temperature >= 20C"),
+ * making it the only calibration in this dump with a documented temperature
+ * dependency in this exact range.
+ *
+ * 起動時に一度だけ走る init/configure 時キャリブレーションの結果
+ * （PLL粗調整+ロック、PGF受信I/Q校正、ADCオフセット校正、水晶トリム、
+ * LDO/BIASトリム）をダンプし、コールドブートとウォームリブートをログだけで
+ * 比較できるようにする。
+ *
+ * 背景: 実測したところ、SS-TWRの成功率はタグのinit()時点で固定され、その瞬間の
+ * ダイ温度に依存する（コールドブート30度→47-65%、ウォームリブート36-38度→
+ * 12-25%、その後チップが温まっても変化しない）。dwt_initialise()/
+ * dwt_configure() 内で一度だけ走るキャリブレーションのどれかが温度依存の結果を
+ * 出しているはずなので、生のレジスタ値をログに出してコールド/ウォームを
+ * 直接比較できるようにする。
+ *
+ * ここではADCオフセット校正を最優先で扱う: SDK自身のコメント
+ * (dw3720_device.c:1716-1718) に「温度20度以上で1回ADC校正を強制」と明記
+ * されており、この温度域で温度依存性が文書化されている唯一のキャリブレー
+ * ションだから。
+ */
+static void logCalibrationDump()
+{
+    // --- PLL: coarse-tune code (from OTP or auto-cal), config/cal control
+    // regs, hardware lock status, and the OTP-programmed coarse code for
+    // comparison against the live register. Written by ull_initialise()
+    // (dw3720_device.c:1021 xtal, :1023 OTP read of PLL_CC_ADDRESS=0x35,
+    // :1026 PLL_COARSE_CODE_ID write) and by the hardware PLL-cal state
+    // machine kicked from ull_setchannel() (dw3720_device.c:8098) ->
+    // ull_run_hardware_pll_cal() (dw3720_device.c:8061) ->
+    // ull_setdwstate(DWT_DW_IDLE) (dw3720_device.c:1097, sets
+    // SEQ_CTRL_AINIT2IDLE + PLL_CAL_EN at dw3720_device.c:1126). This
+    // project does not define AUTO_DW3300Q_DRIVER, so this hardware-cal
+    // path runs (not the software ull_pll_ch5/ch9_auto_cal path).
+    // PLL: 粗調整コード（OTP由来 or 自動校正）、設定/校正制御レジスタ、
+    // ハードウェアのロック状態、比較用のOTP書き込み値（ライブレジスタとの
+    // 比較用）。ull_initialise()（dw3720_device.c:1021でxtal、:1023で
+    // OTPのPLL_CC_ADDRESS=0x35読み出し、:1026でPLL_COARSE_CODE_ID書き込み）と、
+    // ull_setchannel()（dw3720_device.c:8098）->
+    // ull_run_hardware_pll_cal()（dw3720_device.c:8061）->
+    // ull_setdwstate(DWT_DW_IDLE)（dw3720_device.c:1097、
+    // dw3720_device.c:1126でSEQ_CTRL_AINIT2IDLE + PLL_CAL_ENを立てる）が
+    // 書き込む。本プロジェクトはAUTO_DW3300Q_DRIVERを定義していないため、
+    // このハードウェア校正経路が実際に走る（ソフトウェアの
+    // ull_pll_ch5/ch9_auto_cal経路ではない）。
+    const uint32_t pllCoarse = calReadReg32(PLL_COARSE_CODE_ID);
+    const uint32_t pllCfg    = calReadReg32(PLL_CFG_ID);
+    const uint32_t pllCal    = calReadReg32(PLL_CAL_ID);
+    const uint32_t pllStatus = calReadReg32(PLL_STATUS_ID);
+    const int pllLock        = ((pllStatus & PLL_STATUS_PLL_LOCK_FLAG_BIT_MASK) != 0U) ? 1 : 0;
+    uint32_t otpPllCc        = 0;
+    // PLL_CC_ADDRESS=0x35 is a file-local #define in dw3720_device.c:75,
+    // not exported by any public header - hardcoded here with that
+    // provenance noted.
+    // PLL_CC_ADDRESS=0x35 は dw3720_device.c:75 のファイルローカル定義で
+    // 公開ヘッダには出ていないため、由来を明記した上でここに直書きする。
+    dwt_otpread(0x35U, &otpPllCc, 1);
+    const uint8_t xtalReg = calReadReg8(XTAL_ID);
+    ESP_LOGI(TAG,
+             "cal: pll_coarse=0x%08lX pll_cfg=0x%08lX pll_cal=0x%08lX pll_status=0x%08lX pll_lock=%d "
+             "otp_pll_cc=0x%08lX xtal_reg=0x%02X",
+             (unsigned long)pllCoarse, (unsigned long)pllCfg, (unsigned long)pllCal, (unsigned long)pllStatus,
+             pllLock, (unsigned long)otpPllCc, xtalReg);
+
+    // --- PGF (receive pulse-generator filter) I/Q calibration result, plus
+    // the LDO/BIAS trim registers for cross-boot comparison. ull_pgf_cal()
+    // (dw3720_device.c:2133) / ull_run_pgfcal() (dw3720_device.c:2172) runs
+    // unconditionally from ull_configure() (dw3720_device.c:2104) on every
+    // begin(); it sets RX_CAL_CFG_ID to trigger, polls RX_CAL_STS_ID, then
+    // reads RX_CAL_RESI_ID/RX_CAL_RESQ_ID and fails
+    // (DWT_ERR_RX_CAL_RESI/RESQ) if either equals ERR_RX_CAL_FAIL.
+    // LDO_CTRL_ID/BIAS_CTRL_ID are not written by ull_pgf_cal() itself (it
+    // only toggles+restores 4 LDO enable bits) - dumped here purely as the
+    // chip's current trim state.
+    // PGF（受信パルス生成フィルタ）のI/Q校正結果と、比較用のLDO/BIASトリム
+    // レジスタ。ull_pgf_cal()（dw3720_device.c:2133）/ull_run_pgfcal()
+    // （dw3720_device.c:2172）はbegin()のたびull_configure()
+    // （dw3720_device.c:2104）から無条件に走る。RX_CAL_CFG_IDを立てて起動し、
+    // RX_CAL_STS_IDをポーリングした後、RX_CAL_RESI_ID/RX_CAL_RESQ_IDを読み、
+    // いずれかがERR_RX_CAL_FAILならDWT_ERR_RX_CAL_RESI/RESQとして失敗扱いする。
+    // LDO_CTRL_ID/BIAS_CTRL_ID自体はull_pgf_cal()が書くわけではない（LDO有効化
+    // ビット4本を一時トグルして戻すだけ）ため、ここでは単にチップの現在の
+    // トリム状態として出す。
+    const uint32_t rxCalResi = calReadReg32(RX_CAL_RESI_ID);
+    const uint32_t rxCalResq = calReadReg32(RX_CAL_RESQ_ID);
+    const uint32_t rxCalSts  = calReadReg32(RX_CAL_STS_ID);
+    const uint32_t rxCalCfg  = calReadReg32(RX_CAL_CFG_ID);
+    const uint32_t ldoCtrl   = calReadReg32(LDO_CTRL_ID);
+    const uint16_t bias      = calReadReg16(BIAS_CTRL_ID);
+    ESP_LOGI(TAG, "cal: pgf resi=0x%08lX resq=0x%08lX sts=0x%08lX cfg=0x%08lX ldo_ctrl=0x%08lX bias=0x%04X temp=%.1fC",
+             (unsigned long)rxCalResi, (unsigned long)rxCalResq, (unsigned long)rxCalSts, (unsigned long)rxCalCfg,
+             (unsigned long)ldoCtrl, bias, dieTempC());
+
+    // --- ADC offset calibration (highest priority - see function doc
+    // comment above: this is the one calibration the SDK documents as
+    // temperature-dependent in this exact range). ull_adcoffsetscalibration()
+    // (dw3720_device.c:2289), called from ull_configure()
+    // (dw3720_device.c:2118) and from ull_restore_txrx() when
+    // DWT_FORCE_ADCOFFSET_CAL is requested (dw3720_device.c:1802 area),
+    // binary-searches the I/Q positive/negative zero-crossing thresholds
+    // and writes the result to both ADC_THRESH_CFG_ID (the live register
+    // actually used during RX, dw3720_device.c:2505) and
+    // ADC_ZERO_THRESH_CFG_ID (the saved record, dw3720_device.c:2546) -
+    // both end up holding the same value. Each packs 4 8-bit fields:
+    // I_POS[7:0] I_NEG[15:8] Q_POS[23:16] Q_NEG[31:24]. thr_i/thr_q below
+    // are the low/high 16 bits of that value (I_NEG:I_POS and
+    // Q_NEG:Q_POS respectively).
+    // ADCオフセット校正（最優先 - 上の関数コメント参照: この温度域でSDKが
+    // 温度依存と明記している唯一のキャリブレーション）。
+    // ull_adcoffsetscalibration()（dw3720_device.c:2289）は
+    // ull_configure()（dw3720_device.c:2118）と、ull_restore_txrx()が
+    // DWT_FORCE_ADCOFFSET_CALを要求されたとき（dw3720_device.c:1802付近）に
+    // 呼ばれ、I/Qの正負ゼロクロス閾値を二分探索して、結果を
+    // ADC_THRESH_CFG_ID（RX時に実際に使うライブレジスタ、
+    // dw3720_device.c:2505）とADC_ZERO_THRESH_CFG_ID（保存用の記録、
+    // dw3720_device.c:2546）の両方に書く（最終的に同じ値になる）。
+    // どちらも8bit×4項目のパック: I_POS[7:0] I_NEG[15:8] Q_POS[23:16]
+    // Q_NEG[31:24]。以下のthr_i/thr_qはその値の下位/上位16bit
+    // （それぞれ I_NEG:I_POS と Q_NEG:Q_POS）。
+    const uint32_t adcZeroThresh = calReadReg32(ADC_ZERO_THRESH_CFG_ID);
+    const uint32_t adcThreshCfg  = calReadReg32(ADC_THRESH_CFG_ID);
+    const uint32_t adcCfg        = calReadReg32(ADC_CFG_ID);
+    const uint16_t adcThrI       = (uint16_t)(adcZeroThresh & 0xFFFFU);
+    const uint16_t adcThrQ       = (uint16_t)((adcZeroThresh >> 16) & 0xFFFFU);
+    ESP_LOGI(TAG, "cal: adc thr_i=0x%04X thr_q=0x%04X zero_thresh=0x%08lX thresh_cfg=0x%08lX adc_cfg=0x%08lX",
+             adcThrI, adcThrQ, (unsigned long)adcZeroThresh, (unsigned long)adcThreshCfg, (unsigned long)adcCfg);
+}
+
+/**
  * @brief Re-run the PHY configuration (and with it the PLL calibration), and
  *        log the die temperature before and after.
  *        PHY 設定（＝PLL 再校正）をやり直し、前後のダイ温度をログに出す。
@@ -217,6 +430,364 @@ static void diagReinit(uwb::Qm33120& uwb, uint32_t consecutiveFails)
     ESP_LOGW(TAG, "DIAG_REINIT after %lu consecutive failures: init()=%s temp_before=%.1fC temp_after=%.1fC",
              (unsigned long)consecutiveFails, ok ? "OK" : "FAILED", before, dieTempC());
 }
+
+#if !CONFIG_UWB_TWR_DIAG_RECAL_NONE
+/**
+ * @brief Re-run one of the chip's one-shot calibrations at runtime (Kconfig
+ *        UWB_TWR_DIAG_RECAL_KIND), log the result, and re-dump the "cal:"
+ *        registers so this run can be diffed against the boot-time dump
+ *        from the same log. See Kconfig.projbuild's UWB_TWR_DIAG_RECAL_KIND
+ *        help for the SDK call chain each branch takes.
+ *
+ *        All branches are preceded by dwt_forcetrxoff() (deca_device_api.h:
+ *        2301): ull_setdwstate() - which dwt_restoreconfig()/dwt_pll_cal()
+ *        both go through internally - returns DWT_ERR_WRONG_STATE if the
+ *        radio is in TX or RX when called (dw3720_device.c:1112-1116), and
+ *        ull_adcoffsetscalibration()'s own doc comment (dw3720_device.c:
+ *        2222) requires the device to already be in IDLE/IDLE_PLL.
+ *        requestRange() already leaves the radio idle by the time it
+ *        returns, so this call is a safety net, not a fix for an observed
+ *        problem.
+ *        選択したチップの一度きりキャリブレーション（Kconfigの
+ *        UWB_TWR_DIAG_RECAL_KIND）をランタイムでやり直し、結果をログに
+ *        出したうえで"cal:"レジスタダンプを出し直す（同じログ内で起動時
+ *        ダンプと比較できるように）。各分岐が呼ぶSDK関数の詳細は
+ *        Kconfig.projbuildのUWB_TWR_DIAG_RECAL_KINDのヘルプを参照。
+ *
+ *        どの分岐もdwt_forcetrxoff()（deca_device_api.h:2301）を先に呼ぶ:
+ *        dwt_restoreconfig()/dwt_pll_cal()が内部で通るull_setdwstate()は、
+ *        送受信中に呼ばれるとDWT_ERR_WRONG_STATEを返し
+ *        （dw3720_device.c:1112-1116）、ull_adcoffsetscalibration()自身の
+ *        コメント（dw3720_device.c:2222）もIDLE/IDLE_PLL状態を要求する。
+ *        requestRange()は戻った時点で既に受信機をアイドルに戻しているはず
+ *        なので、これは実害の対処ではなく念のための保険。
+ */
+static void diagRecal(uwb::Qm33120& uwb, uint32_t rangeCount, uint32_t rangeOkCount)
+{
+    (void)uwb; // Only the RECAL_FULL branch below uses it.
+               // 下のRECAL_FULL分岐でのみ使う。
+
+    dwt_forcetrxoff();
+
+    const char* kind = "?";
+    int32_t result   = 0;
+#if CONFIG_UWB_TWR_DIAG_RECAL_ADC
+    kind   = "ADC";
+    result = dwt_restoreconfig(static_cast<dwt_restore_type_e>(DWT_RESTORE_TXRX_MODE | DWT_FORCE_ADCOFFSET_CAL));
+#elif CONFIG_UWB_TWR_DIAG_RECAL_PGF
+    kind   = "PGF";
+    result = dwt_pgf_cal(1);
+#elif CONFIG_UWB_TWR_DIAG_RECAL_PLL
+    kind   = "PLL";
+    result = dwt_pll_cal();
+#elif CONFIG_UWB_TWR_DIAG_RECAL_FULL
+    kind = "FULL";
+    // Same call DIAG_REINIT (UWB_TWR_DIAG_REINIT_FAILS) uses - see
+    // diagReinit() above. / DIAG_REINIT（UWB_TWR_DIAG_REINIT_FAILS）と
+    // 同じ呼び出し - 上のdiagReinit()参照。
+    result = uwb.init() ? 1 : 0;
+#endif
+    ESP_LOGW(TAG, "RECAL(%s) at count=%lu ok=%lu: result=%ld", kind, (unsigned long)rangeCount,
+             (unsigned long)rangeOkCount, (long)result);
+    logCalibrationDump();
+}
+#endif // !CONFIG_UWB_TWR_DIAG_RECAL_NONE
+
+#if defined(CONFIG_UWB_TWR_DIAG_PLL_COARSE_CH9) && (CONFIG_UWB_TWR_DIAG_PLL_COARSE_CH9 != 0)
+/**
+ * @brief Force the DW3720's channel-9 PLL VCO coarse-tune code to a specific
+ *        value (Kconfig UWB_TWR_DIAG_PLL_COARSE_CH9) and re-lock the PLL on
+ *        it, to test the "coarse code 0x24 sits on a VCO sub-band edge"
+ *        hypothesis without needing to cool the board (see
+ *        logCalibrationDump()'s doc comment above, and this option's Kconfig
+ *        help, for the measured background).
+ *
+ *        On real hardware the previous implementation - dwt_pll_chx_auto_cal()
+ *        (deca_device_api.h:3928), the SDK's public entry point for locking a
+ *        caller-supplied coarse code - returned 254 (not a documented DWT_*
+ *        status code) and left PLL_COARSE_CODE unchanged: it never actually
+ *        forced anything. This version instead drives the same registers the
+ *        normal boot path drives, by hand, through up to three escalating
+ *        raw-register sequences:
+ *
+ *        (A) dwt_setdwstate(DWT_DW_IDLE_RC) -> write the ch9 field of
+ *            PLL_COARSE_CODE_ID (0x90004, bits[6:0]) to the forced code,
+ *            keeping every other bit as read -> OR
+ *            PLL_CAL_PLL_USE_OLD_BIT_MASK (0x2) into PLL_CAL_ID (0x90008) ->
+ *            dwt_setdwstate(DWT_DW_IDLE). dwt_setdwstate() is the SDK's
+ *            public wrapper (deca_compat.c:248-251, DWT_SETDWSTATE ioctl)
+ *            for ull_setdwstate() (dw3720_device.c:1097-1150); its
+ *            DWT_DW_IDLE branch (:1119-1129) is exactly what the normal boot
+ *            path also calls at the end of ull_run_hardware_pll_cal()
+ *            (:8085): switch the clock mux to auto
+ *            (ull_force_clocks(FORCE_CLK_AUTO), :1123, :5624-5629), clear
+ *            SYS_STATUS's CP_LOCK flag (:1124), OR
+ *            PLL_CAL_PLL_CAL_EN_BIT_MASK (0x100) into PLL_CAL (:1126), set
+ *            SEQ_CTRL's AINIT2IDLE bit (:1127), then poll PLL_STATUS's lock
+ *            flag up to MAX_RETRIES_FOR_PLL=50 times / 20us apart
+ *            (is_pll_locked(), :1064-1082; MAX_RETRIES_FOR_PLL is
+ *            deca_device_api.h:121). USE_OLD is the interpretation this
+ *            sequence tests: "use the code already sitting in
+ *            PLL_COARSE_CODE instead of running a fresh hardware search".
+ *            Nothing in this vendored SDK ever sets this bit -
+ *            ull_pll_ch9_auto_cal() (dw3720_device.c:8218), the only other
+ *            place PLL_CAL_PLL_USE_OLD_BIT_MASK / PLL_CAL_PLL_TUNE_OVR_
+ *            BIT_MASK appear at all, explicitly CLEARS both (:8267-8268) -
+ *            so pairing USE_OLD with the normal CAL_EN-driven IDLE
+ *            transition is genuinely untested by the vendor, and this
+ *            diagnostic verifies the outcome from the readback/lock log line
+ *            below rather than assuming it works.
+ *        (B) Tried only if (A)'s readback did not match the forced code:
+ *            identical to (A), but also ORs in
+ *            PLL_CAL_PLL_TUNE_OVR_BIT_MASK (0x4) - "override the tune value
+ *            with the register contents", a stronger claim than USE_OLD's
+ *            "prefer it over a search".
+ *        (C) Tried only if (B) also failed: dwt_setdwstate(DWT_DW_IDLE_RC)
+ *            -> reset PLL_CAL to its pre-diagnostic value (undoing (B)'s
+ *            USE_OLD/TUNE_OVR) -> write the forced coarse code -> replicate
+ *            ull_setdwstate(DWT_DW_IDLE)'s DWT_DW_IDLE branch
+ *            (dw3720_device.c:1119-1129) BY HAND, omitting its PLL_CAL_EN
+ *            write (line 1126) - i.e. force-clocks-auto, clear CP_LOCK, set
+ *            AINIT2IDLE, then poll the lock flag, but never tell the
+ *            hardware to (re)calibrate. This is the most direct test of
+ *            whether the digital sequencer can lock straight onto whatever
+ *            sits in PLL_COARSE_CODE without CAL_EN kicking off a search.
+ *            If PLL_STATUS never reports lock within MAX_RETRIES_FOR_PLL
+ *            retries, this diagnostic restores PLL_COARSE_CODE to its
+ *            pre-diagnostic value and falls back to
+ *            dwt_setdwstate(DWT_DW_IDLE_RC) + dwt_setdwstate(DWT_DW_IDLE) -
+ *            the untouched normal path - so the radio is never left
+ *            deliberately unlocked when this function returns.
+ *
+ *        Whichever sequence locks (or the (C)-failed fallback), PLL_CAL's
+ *        bits other than USE_OLD/TUNE_OVR are written back to their
+ *        pre-diagnostic values at the end. Unlike the old
+ *        dwt_pll_chx_auto_cal()-based implementation, none of the sequences
+ *        above touch PLL_CFG_ID/TX_CTRL_HI_ID/TX_CTRL_LO_ID/PLL_COMMON_ID at
+ *        all, so there is nothing else to snapshot or restore.
+ *
+ *        実機では、以前の実装が使っていたdwt_pll_chx_auto_cal()
+ *        （deca_device_api.h:3928、任意の粗調整コードをロックするための
+ *        SDK公開エントリポイント）は254（DWT_*の文書化されたステータス
+ *        コードではない）を返し、PLL_COARSE_CODEは変化しなかった - 実際
+ *        には何も強制していなかった。この版は代わりに、通常の起動経路が
+ *        触るのと同じレジスタを、最大3段階のraw-register（生レジスタ）
+ *        シーケンスで手動で駆動する:
+ *
+ *        (A) dwt_setdwstate(DWT_DW_IDLE_RC) -> PLL_COARSE_CODE_ID
+ *            （0x90004、bits[6:0]）のch9フィールドを強制コードへ書く
+ *            （他のビットは読み出し値のまま） -> PLL_CAL_ID（0x90008）へ
+ *            PLL_CAL_PLL_USE_OLD_BIT_MASK(0x2)をOR ->
+ *            dwt_setdwstate(DWT_DW_IDLE)。dwt_setdwstate()は
+ *            ull_setdwstate()（dw3720_device.c:1097-1150）のSDK公開
+ *            ラッパー（deca_compat.c:248-251、DWT_SETDWSTATE ioctl経由）:
+ *            そのDWT_DW_IDLE分岐（:1119-1129）は、通常の起動経路が
+ *            ull_run_hardware_pll_cal()の最後（:8085）で呼んでいるのと
+ *            全く同じもの: クロック選択をautoへ切替
+ *            （ull_force_clocks(FORCE_CLK_AUTO)、:1123、:5624-5629）、
+ *            SYS_STATUSのCP_LOCKフラグをクリア（:1124）、PLL_CALへ
+ *            PLL_CAL_PLL_CAL_EN_BIT_MASK(0x100)をOR（:1126）、SEQ_CTRLの
+ *            AINIT2IDLEビットをセット（:1127）、その後PLL_STATUSのロック
+ *            フラグを最大MAX_RETRIES_FOR_PLL=50回・20us間隔でポーリング
+ *            （is_pll_locked()、:1064-1082。MAX_RETRIES_FOR_PLLは
+ *            deca_device_api.h:121）。USE_OLDはこのシーケンスが検証して
+ *            いる解釈: 「新たなハードウェア探索を走らせず、
+ *            PLL_COARSE_CODEに既に入っているコードを使う」。このベンダ
+ *            SDKのどこもこのビットをセットしていない -
+ *            ull_pll_ch9_auto_cal()（dw3720_device.c:8218、PLL_CAL_PLL_
+ *            USE_OLD_BIT_MASK / PLL_CAL_PLL_TUNE_OVR_BIT_MASKが登場する
+ *            唯一の他の場所）は両方を明示的にクリアしている
+ *            （:8267-8268） - よってUSE_OLDを通常のCAL_EN駆動IDLE遷移と
+ *            組み合わせるのはベンダによる検証が実際には無く、この診断は
+ *            それが効くと仮定せず、下の読み戻し/ロック状態のログ行で
+ *            結果を確認する。
+ *        (B) (A)の読み戻しが強制コードと一致しなかった場合のみ試す:
+ *            (A)と同一だが、PLL_CAL_PLL_TUNE_OVR_BIT_MASK(0x4)も追加で
+ *            OR - 「レジスタの内容でtune値を上書きする」、USE_OLDの
+ *            「探索より優先する」より強い意味。
+ *        (C) (B)も失敗した場合のみ試す: dwt_setdwstate(DWT_DW_IDLE_RC)
+ *            -> PLL_CALを診断前の値へ戻す（(B)のUSE_OLD/TUNE_OVRを
+ *            取り消す） -> 強制粗調整コードを書く ->
+ *            ull_setdwstate(DWT_DW_IDLE)のDWT_DW_IDLE分岐
+ *            （dw3720_device.c:1119-1129）を手で再現するが、PLL_CAL_EN
+ *            の書き込み（1126行目）だけは省く - つまりクロックauto
+ *            切替・CP_LOCKクリア・AINIT2IDLEセットまでは同じだが、ロック
+ *            フラグをポーリングするだけでハードウェアに（再）校正しろと
+ *            は一切伝えない。CAL_ENが探索を起動しなくても、デジタル
+ *            シーケンサがPLL_COARSE_CODEに入っている値へ直接ロックできる
+ *            かどうかの、最も直接的な検証になる。MAX_RETRIES_FOR_PLL回
+ *            以内にPLL_STATUSがロックを報告しなければ、この診断は
+ *            PLL_COARSE_CODEを診断前の値へ戻したうえで
+ *            dwt_setdwstate(DWT_DW_IDLE_RC) +
+ *            dwt_setdwstate(DWT_DW_IDLE) - 手を加えていない通常経路 -
+ *            にフォールバックする（この関数が戻るときに無線を意図的に
+ *            未ロックのまま残さないため）。
+ *
+ *        どのシーケンスがロックしたか（あるいは(C)失敗後のフォール
+ *        バックか）にかかわらず、PLL_CALのUSE_OLD/TUNE_OVR以外のビット
+ *        は最後に診断前の値へ書き戻す。以前のdwt_pll_chx_auto_cal()ベース
+ *        の実装と違い、上記のどのシーケンスもPLL_CFG_ID/TX_CTRL_HI_ID/
+ *        TX_CTRL_LO_ID/PLL_COMMON_IDには一切触れないため、他に退避・復元
+ *        すべきものが無い。
+ */
+static void diagForcePllCoarseCh9()
+{
+    const uint32_t forcedCode =
+        (uint32_t)CONFIG_UWB_TWR_DIAG_PLL_COARSE_CH9 & PLL_COARSE_CODE_CH9_VCO_COARSE_TUNE_BIT_MASK;
+
+    dwt_forcetrxoff();
+
+    // Snapshot pre-diagnostic state / 診断前の状態を退避
+    const uint32_t coarseBefore    = calReadReg32(PLL_COARSE_CODE_ID);
+    const uint32_t pllCalBefore    = calReadReg32(PLL_CAL_ID);
+    const uint32_t pllStatusBefore = calReadReg32(PLL_STATUS_ID);
+    const int lockBefore = ((pllStatusBefore & PLL_STATUS_PLL_LOCK_FLAG_BIT_MASK) != 0U) ? 1 : 0;
+    ESP_LOGW(TAG,
+             "DIAG_PLL_COARSE: start forced=0x%02lX coarse_before=0x%08lX pll_cal_before=0x%08lX "
+             "pll_status_before=0x%08lX lock_before=%d",
+             (unsigned long)forcedCode, (unsigned long)coarseBefore, (unsigned long)pllCalBefore,
+             (unsigned long)pllStatusBefore, lockBefore);
+
+    // Write only the ch9 coarse-tune field (bits[6:0]) of PLL_COARSE_CODE,
+    // keeping every other bit (CH9_ICAS/RCAS, the ch5 field, ...) as read.
+    // PLL_COARSE_CODEのch9粗調整フィールド（bits[6:0]）だけを書き換え、
+    // 他のビット（CH9_ICAS/RCAS、ch5用フィールド等）は読み出し値のまま残す。
+    auto writeCoarseCode = [&]() {
+        const uint32_t cur = calReadReg32(PLL_COARSE_CODE_ID);
+        calWriteReg32(PLL_COARSE_CODE_ID, (cur & ~PLL_COARSE_CODE_CH9_VCO_COARSE_TUNE_BIT_MASK) | forcedCode);
+    };
+
+    // Sequences A/B - see the doc comment above for the full register-level
+    // rationale for each. / シーケンスA/B - 各ステップの詳細は上の
+    // ドキュメントコメント参照。
+    auto tryWithCalEn = [&](uint32_t extraCalBits, const char* seqTag) -> bool {
+        (void)dwt_setdwstate(static_cast<int>(DWT_DW_IDLE_RC));
+        writeCoarseCode();
+
+        const uint32_t pllCalPre = calReadReg32(PLL_CAL_ID);
+        calWriteReg32(PLL_CAL_ID, pllCalPre | extraCalBits);
+
+        const int32_t rc = static_cast<int32_t>(dwt_setdwstate(static_cast<int>(DWT_DW_IDLE)));
+
+        const uint32_t coarseAfter    = calReadReg32(PLL_COARSE_CODE_ID);
+        const uint32_t pllCalAfter    = calReadReg32(PLL_CAL_ID);
+        const uint32_t pllStatusAfter = calReadReg32(PLL_STATUS_ID);
+        const int lock           = ((pllStatusAfter & PLL_STATUS_PLL_LOCK_FLAG_BIT_MASK) != 0U) ? 1 : 0;
+        const uint32_t readback  = coarseAfter & PLL_COARSE_CODE_CH9_VCO_COARSE_TUNE_BIT_MASK;
+
+        ESP_LOGW(TAG,
+                 "DIAG_PLL_COARSE(%s): forced=0x%02lX readback=0x%02lX pll_cal=0x%08lX->0x%08lX "
+                 "pll_status=0x%08lX lock=%d rc=%ld",
+                 seqTag, (unsigned long)forcedCode, (unsigned long)readback, (unsigned long)pllCalPre,
+                 (unsigned long)pllCalAfter, (unsigned long)pllStatusAfter, lock, (long)rc);
+
+        return readback == forcedCode;
+    };
+
+    bool ok                  = tryWithCalEn(PLL_CAL_PLL_USE_OLD_BIT_MASK, "A");
+    uint32_t stickyCalBits    = PLL_CAL_PLL_USE_OLD_BIT_MASK;
+    if (!ok) {
+        ok            = tryWithCalEn(PLL_CAL_PLL_USE_OLD_BIT_MASK | PLL_CAL_PLL_TUNE_OVR_BIT_MASK, "B");
+        stickyCalBits = PLL_CAL_PLL_USE_OLD_BIT_MASK | PLL_CAL_PLL_TUNE_OVR_BIT_MASK;
+    }
+
+    if (!ok) {
+        // Sequence C: bypass PLL_CAL_EN entirely - see doc comment above.
+        // シーケンスC: PLL_CAL_ENを一切使わない - 詳細は上のドキュメント
+        // コメント参照。
+        (void)dwt_setdwstate(static_cast<int>(DWT_DW_IDLE_RC));
+
+        // Start from the pre-diagnostic PLL_CAL, not from (B)'s leftover
+        // USE_OLD/TUNE_OVR bits - (C) tests a mechanism that uses neither.
+        // (B)が残したUSE_OLD/TUNE_OVRビットではなく、診断前のPLL_CALから
+        // 始める - (C)はどちらのビットも使わない機構を試す。
+        calWriteReg32(PLL_CAL_ID, pllCalBefore);
+        writeCoarseCode();
+
+        // Replicate ull_setdwstate(DWT_DW_IDLE)'s DWT_DW_IDLE branch
+        // (dw3720_device.c:1119-1129) by hand, omitting its PLL_CAL_EN write
+        // (line 1126).
+        // ull_setdwstate(DWT_DW_IDLE)のDWT_DW_IDLE分岐
+        // （dw3720_device.c:1119-1129）を手で再現するが、PLL_CAL_ENの
+        // 書き込み（1126行目）だけは省く。
+        //  1) ull_force_clocks(dw, FORCE_CLK_AUTO) (:5624-5629): a plain
+        //     16-bit overwrite of CLK_CTRL with DWT_AUTO_CLKS.
+        calWriteReg16(CLK_CTRL_ID, (uint16_t)DWT_AUTO_CLKS);
+        //  2) dwt_or8bitoffsetreg(dw, SYS_STATUS_ID, 0,
+        //     SYS_STATUS_CP_LOCK_BIT_MASK) (:1124): SYS_STATUS is
+        //     write-1-to-clear, so OR-ing in CP_LOCK clears that flag (and,
+        //     like the SDK's own call, incidentally clears whatever other
+        //     low-byte status bits happen to already be set - harmless here
+        //     since dwt_forcetrxoff() above already left the radio idle).
+        calWriteReg8(SYS_STATUS_ID, (uint8_t)(calReadReg8(SYS_STATUS_ID) | SYS_STATUS_CP_LOCK_BIT_MASK));
+        //  3) dwt_or8bitoffsetreg(dw, SEQ_CTRL_ID, 0x01,
+        //     AINIT2IDLE_BIT_MASK>>8) (:1127): set SEQ_CTRL's AINIT2IDLE bit
+        //     - deliberately NOT touching PLL_CAL_EN.
+        calWriteReg32(SEQ_CTRL_ID, calReadReg32(SEQ_CTRL_ID) | SEQ_CTRL_AINIT2IDLE_BIT_MASK);
+        //  4) is_pll_locked(dw, MAX_RETRIES_FOR_PLL) (:1064-1082): check
+        //     immediately, then retry every 20us up to MAX_RETRIES_FOR_PLL
+        //     times.
+        bool locked = (calReadReg8(PLL_STATUS_ID) & PLL_STATUS_PLL_LOCK_FLAG_BIT_MASK) != 0U;
+        for (uint8_t cnt = 1; (cnt < MAX_RETRIES_FOR_PLL) && !locked; cnt++) {
+            deca_usleep(DELAY_20uUSec);
+            locked = (calReadReg8(PLL_STATUS_ID) & PLL_STATUS_PLL_LOCK_FLAG_BIT_MASK) != 0U;
+        }
+
+        const uint32_t coarseAfter    = calReadReg32(PLL_COARSE_CODE_ID);
+        const uint32_t pllCalAfter    = calReadReg32(PLL_CAL_ID);
+        const uint32_t pllStatusAfter = calReadReg32(PLL_STATUS_ID);
+        const uint32_t readback       = coarseAfter & PLL_COARSE_CODE_CH9_VCO_COARSE_TUNE_BIT_MASK;
+
+        ESP_LOGW(TAG,
+                 "DIAG_PLL_COARSE(C): forced=0x%02lX readback=0x%02lX pll_cal=0x%08lX->0x%08lX "
+                 "pll_status=0x%08lX lock=%d rc=%ld",
+                 (unsigned long)forcedCode, (unsigned long)readback, (unsigned long)pllCalBefore,
+                 (unsigned long)pllCalAfter, (unsigned long)pllStatusAfter, locked ? 1 : 0,
+                 (long)(locked ? DWT_SUCCESS : DWT_ERR_PLL_LOCK));
+
+        stickyCalBits = 0U; // (C) never sets USE_OLD/TUNE_OVR.
+                             // (C)はUSE_OLD/TUNE_OVRを一切セットしない。
+
+        if (locked) {
+            ok = true;
+        } else {
+            // (C) failed to lock: undo our forced code and fall back to the
+            // untouched normal path so the radio is not left stuck in
+            // IDLE_RC/unlocked.
+            // (C)がロックしなかった: 強制コードを元へ戻したうえで、無線を
+            // IDLE_RC/未ロックのまま放置しないよう、手を加えていない通常
+            // 経路にフォールバックする。
+            calWriteReg32(PLL_COARSE_CODE_ID, coarseBefore);
+            (void)dwt_setdwstate(static_cast<int>(DWT_DW_IDLE_RC));
+            const int32_t rcFallback = static_cast<int32_t>(dwt_setdwstate(static_cast<int>(DWT_DW_IDLE)));
+            ESP_LOGW(TAG, "DIAG_PLL_COARSE(C) failed, restored normal cal: rc=%ld", (long)rcFallback);
+        }
+    }
+
+    // Restore PLL_CAL's non-USE_OLD/TUNE_OVR bits (lock-delay, WD_EN,
+    // CH9_FB_OVR, and CAL_EN - which dwt_setdwstate(DWT_DW_IDLE) always
+    // re-sets itself, dw3720_device.c:1126) to their pre-diagnostic values,
+    // while keeping USE_OLD/TUNE_OVR set iff sequence A/B is what locked.
+    // PLL_CALのUSE_OLD/TUNE_OVR以外のビット（ロック遅延・WD_EN・
+    // CH9_FB_OVR、およびdwt_setdwstate(DWT_DW_IDLE)が毎回立て直すCAL_EN -
+    // dw3720_device.c:1126）を診断前の値へ戻す。USE_OLD/TUNE_OVRは
+    // シーケンスA/Bでロックできた場合のみ残す。
+    const uint32_t extraMask   = PLL_CAL_PLL_USE_OLD_BIT_MASK | PLL_CAL_PLL_TUNE_OVR_BIT_MASK;
+    const uint32_t pllCalFinal = (pllCalBefore & ~extraMask) | stickyCalBits;
+    calWriteReg32(PLL_CAL_ID, pllCalFinal);
+
+    const uint32_t coarseFinal    = calReadReg32(PLL_COARSE_CODE_ID);
+    const uint32_t pllStatusFinal = calReadReg32(PLL_STATUS_ID);
+    const int lockFinal = ((pllStatusFinal & PLL_STATUS_PLL_LOCK_FLAG_BIT_MASK) != 0U) ? 1 : 0;
+    ESP_LOGW(TAG,
+             "DIAG_PLL_COARSE: done ok=%d coarse_final=0x%08lX pll_cal_final=0x%08lX pll_status_final=0x%08lX "
+             "lock_final=%d",
+             ok ? 1 : 0, (unsigned long)coarseFinal, (unsigned long)pllCalFinal, (unsigned long)pllStatusFinal,
+             lockFinal);
+
+    logCalibrationDump();
+}
+#endif // defined(CONFIG_UWB_TWR_DIAG_PLL_COARSE_CH9) && (CONFIG_UWB_TWR_DIAG_PLL_COARSE_CH9 != 0)
 
 #define UWB_DEV_ID_EXPECTED 0xDECA0314UL
 
@@ -406,6 +977,21 @@ static void runRole(uwb::Qm33120& uwb)
                 consecutiveFails = 0;
             }
         }
+
+#if !CONFIG_UWB_TWR_DIAG_RECAL_NONE
+        // Diagnostic: run the selected one-shot calibration exactly once,
+        // CONFIG_UWB_TWR_DIAG_RECAL_SEC seconds after boot, and log the
+        // cumulative count/ok at that moment so the success rate before/
+        // after can be computed from this log alone.
+        // 診断用: 起動からCONFIG_UWB_TWR_DIAG_RECAL_SEC秒後に選択した
+        // キャリブレーションを1回だけやり直し、その時点の累積count/okを
+        // ログに出す（前後の成功率をこのログだけから計算できるように）。
+        static bool recalDone = false;
+        if (!recalDone && esp_timer_get_time() > (int64_t)CONFIG_UWB_TWR_DIAG_RECAL_SEC * 1000000LL) {
+            recalDone = true;
+            diagRecal(uwb, rangeCount, rangeOkCount);
+        }
+#endif
 
         if ((rangeCount % TAG_LOG_INTERVAL) != 0) {
             continue;
@@ -965,6 +1551,24 @@ extern "C" void app_main(void)
     // 診断: この個体の水晶トリム値と起動時のダイ温度。2 個体間でこれらが
     // 大きく違うと搬送波の周波数ずれになり、受信側の追従範囲を超えうる。
     ESP_LOGI(TAG, "xtal_trim=%u die_temp=%.1fC", (unsigned)dwt_getxtaltrim(), dieTempC());
+    // Boot-time calibration dump (see logCalibrationDump() doc comment for
+    // why): lets cold-boot and warm-reboot runs be diffed from the log.
+    // 起動時キャリブレーションダンプ（理由は logCalibrationDump() の
+    // ドキュメントコメント参照）: コールドブートとウォームリブートを
+    // ログだけで比較できるようにする。
+    logCalibrationDump();
+
+#if defined(CONFIG_UWB_TWR_DIAG_PLL_COARSE_CH9) && (CONFIG_UWB_TWR_DIAG_PLL_COARSE_CH9 != 0)
+    // Diagnostic: force ch9's PLL VCO coarse-tune code and re-lock (see
+    // diagForcePllCoarseCh9()'s doc comment and this Kconfig option's help
+    // for why). Runs on both roles unconditionally when non-zero - whichever
+    // board(s) happened to boot warm are the ones it actually matters for.
+    // 診断用: ch9のPLL VCO粗調整コードを強制して再ロックする（理由は
+    // diagForcePllCoarseCh9()のドキュメントコメントとこのKconfigオプション
+    // のヘルプ参照）。非ゼロなら両ロールで無条件に走る - 実際に効くのは
+    // ウォームブートした方の機体。
+    diagForcePllCoarseCh9();
+#endif
     // Boot-time check (docs/TIMING_PRESETS.md SS4(b)): warn loudly if the
     // selected preset needs IRQ on this device's role but it did not
     // actually come up active. **Never change the preset value

@@ -281,7 +281,8 @@ m5stamp_uwb_localizer/
 │
 ├── tools/
 │   ├── README.md            ベンチとスクリプトの置き場（テストは tests/ 側）
-│   └── bench_loc/           測位ソルバのマイクロベンチマーク（`make bench`）
+│   ├── bench_loc/           測位ソルバのマイクロベンチマーク（`make bench`）
+│   └── serial/              シリアルログ採取・集計スクリプト（capture / capture_reenum / twr_stats）
 │
 └── third_party/             上流リポジトリの参照クローン（gitignore 済み・ビルド対象外）
 ```

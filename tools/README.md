@@ -7,3 +7,4 @@
 | ディレクトリ | 内容 |
 |---|---|
 | [`bench_loc/`](bench_loc/) | 測位ソルバ（`components/uwb_loc`）のマイクロベンチマーク（`make bench`） |
+| [`serial/`](serial/) | 実機のシリアルログ採取・集計スクリプト（`capture.py` / `capture_reenum.py` / `twr_stats.py`） |
