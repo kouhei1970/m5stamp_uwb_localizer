@@ -942,6 +942,27 @@ PLL 粗調整コードの固定（0x23）は起動時温度依存の暫定策の
 - 軽微: `requestDSRange()` の 2 箇所の受信タイムアウト出口が `stopRadioAndClearRxStatus()`（TXFRS を消さない）。
   実害は無いはずだが `stopRadioAndClearIoStatus()` に揃える。
 
+**ユーザーの指摘（2026-08-29 夕方、最優先で従うこと）**: 「どちらもできる想定の機材で DS ができない理由を
+特定せずに『今やらない』と決める理由はない。SS ができて DS ができないなら、今のプログラムが DS で動くと
+判断して作った根拠に問題があるはず。プログラムが何を根拠に構築されているかをレビューせよ。現時点の取り組みは
+動作を検証していないプログラムが動かなかったと言っているだけに見える。」→ 以下のレビューを開始した
+（ネット断でセッション終了、結果未着。**次回はこの 3 本を同じ指示で再実行するところから**）:
+1. **Qorvo 純正 SDK 1.1.1 の DS/SS 例**（`assets/DW3_QM33_SDK_1.1.1` 内の `ds_twr_initiator.c` /
+   `ds_twr_responder.c` / `ss_twr_*`）と現行 `requestDSRange` / `respondDSRange` の `dwt_*` 呼び出し列・
+   フラグ（IMMEDIATE / DELAYED / RESPONSE_EXPECTED）・ステータス消去・受信エラー後の再武装の突き合わせ。
+   DS だけにある逸脱が容疑者。
+2. **設計根拠の監査**: DS 経路に入っている各「修正」（PRETOC、R2 不一致継続、R3-1 結果繰り返し 3→1、
+   修正1、C-2/C-3 ペイロード版タグ、タイミングプリセット）の根拠と実機検証の有無。
+3. **移植元 M5Stack ライブラリ v0.1.1 との逐語比較**（`git clone https://github.com/m5stack/M5Stamp-UWB`、
+   `src/M5Stamp_UWB.cpp` 1010〜1377 行。リポジトリには含めない）。既に判明した既定値の差:
+   `resultRxAfterFinalTxDelayUus` 原本 500 → 移植 200、`resultRepeatCount` 原本 3 → 移植 1、
+   Poll 待ちホストタイムアウト 原本 `hostTimeoutMs`=100 → 移植 `pollHostTimeoutMs`=200。
+   原本の DS 例（`examples/DS_TWR_TAG` / `DS_TWR_ANCHOR`）は本件と同じ 1500/3000/1800/500/3000。
+   なお原本の DS 例を実機で走らせた記録は 0/470（FPC 接触不良期・温起動）で、**原本の DS が
+   この個体で動いた証拠も無い**。接点良好の今、原本の DS 例（PlatformIO）を再度走らせて
+   「原本でも 0% か」を確かめるのが最初の切り分け。
+
+（以下は指摘前の判断。参考として残す）
 **現状の判断**: DS-TWR は PHY ではなく状態機械側の問題で、SS-TWR（再試行込みで 99.95%）とは別件。
 本番へ 99% を持ち込む最短路は **本番タグ/アンカーを SS-TWR（`UWB_TAG_METHOD_SS` / `UWB_ANCHOR_METHOD_SS`）
 に切り替え + 850 kbps + 再試行**（SS-TWR の測距精度は `clock_ppm` 補正込みで中央値 1.03 m / std 40 mm）。
