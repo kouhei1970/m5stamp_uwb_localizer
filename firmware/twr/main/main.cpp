@@ -423,12 +423,26 @@ static void logCalibrationDump()
  *        log the die temperature before and after.
  *        PHY 設定（＝PLL 再校正）をやり直し、前後のダイ温度をログに出す。
  */
+#if defined(CONFIG_UWB_TWR_DIAG_PLL_COARSE_CH9) && (CONFIG_UWB_TWR_DIAG_PLL_COARSE_CH9 != 0)
+static void diagForcePllCoarseCh9(); // defined below / 後方で定義
+#endif
+
 static void diagReinit(uwb::Qm33120& uwb, uint32_t consecutiveFails)
 {
     const float before = dieTempC();
     const bool ok      = uwb.init();
     ESP_LOGW(TAG, "DIAG_REINIT after %lu consecutive failures: init()=%s temp_before=%.1fC temp_after=%.1fC",
              (unsigned long)consecutiveFails, ok ? "OK" : "FAILED", before, dieTempC());
+#if defined(CONFIG_UWB_TWR_DIAG_PLL_COARSE_CH9) && (CONFIG_UWB_TWR_DIAG_PLL_COARSE_CH9 != 0)
+    // init() re-runs the hardware PLL calibration, which discards the forced
+    // coarse code (seen on 2026-08-29: FPC reseat -> module power loss ->
+    // DIAG_REINIT -> 6-8 % until the next boot). Re-apply it here.
+    // init() はハード PLL 較正をやり直すので強制した粗調整コードが消える
+    // (2026-08-29: FPC 抜き差し -> モジュール電源断 -> DIAG_REINIT -> 次の起動まで 6-8%)。ここで掛け直す。
+    if (ok) {
+        diagForcePllCoarseCh9();
+    }
+#endif
 }
 
 #if !CONFIG_UWB_TWR_DIAG_RECAL_NONE
