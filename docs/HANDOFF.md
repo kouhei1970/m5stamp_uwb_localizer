@@ -1266,6 +1266,11 @@ docs/archive/                 経緯文書（現役8本 + archive自身のREADME
 
 ### 一次資料（データシート・SDK、2026-08-29 確認）
 
+> **注意: `assets/QM33120W Data Sheet.pdf` と `assets/DW3_QM33_SDK_1.1.1/` は `.gitignore` により
+> リポジトリには含めない（Qorvo のベンダ文書・SDK。`docs/refs/` と同じ方針）。ローカルにのみ置く。
+> 入手先: データシートは Qorvo のサイト（QM33120W 製品ページ、Rev. D 2025）、SDK は Qorvo から
+> 「DW3_QM33_SDK 1.1.1」を取り寄せる。別マシンで作業するときはこの 2 つを先に `assets/` へ置くこと。
+
 旧参照だった `docs/refs/DW3000_Family_User_Manual_wayback.txt` と、コード
 コメント中で言及されている Qorvo API rev9p3 のサンプルは、**現在のツリーには
 存在しない**（`docs/refs` ディレクトリ自体が無い）。代わりに以下の一次資料を
