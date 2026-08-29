@@ -354,6 +354,128 @@ menu "UWB TWR Configuration"
             両機を同じ値にすること。片側だけ変えるとA/B比較が成立しない。
             M5Stamp モジュールに欠けている基板単位の送信校正の一部。
 
+    config UWB_TWR_DIAG_SFD_TYPE
+        int "Diagnostic: SFD type override (4 = leave the default DW8; 0=IEEE4A 1=DW8 2=DW16 3=IEEE4Z)"
+        range 0 4
+        default 4
+        help
+            Overrides PhyConfig::sfdType, the Start-of-Frame-Delimiter
+            sequence used for preamble/frame detection (enum class SfdType,
+            components/uwb_qm33120/include/uwb_qm33120_types.hpp). 0=IEEE4A,
+            1=DW8 (PhyConfig's own default), 2=DW16, 3=IEEE4Z. The default
+            of this option, 4, leaves phy.sfdType untouched - i.e. exactly
+            the behaviour before this option existed.
+
+            Applied to both TAG and ANCHOR builds: main.cpp builds one
+            shared uwb::PhyConfig before begin(), regardless of role.
+
+            sfdTimeout is left at 0 (auto), so it keeps tracking the
+            automatic calculation for whichever SFD length the selected type
+            uses (sfdSymbols() in components/uwb_qm33120/src/uwb_qm33120.cpp:
+            IEEE4A/DW8/IEEE4Z = 8 symbols, DW16 = 16 symbols) - a fixed
+            sfdTimeout would silently destroy the reception rate when the
+            SFD length changes (the same pitfall as UWB_TWR_DIAG_PHY_PREAMBLE
+            / task R8 for preamble length).
+
+            BOTH boards of a link must use the same value - a one-sided
+            change simply stops ranging.
+            診断用: PhyConfig::sfdType（プリアンブル/フレーム検出に使う
+            SFD（フレーム開始区切り）シーケンス。enum class SfdType、
+            components/uwb_qm33120/include/uwb_qm33120_types.hpp）を
+            上書きする。0=IEEE4A、1=DW8（PhyConfig 自体の既定）、2=DW16、
+            3=IEEE4Z。このオプションの既定値4は phy.sfdType に触れない
+            （このオプションが追加される前と完全に同じ挙動）。
+
+            TAG・ANCHOR両方のビルドに適用される（main.cpp はロールによらず
+            begin() の前に共通の uwb::PhyConfig を1つ組み立てる）。
+
+            sfdTimeout は 0（自動計算）のままにするので、選んだ種別の SFD 長
+            （components/uwb_qm33120/src/uwb_qm33120.cpp の sfdSymbols():
+            IEEE4A/DW8/IEEE4Z=8シンボル、DW16=16シンボル）に応じた自動計算に
+            追随し続ける。固定値のままだと SFD 長を変えたときに受信率が黙って
+            激減する（UWB_TWR_DIAG_PHY_PREAMBLE・課題R8のプリアンブル長と同じ
+            罠）。
+
+            両機を同じ値にすること。片側だけ変えると受信できなくなる。
+
+    config UWB_TWR_DIAG_PREAMBLE_CODE
+        int "Diagnostic: TX/RX preamble code override (0 = leave the default 9/9; ch9/64MHz PRF codes are 9-12)"
+        range 0 12
+        default 0
+        help
+            Overrides both PhyConfig::txPreambleCode and
+            PhyConfig::rxPreambleCode (default 9 each) to the given value in
+            one shot. On channel 9 (64 MHz PRF - the only channel this module
+            supports, see uwb-module-ch9-only), the valid preamble codes are
+            9-12 (IEEE 802.15.4z). The default of this option, 0, leaves both
+            fields untouched - i.e. exactly the default behaviour (9/9).
+
+            Applied to both TAG and ANCHOR builds - same shared PhyConfig
+            code path as UWB_TWR_DIAG_SFD_TYPE above.
+
+            BOTH boards of a link must use the same value - a one-sided
+            change simply stops ranging (the TX and RX preamble code must
+            match on both ends for correlator lock).
+            診断用: PhyConfig::txPreambleCode と rxPreambleCode（既定はいずれも
+            9）を、指定した値へまとめて上書きする。ch9（64MHz PRF。本モジュール
+            が対応する唯一のチャネル）で有効なプリアンブルコードは9〜12
+            （IEEE 802.15.4z）。このオプションの既定値0は両方のフィールドに
+            触れない（既定の 9/9 のまま）。
+
+            TAG・ANCHOR両方のビルドに適用される（UWB_TWR_DIAG_SFD_TYPE と同じ
+            共通 PhyConfig 経路）。
+
+            両機を同じ値にすること。片側だけ変えると受信できなくなる
+            （相関器のロックには送受両端でプリアンブルコードが一致している
+            必要がある）。
+
+    config UWB_TWR_DIAG_RESP_TX_DELAY_UUS
+        int "Diagnostic: SS-TWR response TX delay override [UUS] (0 = leave the timing-profile value)"
+        range 0 20000
+        default 0
+        help
+            Overrides RangeConfig::responseTxDelayUus in the SS-TWR
+            (single-sided) makeRangeConfig() of BOTH the TAG and the ANCHOR
+            role, applied AFTER uwb::applyTimingProfile() so it wins over
+            whichever UWB_TIMING_PROFILE preset ended up effective at
+            runtime (docs/TIMING_PRESETS.md; init() can downgrade an IRQ
+            preset to PollingBoth if the IRQ line turns out dead). The
+            default of this option, 0, leaves responseTxDelayUus untouched -
+            i.e. exactly the timing-profile's value, identical to the
+            behaviour before this option existed. DS-TWR's makeRangeConfig()
+            is not touched by this option.
+
+            The receive window is grown to match, so a longer response delay
+            does not by itself cause a receive timeout:
+              rxTimeoutUus = (profile-effective rxTimeoutUus)
+                             + (this value - RESPONSE_TX_DLY_UUS)
+            i.e. the receive window that applyTimingProfile() has already
+            set (PollingBoth: 4500 UUS) grows by the same delta; it is never
+            shrunk (a delta <= 0 leaves the window untouched).
+
+            BOTH boards of a link must use the same value - a one-sided
+            change breaks the deadline inequality
+            (docs/TIMING_PRESETS.md section 1.2) on one side only.
+            診断用: SS-TWR（片側測距）の makeRangeConfig()（TAG・ANCHOR両方）で
+            RangeConfig::responseTxDelayUus を上書きする。
+            uwb::applyTimingProfile() の**後**に適用するので、実行時に実際に
+            有効な UWB_TIMING_PROFILE プリセット（docs/TIMING_PRESETS.md。
+            IRQ 線が死んでいると init() が IRQ プリセットを PollingBoth へ
+            降格させることがある）が何であっても、こちらが最終的に勝つ。
+            このオプションの既定値0は responseTxDelayUus に触れない
+            （プリセットの値のまま、このオプションが追加される前と完全に
+            同じ挙動）。DS-TWR の makeRangeConfig() はこのオプションで変更
+            しない。
+
+            受信待ち窓もあわせて広げる（応答遅延だけ伸ばすと受信タイムアウト
+            の原因になりうるため）:
+              rxTimeoutUus = (プロファイル適用後の実効 rxTimeoutUus)
+                             + (この値 - RESPONSE_TX_DLY_UUS)
+            すなわち applyTimingProfile() が設定済みの受信窓（PollingBoth
+            では 4500 UUS）に同じ延長分を足す。縮めることはしない
+            （差が 0 以下なら窓は変更しない）。
+
+
     config UWB_TWR_DIAG_RF_PORT
         int "Diagnostic: RF port control (0=driver default, 1=force RF1, 2=force RF2, 3=auto 1->2, 4=auto 2->1)"
         range 0 4

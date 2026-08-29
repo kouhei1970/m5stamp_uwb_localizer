@@ -965,6 +965,28 @@ static uwb::RangeConfig makeRangeConfig()
     // deadline inequality in docs/TIMING_PRESETS.md section 1.2 with more
     // margin than the old ones.
     uwb::applyTimingProfile(range, g_effectiveTimingProfile);
+#if CONFIG_UWB_TWR_DIAG_RESP_TX_DELAY_UUS > 0
+    // Diagnostic: override the delayed-TX response deadline, applied AFTER
+    // applyTimingProfile() above so it wins over whichever UWB_TIMING_PROFILE
+    // preset ended up effective. Grow the RX window by the same amount so a
+    // longer delay does not by itself cause a receive timeout (the window is
+    // the profile-effective value plus the delta; never shrunk).
+    // 診断: 応答の遅延送信締切を上書きする。上の applyTimingProfile() の後に
+    // 適用するので、実行時に有効な UWB_TIMING_PROFILE プリセットが何であって
+    // もこちらが勝つ。遅延を伸ばした分だけ受信窓も広げる（受信タイムアウトの
+    // 原因にならないように。窓はプロファイル適用後の実効値に延長分を足した
+    // もので、縮めることはない）。
+    range.responseTxDelayUus = CONFIG_UWB_TWR_DIAG_RESP_TX_DELAY_UUS;
+    {
+        const int32_t deltaUus = static_cast<int32_t>(CONFIG_UWB_TWR_DIAG_RESP_TX_DELAY_UUS) -
+                                  static_cast<int32_t>(RESPONSE_TX_DLY_UUS);
+        // Grow the profile-effective window (already set by applyTimingProfile()) by the delta.
+        // プロファイル適用後の実効の受信窓に、延長分をそのまま足す。
+        if (deltaUus > 0) {
+            range.rxTimeoutUus += static_cast<uint32_t>(deltaUus);
+        }
+    }
+#endif
     return range;
 }
 
@@ -1191,6 +1213,37 @@ static uwb::RangeConfig makeRangeConfig()
     // (components/uwb_qm33120/src/uwb_qm33120_twr.cpp, respondRange()).
     // They were already dead here, so overriding them changes nothing on air.
     uwb::applyTimingProfile(range, g_effectiveTimingProfile);
+#if CONFIG_UWB_TWR_DIAG_RESP_TX_DELAY_UUS > 0
+    // Diagnostic: override the delayed-TX response deadline, applied AFTER
+    // applyTimingProfile() above so it wins over whichever UWB_TIMING_PROFILE
+    // preset ended up effective. This IS live here: respondRange() reads
+    // range.responseTxDelayUus to compute the delayed-TX deadline
+    // (components/uwb_qm33120/src/uwb_qm33120_twr.cpp). The rxTimeoutUus
+    // side of this override, however, is dead code on the ANCHOR (see the
+    // comment above - respondRange() hardcodes dwt_setrxtimeout(0)); it is
+    // still set here, harmlessly, to keep both roles' makeRangeConfig()
+    // symmetric and match the TAG side's formula (profile-effective window
+    // plus the delta; never shrunk).
+    // 診断: 応答の遅延送信締切を上書きする。上の applyTimingProfile() の後に
+    // 適用するので、実行時に有効な UWB_TIMING_PROFILE プリセットが何であって
+    // もこちらが勝つ。ここでは実際に効く: respondRange() は
+    // range.responseTxDelayUus を読んで遅延送信の締切を計算する
+    // （components/uwb_qm33120/src/uwb_qm33120_twr.cpp）。一方 rxTimeoutUus
+    // 側の上書きは、上のコメントの通り ANCHOR では respondRange() が
+    // dwt_setrxtimeout(0) を固定で呼ぶため死んだコードだが、TAG 側の式と
+    // 対称にしておくため無害に設定だけしておく（プロファイル適用後の実効の
+    // 窓に延長分を足す。縮めない）。
+    range.responseTxDelayUus = CONFIG_UWB_TWR_DIAG_RESP_TX_DELAY_UUS;
+    {
+        const int32_t deltaUus = static_cast<int32_t>(CONFIG_UWB_TWR_DIAG_RESP_TX_DELAY_UUS) -
+                                  static_cast<int32_t>(RESPONSE_TX_DLY_UUS);
+        // Grow the profile-effective window (already set by applyTimingProfile()) by the delta.
+        // プロファイル適用後の実効の受信窓に、延長分をそのまま足す。
+        if (deltaUus > 0) {
+            range.rxTimeoutUus += static_cast<uint32_t>(deltaUus);
+        }
+    }
+#endif
     // How long this anchor keeps its receiver armed while waiting for a poll.
     //
     // [2026-08-28 訂正] ここには以前「窓と Poll 周期がほぼ等しいために位相が
@@ -1467,6 +1520,41 @@ extern "C" void app_main(void)
     ESP_LOGW(TAG, "DIAG_PHY_850K: rate=850kbps (both boards must match)");
 #endif
 
+#if defined(CONFIG_UWB_TWR_DIAG_SFD_TYPE) && (CONFIG_UWB_TWR_DIAG_SFD_TYPE != 4)
+    // Diagnostic: override the SFD (start-of-frame-delimiter) type alone.
+    // sfdTimeout stays 0, so it keeps tracking the automatic calculation for
+    // whichever SFD length the selected type uses (sfdSymbols() in
+    // components/uwb_qm33120/src/uwb_qm33120.cpp: IEEE4A/DW8/IEEE4Z=8
+    // symbols, DW16=16 symbols - already type-aware, no fixed "8").
+    // 診断: SFD（フレーム開始区切り）種別だけを上書きする。sfdTimeout は
+    // 0 のままにして、選んだ種別の SFD 長（components/uwb_qm33120/src/
+    // uwb_qm33120.cpp の sfdSymbols(): IEEE4A/DW8/IEEE4Z=8シンボル、
+    // DW16=16シンボル。既に種別ごとに正しく分岐しており固定8ではない）に
+    // 応じた自動計算に追随させる。
+#if CONFIG_UWB_TWR_DIAG_SFD_TYPE == 0
+    phy.sfdType = uwb::SfdType::IEEE4A;
+#elif CONFIG_UWB_TWR_DIAG_SFD_TYPE == 1
+    phy.sfdType = uwb::SfdType::DW8;
+#elif CONFIG_UWB_TWR_DIAG_SFD_TYPE == 2
+    phy.sfdType = uwb::SfdType::DW16;
+#elif CONFIG_UWB_TWR_DIAG_SFD_TYPE == 3
+    phy.sfdType = uwb::SfdType::IEEE4Z;
+#else
+#error "CONFIG_UWB_TWR_DIAG_SFD_TYPE must be 0, 1, 2, 3 or 4"
+#endif
+    ESP_LOGW(TAG, "DIAG_SFD_TYPE: sfdType=%u (both boards must match)", static_cast<unsigned>(phy.sfdType));
+#endif
+
+#if defined(CONFIG_UWB_TWR_DIAG_PREAMBLE_CODE) && (CONFIG_UWB_TWR_DIAG_PREAMBLE_CODE != 0)
+    // Diagnostic: override both TX and RX preamble codes together (ch9/64MHz
+    // PRF valid codes are 9-12).
+    // 診断: 送受信のプリアンブルコードを同時に上書きする（ch9/64MHz PRF で
+    // 有効なコードは9〜12）。
+    phy.txPreambleCode = CONFIG_UWB_TWR_DIAG_PREAMBLE_CODE;
+    phy.rxPreambleCode = CONFIG_UWB_TWR_DIAG_PREAMBLE_CODE;
+    ESP_LOGW(TAG, "DIAG_PREAMBLE_CODE: code=%u/%u (both boards must match)", phy.txPreambleCode, phy.rxPreambleCode);
+#endif
+
 #if defined(CONFIG_UWB_TWR_DIAG_TXPOWER) && (CONFIG_UWB_TWR_DIAG_TXPOWER != 0xfefefefe)
     // Diagnostic: override the TX_POWER register value written verbatim to
     // the DW3720 (see components/uwb_qm33120/src/uwb_qm33120.cpp
@@ -1527,6 +1615,28 @@ extern "C" void app_main(void)
              (phy.dataRate == uwb::DataRate::Rate850K) ? "850kbps" : "6.8Mbps", static_cast<unsigned>(phy.channel),
              phy.txPreambleCode, phy.rxPreambleCode, static_cast<unsigned>(phy.sfdType),
              (unsigned long)phy.txPower, phy.pgDelay);
+
+#if defined(CONFIG_UWB_TWR_DIAG_RESP_TX_DELAY_UUS) && (CONFIG_UWB_TWR_DIAG_RESP_TX_DELAY_UUS > 0) && \
+    !CONFIG_UWB_TWR_METHOD_DS
+    // Diagnostic: log the effective SS-TWR response-delay/RX-timeout override
+    // that makeRangeConfig() (below, per role) applies on every ranging call.
+    // Mirrors that function's formula here purely for the boot log; guarded
+    // to SS-TWR only because DS-TWR's makeRangeConfig() is left untouched by
+    // this option (see Kconfig.projbuild UWB_TWR_DIAG_RESP_TX_DELAY_UUS).
+    // 診断: makeRangeConfig()（ロールごとに下で定義）が毎回の測距呼び出しで
+    // 適用する SS-TWR の応答遅延/受信タイムアウト上書き値を、起動ログ用に
+    // 同じ式でここにも出す。SS-TWR 限定（DS-TWR の makeRangeConfig() は
+    // このオプションで変更しない。Kconfig.projbuild の
+    // UWB_TWR_DIAG_RESP_TX_DELAY_UUS 参照）。
+    {
+        const int32_t deltaUus = static_cast<int32_t>(CONFIG_UWB_TWR_DIAG_RESP_TX_DELAY_UUS) -
+                                  static_cast<int32_t>(RESPONSE_TX_DLY_UUS);
+        const uint32_t effectiveRxTimeoutUus =
+            (deltaUus > 0) ? (RX_TIMEOUT_UUS + static_cast<uint32_t>(deltaUus)) : RX_TIMEOUT_UUS;
+        ESP_LOGI(TAG, "diag: resp_tx_delay_uus=%u rx_timeout_uus=%lu",
+                 (unsigned)CONFIG_UWB_TWR_DIAG_RESP_TX_DELAY_UUS, (unsigned long)effectiveRxTimeoutUus);
+    }
+#endif
 
     if (uwbDevice.deviceId() != UWB_DEV_ID_EXPECTED) {
         ESP_LOGE(TAG, "unexpected device id, aborting");
