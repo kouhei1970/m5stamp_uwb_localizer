@@ -984,7 +984,7 @@ PLL 粗調整コードの固定（0x23）は起動時温度依存の暫定策の
   計算式、DWD 結果フレームの送信ループ、ステータス消去のマスク、入口の `stopRadio…`／PRETOC 0 まで一致。
   R2（不一致フレームで待ち続ける）と `uwb_port_irq_wait(1)` は SS/DS 共通の変更で DS 固有ではない。
 - DS だけに効く既定値の変更: `resultRxAfterFinalTxDelayUus` 500 → 200、`resultRepeatCount` 3 → 1（R3-1、
-  推論のみ）。共通の変更: `hostTimeoutMs` 既定 100 → 10（twr の main.cpp は明示指定しているので値を要確認）、
+  推論のみ）。共通の変更: `hostTimeoutMs` 100 → **10**（`firmware/twr/main/main.cpp` の `RANGE_HOST_TIMEOUT_MS` も 4 箇所すべて 10。原本の例は 100。ただしタグの失敗は 6 ms のハード側受信タイムアウトで決まっているので主因ではない見込み）、
   Poll 待ちは新設の `pollHostTimeoutMs` = 200。
 - **DS の結果構造体には SS にある受信診断（`rxStatus` / `rxSeen` / `rxRejected` / `readRxPower`）が一切無い**
   → 「Poll が届かない／届いて棄却／受信機が固まった」を DS のログでは区別できない。DS を追うなら先に
