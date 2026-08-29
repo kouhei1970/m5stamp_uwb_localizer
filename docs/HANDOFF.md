@@ -979,6 +979,22 @@ PLL 粗調整コードの固定（0x23）は起動時温度依存の暫定策の
   すべて未検証。**次回は上記レビュー 1（Qorvo SDK 例との突き合わせ）と 3（原本との逐語比較）を完了させ、
   DS だけにある逸脱を実機で 1 つずつ反証する。**
 
+**レビュー 3（原本 M5Stamp-UWB v0.1.1 との逐語比較）の結果（同、終了直前に受領）**:
+- **DS 関数の本体は原本とほぼ同一**: Final の `DWT_START_TX_DELAYED | DWT_RESPONSE_EXPECTED`、非対称 DS-TWR の
+  計算式、DWD 結果フレームの送信ループ、ステータス消去のマスク、入口の `stopRadio…`／PRETOC 0 まで一致。
+  R2（不一致フレームで待ち続ける）と `uwb_port_irq_wait(1)` は SS/DS 共通の変更で DS 固有ではない。
+- DS だけに効く既定値の変更: `resultRxAfterFinalTxDelayUus` 500 → 200、`resultRepeatCount` 3 → 1（R3-1、
+  推論のみ）。共通の変更: `hostTimeoutMs` 既定 100 → 10（twr の main.cpp は明示指定しているので値を要確認）、
+  Poll 待ちは新設の `pollHostTimeoutMs` = 200。
+- **DS の結果構造体には SS にある受信診断（`rxStatus` / `rxSeen` / `rxRejected` / `readRxPower`）が一切無い**
+  → 「Poll が届かない／届いて棄却／受信機が固まった」を DS のログでは区別できない。DS を追うなら先に
+  SS と同じ診断を DS の結果に移植すること（本セッションで `rxStatus` の追加を試みたが文字列不一致で未適用）。
+- 含意: 移植は忠実なので、**DS の不動作は「移植ミス」ではなく、原本の DS フロー（またはそのタイミング定数）が
+  この機材で成立していない**可能性が高い。原本の DS 例が実機で 0/470 だった記録とも整合する。したがって
+  次の一手は (a) 原本の DS 例を接点良好の状態で再実行して原本でも 0% かを確定、(b) Qorvo 純正
+  `ds_twr_initiator/responder` との突き合わせ（レビュー 1、未受領）で M5Stack フローの逸脱を洗う、
+  (c) DS 結果に受信診断を移植して「どの段で何が起きたか」を観測できるようにする。
+
 （以下は指摘前の判断。参考として残す）
 **現状の判断**: DS-TWR は PHY ではなく状態機械側の問題で、SS-TWR（再試行込みで 99.95%）とは別件。
 本番へ 99% を持ち込む最短路は **本番タグ/アンカーを SS-TWR（`UWB_TAG_METHOD_SS` / `UWB_ANCHOR_METHOD_SS`）
