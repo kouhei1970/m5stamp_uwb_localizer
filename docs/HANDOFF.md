@@ -995,6 +995,24 @@ PLL 粗調整コードの固定（0x23）は起動時温度依存の暫定策の
   `ds_twr_initiator/responder` との突き合わせ（レビュー 1、未受領）で M5Stack フローの逸脱を洗う、
   (c) DS 結果に受信診断を移植して「どの段で何が起きたか」を観測できるようにする。
 
+**レビュー 1（Qorvo 純正 SDK 1.1.1 の `ex_05a/05b`（DS）・`ex_06a/06b`（SS）との突き合わせ）の結果（同、終了直前に受領）**:
+- SS は純正例と 1:1（Poll `IMMEDIATE|RESPONSE_EXPECTED`、Response `DELAYED`（W4R なし））。
+- DS で純正例と違うのは **2 点だけ**、いずれも M5Stack 原本由来で本移植は忠実:
+  1. **Final の送信が `DELAYED | RESPONSE_EXPECTED`（`CMD_DTX_W4R`）**。純正 `ds_twr_initiator.c:236` は
+     `DELAYED` のみ（W4R なし）。この符号化はこのコードベースで DS 要求側だけが使う。
+  2. **Final の後に「DWD」結果フレームの往復を追加**（アンカーが距離を送り返し、タグが受信待ち）。純正は Final で
+     交換終了（アンカーが手元で距離を出す）。1 交換あたりの TX/RX 遷移が SS の 3 倍。
+- SDK ソースで確認した事実: 即時送信の `ull_starttx()` はチップ状態を見ず常に成功を返す（「送信した」ログは
+  電波の証拠にならない）。`ull_forcetrxoff()` は `SYS_STATE_LO` が IDLE 以下なら `CMD_TXRXOFF` を出さない
+  （呼び出し冒頭の「リセット」は、前サイクルの `CMD_DTX_W4R` 後に IDLE を自己申告したまま固まった状態を
+  解かない）。交差試験（SS アンカーでも DS タグの Poll が聞こえない）と整合し、**タグが実際には電波を
+  出していない**可能性が最有力。
+- **次回最初に行う実験（最小差分）**: `requestDSRange()` の Final を純正どおり `dwt_starttx(DWT_START_TX_DELAYED)`
+  （`RESPONSE_EXPECTED` を外す）にし、DWD 結果フレームの脚を外す（アンカーは距離をログするだけ）。タグの
+  成功率が SS 並み（≈95%）に上がれば、W4R 連鎖と結果往復が原因と確定。距離をタグに返す必要があるなら、
+  Final の TXFRS 確認後に**別の即時 RX 呼び出し**として設計し直す（`CMD_DTX_W4R` で連鎖させない）。
+  Kconfig（例: `UWB_TWR_DIAG_DS_QORVO_FLOW`）で切替可能にして A/B を採る。
+
 （以下は指摘前の判断。参考として残す）
 **現状の判断**: DS-TWR は PHY ではなく状態機械側の問題で、SS-TWR（再試行込みで 99.95%）とは別件。
 本番へ 99% を持ち込む最短路は **本番タグ/アンカーを SS-TWR（`UWB_TAG_METHOD_SS` / `UWB_ANCHOR_METHOD_SS`）
