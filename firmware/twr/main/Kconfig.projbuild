@@ -354,6 +354,23 @@ menu "UWB TWR Configuration"
             両機を同じ値にすること。片側だけ変えるとA/B比較が成立しない。
             M5Stamp モジュールに欠けている基板単位の送信校正の一部。
 
+    config UWB_TWR_DIAG_RF_PORT
+        int "Diagnostic: RF port control (0=driver default, 1=force RF1, 2=force RF2, 3=auto 1->2, 4=auto 2->1)"
+        range 0 4
+        default 0
+        help
+            Calls dwt_configure_rf_port() after begin() with the given
+            dwt_rf_port_ctrl_e value. The QM33120W has RF1 (TX/RX) and RF2
+            (RX only, for PDoA); on the M5Stamp UWB module RF2 is terminated
+            with 49.9 ohm, so only RF1 has an antenna. 0 leaves the driver
+            default (automatic switching). Used to test whether the RX port
+            selection contributes to per-frame random reception failures.
+            begin() の後に dwt_configure_rf_port() を指定値で呼ぶ。QM33120W は
+            RF1 (送受) と RF2 (受信専用、PDoA 用) を持ち、M5Stamp UWB モジュール
+            では RF2 は 49.9 Ω で終端されアンテナは RF1 のみ。0 はドライバ既定
+            (自動切替) のまま。受信ポート選択がフレームごとのランダムな受信
+            失敗に寄与しているかを切り分けるための診断。
+
     config UWB_TWR_DIAG_PLL_COARSE_CH9
         int "Diagnostic: force ch9 PLL VCO coarse-tune code after init and re-lock (0 = off)"
         range 0 127

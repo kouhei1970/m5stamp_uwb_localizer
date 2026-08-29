@@ -1590,6 +1590,20 @@ extern "C" void app_main(void)
         const uint16_t pgcount = dwt_calcpgcount(phy.pgDelay);
         ESP_LOGI(TAG, "pg: pgdelay_readback=0x%02X pgcount(0x%02X)=%u", pgdelay_readback, phy.pgDelay, pgcount);
     }
+#if defined(CONFIG_UWB_TWR_DIAG_RF_PORT) && (CONFIG_UWB_TWR_DIAG_RF_PORT != 0)
+    {
+        // Diagnostic: force the RF port selection and log RF_SWITCH_CTRL before/after.
+        // 診断: RF ポート選択を固定し、RF_SWITCH_CTRL を前後で記録する。
+        uint8_t rfsw[4] = {0, 0, 0, 0};
+        dwt_readfromdevice(RF_SWITCH_CTRL_ID, 0, sizeof(rfsw), rfsw);
+        const uint32_t before = ((uint32_t)rfsw[3] << 24) | ((uint32_t)rfsw[2] << 16) | ((uint32_t)rfsw[1] << 8) | rfsw[0];
+        dwt_configure_rf_port(static_cast<dwt_rf_port_ctrl_e>(CONFIG_UWB_TWR_DIAG_RF_PORT));
+        dwt_readfromdevice(RF_SWITCH_CTRL_ID, 0, sizeof(rfsw), rfsw);
+        const uint32_t after = ((uint32_t)rfsw[3] << 24) | ((uint32_t)rfsw[2] << 16) | ((uint32_t)rfsw[1] << 8) | rfsw[0];
+        ESP_LOGW(TAG, "DIAG_RF_PORT: mode=%d RF_SWITCH_CTRL 0x%08lX -> 0x%08lX (both boards should match)",
+                 (int)CONFIG_UWB_TWR_DIAG_RF_PORT, (unsigned long)before, (unsigned long)after);
+    }
+#endif
     ESP_LOGI(TAG, "begin() + PHY config OK, starting %s/%s loop", ROLE_NAME, METHOD_NAME);
 
     // --- Log whether IRQ actually ended up active (docs/IRQ_POLICY.md) ---
