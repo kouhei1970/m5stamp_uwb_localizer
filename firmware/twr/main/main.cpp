@@ -684,7 +684,14 @@ static void diagForcePllCoarseCh9()
         return readback == forcedCode;
     };
 
-    bool ok                  = tryWithCalEn(PLL_CAL_PLL_USE_OLD_BIT_MASK, "A");
+    // (A) USE_OLD alone is NOT sticky: on real hardware (2026-08-29) the readback
+    // right after (A) showed the forced code, but the hardware calibration
+    // overwrote it again later (final code 0x24). Only (B) USE_OLD+TUNE_OVR held.
+    // So start directly with (B); (A) is kept as documentation only.
+    // (A) USE_OLD 単独は保持されない: 実機 (2026-08-29) では (A) 直後の読み戻しは
+    // 強制値だったが、その後ハード較正に上書きされて最終的に 0x24 に戻った。
+    // 保持されたのは (B) USE_OLD+TUNE_OVR だけ。よって最初から (B) を使う。
+    bool ok                  = false;
     uint32_t stickyCalBits    = PLL_CAL_PLL_USE_OLD_BIT_MASK;
     if (!ok) {
         ok            = tryWithCalEn(PLL_CAL_PLL_USE_OLD_BIT_MASK | PLL_CAL_PLL_TUNE_OVR_BIT_MASK, "B");
