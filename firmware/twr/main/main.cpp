@@ -970,6 +970,20 @@ static void runRole(uwb::Qm33120& uwb)
 
         const uwb::RangeResult result = uwb.requestRange(makeRangeConfig());
         rangeCount++;
+        // Per-attempt success/failure bit string, printed every 64 attempts, to
+        // study run lengths / periodicity at the 137 ms attempt scale.
+        // 1 試行ごとの成否をビット列にして 64 回ごとに出す (137 ms 刻みの並び・周期の解析用)。
+        {
+            static char seqBuf[65];
+            static uint32_t seqN = 0;
+            seqBuf[seqN % 64] = result.success ? '1' : '0';
+            seqN++;
+            if ((seqN % 64) == 0) {
+                seqBuf[64] = '\0';
+                ESP_LOGI(TAG, "SEQ64 count=%lu t_ms=%lu bits=%s", (unsigned long)rangeCount,
+                         (unsigned long)(esp_timer_get_time() / 1000), seqBuf);
+            }
+        }
         if (result.success) {
             rangeOkCount++;
             consecutiveFails = 0;
