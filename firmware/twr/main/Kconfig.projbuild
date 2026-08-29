@@ -184,6 +184,59 @@ menu "UWB TWR Configuration"
             for that: if the success rate changes, the loss was scheduling,
             not radio.
 
+    config UWB_TWR_RETRY_MAX
+        int "TAG: extra immediate retries on failure within one ranging cycle (0 = off)"
+        range 0 5
+        default 0
+        help
+            N = the maximum number of extra immediate ranging attempts the
+            TAG makes, within the SAME ranging cycle, after a failed
+            exchange (Poll -> Response); the cycle period
+            (UWB_TWR_RANGE_INTERVAL_MS) itself is unchanged. One Poll ->
+            Response exchange takes about 5-8 ms while the TAG only starts
+            a new cycle every UWB_TWR_RANGE_INTERVAL_MS (measured ~137 ms
+            on hardware), so a retry just uses part of the otherwise idle
+            time inside the same cycle. The measured per-attempt failure
+            rate is about 3.5%, and failures are mostly isolated
+            (independent from one attempt to the next), so retrying once or
+            twice is expected to lift the per-cycle success rate to
+            roughly 99.9%.
+
+            Every attempt - the first try and any retries - still counts
+            individually in SS_RANGE_STAT / SEQ64 and the
+            UWB_TWR_DIAG_REINIT_FAILS consecutive-failure counter, exactly
+            as before this option existed, so tools/serial/twr_stats.py's
+            per-attempt rate is unaffected. New per-CYCLE counters (one
+            cycle = the first attempt plus any retries it triggered) are
+            logged separately as SS_CYCLE_STAT / CSEQ64.
+
+            The default, 0, disables this entirely: the TAG makes exactly
+            one attempt per cycle, identical to the behaviour before this
+            option existed. The ANCHOR role is not affected - it simply
+            responds to whichever Poll it receives, retry or not.
+            N = 1回の測距サイクル内で、失敗した交換 (Poll -> Response) の後に
+            TAGが追加で即座に再試行する最大回数。サイクル周期
+            (UWB_TWR_RANGE_INTERVAL_MS) 自体は変えない。1回の Poll ->
+            Response 交換は約5-8msかかる一方、TAGが新しいサイクルを始める
+            のは UWB_TWR_RANGE_INTERVAL_MS ごと（実測で約137ms）なので、
+            再試行は同じサイクル内のもともと空いている時間を使うだけ。
+            実測の1試行あたり失敗率は約3.5%で、失敗はほぼ独立事象（前後の
+            試行と無関係）なので、1〜2回の再試行でサイクルあたりの成功率は
+            99.9%程度まで上がる見込み。
+
+            各試行（1回目・再試行とも）は、このオプションが追加される前と
+            全く同じように、個別にSS_RANGE_STAT / SEQ64 と
+            UWB_TWR_DIAG_REINIT_FAILS の連続失敗カウンタへ計上され続けるので、
+            tools/serial/twr_stats.py が出す試行あたりの成功率には影響しない。
+            サイクル単位（1回目の試行とそれに続く再試行をまとめて1サイクル
+            とする）の新しい集計は、別途 SS_CYCLE_STAT / CSEQ64 としてログに
+            出す。
+
+            既定の0ではこの機能は完全に無効: TAGは1サイクルにつき厳密に1回
+            だけ試行し、このオプションが追加される前と同じ挙動になる。
+            ANCHOR側の挙動はこのオプションの影響を受けない（再試行かどうかに
+            関わらず、受信したPollには常に応答する）。
+
     config UWB_TWR_DIAG_NO_LNA_PA
         bool "Diagnostic: do not enable external LNA/PA mode"
         default n

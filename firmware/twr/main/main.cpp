@@ -931,6 +931,11 @@ static uwb::Config makeConfigFromBoard()
 // Poll 周期。アンカーの受信待ち窓と周期をずらせるように Kconfig 化した。
 static constexpr uint32_t RANGE_INTERVAL_MS            = CONFIG_UWB_TWR_RANGE_INTERVAL_MS;
 static constexpr uint32_t TAG_LOG_INTERVAL              = 10;
+// Extra immediate retries after a failed exchange, within the same ranging
+// cycle (0 = off, identical to the behaviour before this option existed).
+// 失敗した交換の後に、同じ測距サイクル内で即座に行う追加再試行の回数
+// (0 = 無効。このオプションが追加される前と同じ挙動)。
+static constexpr uint32_t RETRY_MAX                     = CONFIG_UWB_TWR_RETRY_MAX;
 static constexpr uint32_t RX_TIMEOUT_UUS                = 3000;
 static constexpr uint32_t RANGE_HOST_TIMEOUT_MS          = 10;
 static constexpr uint32_t RESPONSE_RX_AFTER_TX_DLY_UUS   = 1500;
@@ -997,6 +1002,21 @@ static void runRole(uwb::Qm33120& uwb)
     uint32_t consecutiveFails = 0;
     DistanceStats stats;
 
+    // Per-cycle counters (CONFIG_UWB_TWR_RETRY_MAX). One cycle = the first
+    // attempt of a ranging exchange plus any immediate retries it triggered
+    // within the same call to runRole()'s main loop; the loop still starts
+    // one new cycle every RANGE_INTERVAL_MS regardless of how many attempts
+    // the previous cycle used. With RETRY_MAX == 0 a cycle is always exactly
+    // one attempt, so these mirror rangeCount/rangeOkCount/rangeFailCount
+    // above one-for-one.
+    // サイクル単位のカウンタ (CONFIG_UWB_TWR_RETRY_MAX)。1サイクル = 測距の
+    // 最初の試行と、それに続く即時再試行をまとめたもの。前サイクルが何回
+    // 試行を使ったかによらず、新しいサイクルは RANGE_INTERVAL_MS ごとに始まる。
+    // RETRY_MAX == 0 なら1サイクルは常にちょうど1試行なので、上の
+    // rangeCount/rangeOkCount/rangeFailCount と1対1で一致する。
+    uint32_t cycles = 0, cyclesOk = 0, cyclesFail = 0;
+    uint32_t retriesUsed = 0, rescued = 0;
+
     while (1) {
         if ((nowMs() - lastRangeMs) < RANGE_INTERVAL_MS) {
             vTaskDelay(pdMS_TO_TICKS(1));
@@ -1004,86 +1024,200 @@ static void runRole(uwb::Qm33120& uwb)
         }
         lastRangeMs = nowMs();
 
-        const uwb::RangeResult result = uwb.requestRange(makeRangeConfig());
-        rangeCount++;
-        // Per-attempt success/failure bit string, printed every 64 attempts, to
-        // study run lengths / periodicity at the 137 ms attempt scale.
-        // 1 試行ごとの成否をビット列にして 64 回ごとに出す (137 ms 刻みの並び・周期の解析用)。
-        {
-            static char seqBuf[65];
-            static uint32_t seqN = 0;
-            seqBuf[seqN % 64] = result.success ? '1' : '0';
-            seqN++;
-            if ((seqN % 64) == 0) {
-                seqBuf[64] = '\0';
-                ESP_LOGI(TAG, "SEQ64 count=%lu t_ms=%lu bits=%s", (unsigned long)rangeCount,
-                         (unsigned long)(esp_timer_get_time() / 1000), seqBuf);
+        // Ranging cycle: one attempt, plus - when RETRY_MAX > 0 and the
+        // attempt failed - up to RETRY_MAX extra immediate attempts within
+        // the same cycle (the cycle period RANGE_INTERVAL_MS above is not
+        // affected; a retry only uses part of the otherwise-idle time before
+        // the next cycle). Every attempt, first try or retry, still does
+        // exactly the same per-attempt bookkeeping as before this option
+        // existed (SEQ64 / SS_RANGE_STAT / the DIAG_REINIT consecutive-
+        // failure counter), so tools/serial/twr_stats.py's per-attempt rate
+        // is unaffected. Each attempt also gets a fresh sequence number for
+        // free: Qm33120::requestRange() increments its own internal
+        // tx_sequence counter on every call, before it is ever compared
+        // against an incoming frame (uwb_qm33120_twr.cpp: "const uint8_t
+        // pollSeq = ++_impl->tx_sequence;"), so a late Response to an
+        // earlier (failed) Poll can never be mistaken for a retry's
+        // Response - there is no separate sequence counter in main.cpp to
+        // manage for this.
+        // 測距サイクル: 1回の試行に加え、RETRY_MAX > 0 かつその試行が失敗した
+        // 場合、同じサイクル内で最大 RETRY_MAX 回まで即座に追加試行する
+        // (サイクル周期 RANGE_INTERVAL_MS 自体は変わらない。再試行は次の
+        // サイクルまでのもともと空いている時間の一部を使うだけ)。各試行
+        // （1回目・再試行とも）は、このオプションが追加される前と全く同じ
+        // 試行単位の記録（SEQ64・SS_RANGE_STAT・DIAG_REINIT用の連続失敗
+        // カウンタ）を行うので、tools/serial/twr_stats.py の試行あたりの
+        // 成功率には影響しない。各試行は新しいシーケンス番号も自動的に
+        // 得られる: Qm33120::requestRange() は呼ばれるたびに、受信フレームと
+        // 照合する前に内部の tx_sequence カウンタをインクリメントするので
+        // (uwb_qm33120_twr.cpp の "const uint8_t pollSeq =
+        // ++_impl->tx_sequence;")、以前の(失敗した)Pollへの遅延Responseを
+        // 再試行のResponseと取り違えることはない。main.cpp 側で別途管理する
+        // シーケンスカウンタは無い。
+        uwb::RangeResult result;
+        uint32_t attemptsThisCycle = 0;
+        for (uint32_t attempt = 0; attempt <= RETRY_MAX; attempt++) {
+            if (attempt > 0) {
+                // Tiny gap before a retry's Poll, so the ANCHOR has time to
+                // re-arm its receiver after the previous (failed) exchange
+                // left it idle.
+                // 再試行のPoll送信前の小休止。直前の(失敗した)交換で受信機が
+                // アイドルに戻ってから、ANCHORが再アームする時間を確保する。
+                vTaskDelay(pdMS_TO_TICKS(2));
             }
-        }
-        if (result.success) {
-            rangeOkCount++;
-            consecutiveFails = 0;
-            stats.add(result.distanceM * 1000.0f);
-        } else {
-            rangeFailCount++;
-            consecutiveFails++;
-            // Diagnostic only; disabled unless CONFIG_UWB_TWR_DIAG_REINIT_FAILS > 0.
-            // 診断用。既定 (0) では何も起きない。
-            if (DIAG_REINIT_AFTER_FAILS > 0 && consecutiveFails >= DIAG_REINIT_AFTER_FAILS) {
-                diagReinit(uwb, consecutiveFails);
+            attemptsThisCycle++;
+
+            result = uwb.requestRange(makeRangeConfig());
+            rangeCount++;
+            // Per-attempt success/failure bit string, printed every 64 attempts, to
+            // study run lengths / periodicity at the 137 ms attempt scale.
+            // 1 試行ごとの成否をビット列にして 64 回ごとに出す (137 ms 刻みの並び・周期の解析用)。
+            {
+                static char seqBuf[65];
+                static uint32_t seqN = 0;
+                seqBuf[seqN % 64] = result.success ? '1' : '0';
+                seqN++;
+                if ((seqN % 64) == 0) {
+                    seqBuf[64] = '\0';
+                    ESP_LOGI(TAG, "SEQ64 count=%lu t_ms=%lu bits=%s", (unsigned long)rangeCount,
+                             (unsigned long)(esp_timer_get_time() / 1000), seqBuf);
+                }
+            }
+            if (result.success) {
+                rangeOkCount++;
                 consecutiveFails = 0;
+                // Distance accumulation moved to the per-cycle bookkeeping
+                // below, so a rescued cycle (fails then succeeds on a
+                // retry) adds its distance exactly once, not once per
+                // attempt.
+                // 距離の集計は下のサイクル単位の処理へ移した。再試行で救済
+                // されたサイクル（最初は失敗し再試行で成功）でも、距離は
+                // 試行ごとではなくサイクルにつき1回だけ加算される。
+            } else {
+                rangeFailCount++;
+                consecutiveFails++;
+                // Diagnostic only; disabled unless CONFIG_UWB_TWR_DIAG_REINIT_FAILS > 0.
+                // 診断用。既定 (0) では何も起きない。
+                if (DIAG_REINIT_AFTER_FAILS > 0 && consecutiveFails >= DIAG_REINIT_AFTER_FAILS) {
+                    diagReinit(uwb, consecutiveFails);
+                    consecutiveFails = 0;
+                }
             }
-        }
 
 #if !CONFIG_UWB_TWR_DIAG_RECAL_NONE
-        // Diagnostic: run the selected one-shot calibration exactly once,
-        // CONFIG_UWB_TWR_DIAG_RECAL_SEC seconds after boot, and log the
-        // cumulative count/ok at that moment so the success rate before/
-        // after can be computed from this log alone.
-        // 診断用: 起動からCONFIG_UWB_TWR_DIAG_RECAL_SEC秒後に選択した
-        // キャリブレーションを1回だけやり直し、その時点の累積count/okを
-        // ログに出す（前後の成功率をこのログだけから計算できるように）。
-        static bool recalDone = false;
-        if (!recalDone && esp_timer_get_time() > (int64_t)CONFIG_UWB_TWR_DIAG_RECAL_SEC * 1000000LL) {
-            recalDone = true;
-            diagRecal(uwb, rangeCount, rangeOkCount);
-        }
+            // Diagnostic: run the selected one-shot calibration exactly once,
+            // CONFIG_UWB_TWR_DIAG_RECAL_SEC seconds after boot, and log the
+            // cumulative count/ok at that moment so the success rate before/
+            // after can be computed from this log alone.
+            // 診断用: 起動からCONFIG_UWB_TWR_DIAG_RECAL_SEC秒後に選択した
+            // キャリブレーションを1回だけやり直し、その時点の累積count/okを
+            // ログに出す（前後の成功率をこのログだけから計算できるように）。
+            static bool recalDone = false;
+            if (!recalDone && esp_timer_get_time() > (int64_t)CONFIG_UWB_TWR_DIAG_RECAL_SEC * 1000000LL) {
+                recalDone = true;
+                diagRecal(uwb, rangeCount, rangeOkCount);
+            }
 #endif
 
-        if ((rangeCount % TAG_LOG_INTERVAL) != 0) {
-            continue;
+            if ((rangeCount % TAG_LOG_INTERVAL) == 0) {
+                const float rate = (rangeCount == 0) ? 0.0f
+                                                      : (100.0f * static_cast<float>(rangeOkCount) /
+                                                         static_cast<float>(rangeCount));
+                if (result.success) {
+                    char rslBuf[8];
+                    char fpBuf[8];
+                    ESP_LOGI(TAG,
+                             "SS_RANGE_STAT count=%lu ok=%lu fail=%lu rate=%.1f%% last=OK seq=%u distance_mm=%ld "
+                             "distance_m=%.3f mean_mm=%.1f std_mm=%.1f n=%lu elapsed_ms=%lu temp=%.1fC clock_ppm=%.2f "
+                             "ipatov_power=%lu rsl_dbm=%s fp_dbm=%s accum=%u rx_seen=%u rx_rej=%u",
+                             (unsigned long)rangeCount, (unsigned long)rangeOkCount, (unsigned long)rangeFailCount,
+                             rate, result.sequence, (long)result.distanceMm, result.distanceM, stats.mean,
+                             stats.stddev(), (unsigned long)stats.count, (unsigned long)result.elapsedMs, dieTempC(),
+                             result.clockOffsetPpm, (unsigned long)result.ipatovPower,
+                             fmtDbmQ8(result.rslDbmQ8, rslBuf, sizeof(rslBuf)),
+                             fmtDbmQ8(result.fpDbmQ8, fpBuf, sizeof(fpBuf)), (unsigned)result.rxAccumCount,
+                             (unsigned)result.rxSeen, (unsigned)result.rxRejected);
+                } else {
+                    char statusBuf[72];
+                    char rslBuf[8];
+                    char fpBuf[8];
+                    ESP_LOGW(TAG,
+                             "SS_RANGE_STAT count=%lu ok=%lu fail=%lu rate=%.1f%% last=FAIL seq=%u error=%s temp=%.1fC "
+                             "rx_status=0x%08lX [%s] rsl_dbm=%s fp_dbm=%s accum=%u elapsed_ms=%lu rx_seen=%u rx_rej=%u "
+                             "rej_mask=0x%02X rej_len=%u rej_seq=%u",
+                             (unsigned long)rangeCount, (unsigned long)rangeOkCount, (unsigned long)rangeFailCount,
+                             rate, result.sequence, uwb.lastErrorName(), dieTempC(), (unsigned long)result.rxStatus,
+                             rxStatusBits(result.rxStatus, statusBuf, sizeof(statusBuf)),
+                             fmtDbmQ8(result.rslDbmQ8, rslBuf, sizeof(rslBuf)),
+                             fmtDbmQ8(result.fpDbmQ8, fpBuf, sizeof(fpBuf)), (unsigned)result.rxAccumCount,
+                             (unsigned long)result.elapsedMs, (unsigned)result.rxSeen, (unsigned)result.rxRejected,
+                             (unsigned)result.rejectMask, (unsigned)result.rejectFrameLen,
+                             (unsigned)result.rejectSequence);
+                }
+            }
+
+            if (result.success) {
+                // First success in this cycle - stop, no more retries needed.
+                // このサイクルで最初に成功した時点で打ち切り、これ以上再試行しない。
+                break;
+            }
         }
 
-        const float rate =
-            (rangeCount == 0) ? 0.0f : (100.0f * static_cast<float>(rangeOkCount) / static_cast<float>(rangeCount));
+        // Per-cycle bookkeeping (independent of RETRY_MAX==0's degenerate
+        // case, where attemptsThisCycle is always 1). A cycle is "ok" iff
+        // any attempt in it succeeded; a cycle that failed on its first
+        // attempt and then succeeded on a retry counts as "rescued". The
+        // distance is taken from that one successful attempt and added to
+        // `stats` exactly once per cycle, regardless of how many earlier
+        // attempts in the same cycle failed.
+        // サイクル単位の集計 (RETRY_MAX==0 の場合は attemptsThisCycle が常に1
+        // になるだけで同じロジックが成立する)。サイクル内のどれか1回の試行が
+        // 成功していればそのサイクルは成功。最初の試行が失敗し再試行で成功
+        // した場合は「rescued（再試行で救済）」として数える。距離は、同じ
+        // サイクル内で先行する試行が何回失敗していても、成功した1回の試行
+        // からサイクルにつき1回だけ `stats` へ加算する。
+        cycles++;
+        retriesUsed += (attemptsThisCycle - 1);
         if (result.success) {
-            char rslBuf[8];
-            char fpBuf[8];
-            ESP_LOGI(TAG,
-                     "SS_RANGE_STAT count=%lu ok=%lu fail=%lu rate=%.1f%% last=OK seq=%u distance_mm=%ld "
-                     "distance_m=%.3f mean_mm=%.1f std_mm=%.1f n=%lu elapsed_ms=%lu temp=%.1fC clock_ppm=%.2f "
-                     "ipatov_power=%lu rsl_dbm=%s fp_dbm=%s accum=%u rx_seen=%u rx_rej=%u",
-                     (unsigned long)rangeCount, (unsigned long)rangeOkCount, (unsigned long)rangeFailCount, rate,
-                     result.sequence, (long)result.distanceMm, result.distanceM, stats.mean, stats.stddev(),
-                     (unsigned long)stats.count, (unsigned long)result.elapsedMs, dieTempC(), result.clockOffsetPpm,
-                     (unsigned long)result.ipatovPower, fmtDbmQ8(result.rslDbmQ8, rslBuf, sizeof(rslBuf)),
-                     fmtDbmQ8(result.fpDbmQ8, fpBuf, sizeof(fpBuf)), (unsigned)result.rxAccumCount,
-                     (unsigned)result.rxSeen, (unsigned)result.rxRejected);
+            cyclesOk++;
+            if (attemptsThisCycle > 1) {
+                rescued++;
+            }
+            stats.add(result.distanceM * 1000.0f);
         } else {
-            char statusBuf[72];
-            char rslBuf[8];
-            char fpBuf[8];
-            ESP_LOGW(TAG,
-                     "SS_RANGE_STAT count=%lu ok=%lu fail=%lu rate=%.1f%% last=FAIL seq=%u error=%s temp=%.1fC "
-                     "rx_status=0x%08lX [%s] rsl_dbm=%s fp_dbm=%s accum=%u elapsed_ms=%lu rx_seen=%u rx_rej=%u "
-                     "rej_mask=0x%02X rej_len=%u rej_seq=%u",
-                     (unsigned long)rangeCount, (unsigned long)rangeOkCount, (unsigned long)rangeFailCount, rate,
-                     result.sequence, uwb.lastErrorName(), dieTempC(), (unsigned long)result.rxStatus,
-                     rxStatusBits(result.rxStatus, statusBuf, sizeof(statusBuf)),
-                     fmtDbmQ8(result.rslDbmQ8, rslBuf, sizeof(rslBuf)), fmtDbmQ8(result.fpDbmQ8, fpBuf, sizeof(fpBuf)),
-                     (unsigned)result.rxAccumCount, (unsigned long)result.elapsedMs, (unsigned)result.rxSeen,
-                     (unsigned)result.rxRejected, (unsigned)result.rejectMask, (unsigned)result.rejectFrameLen,
-                     (unsigned)result.rejectSequence);
+            cyclesFail++;
+        }
+
+        // Per-cycle success/failure bit string - same mechanism as SEQ64
+        // above, but one bit per cycle (1 = the cycle produced a distance,
+        // 0 = every attempt in it failed) instead of one bit per attempt.
+        // サイクル単位の成否ビット列。SEQ64 と全く同じ仕組みだが、試行単位
+        // ではなくサイクル単位で1ビット（1=そのサイクルは距離を得られた、
+        // 0=サイクル内の全試行が失敗）を記録する。
+        {
+            static char cseqBuf[65];
+            static uint32_t cseqN = 0;
+            cseqBuf[cseqN % 64] = result.success ? '1' : '0';
+            cseqN++;
+            if ((cseqN % 64) == 0) {
+                cseqBuf[64] = '\0';
+                ESP_LOGI(TAG, "CSEQ64 count=%lu bits=%s", (unsigned long)cycles, cseqBuf);
+            }
+        }
+
+        // Emitted unconditionally, even when RETRY_MAX == 0 (in which case
+        // cycles/cyclesOk/cyclesFail track rangeCount/rangeOkCount/
+        // rangeFailCount one-for-one) - keeps the log format uniform across
+        // both configurations.
+        // RETRY_MAX == 0 のとき（cycles/cyclesOk/cyclesFail が rangeCount/
+        // rangeOkCount/rangeFailCount と1対1で一致する）でも無条件に出す -
+        // 両設定でログ形式を揃えるため。
+        if ((cycles % TAG_LOG_INTERVAL) == 0) {
+            const float cycleRate =
+                (cycles == 0) ? 0.0f : (100.0f * static_cast<float>(cyclesOk) / static_cast<float>(cycles));
+            ESP_LOGI(TAG, "SS_CYCLE_STAT cycles=%lu ok=%lu fail=%lu rate=%.1f%% retries=%lu rescued=%lu",
+                     (unsigned long)cycles, (unsigned long)cyclesOk, (unsigned long)cyclesFail, cycleRate,
+                     (unsigned long)retriesUsed, (unsigned long)rescued);
         }
     }
 }
