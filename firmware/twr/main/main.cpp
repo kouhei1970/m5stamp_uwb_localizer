@@ -1229,6 +1229,15 @@ static void runRole(uwb::Qm33120& uwb)
 
 static constexpr uint32_t RANGE_INTERVAL_MS = 200;
 static constexpr uint32_t TAG_LOG_INTERVAL   = 10;
+// Extra immediate retries after a failed exchange, within the same ranging
+// cycle (0 = off, identical to the behaviour before this option existed).
+// Same constant/semantics as the SS-TWR TAG loop above; one exchange here
+// is Poll / Response / Final [/ Result] instead of just Poll / Response.
+// 失敗した交換の後に、同じ測距サイクル内で即座に行う追加再試行の回数
+// (0 = 無効。このオプションが追加される前と同じ挙動)。上のSS-TWR TAGループと
+// 同じ定数・同じ意味。ここでの1回の交換は Poll / Response だけでなく
+// Final [/ Result] を含む。
+static constexpr uint32_t RETRY_MAX          = CONFIG_UWB_TWR_RETRY_MAX;
 
 static constexpr uint32_t RX_TIMEOUT_UUS               = 3000;
 static constexpr uint32_t RANGE_HOST_TIMEOUT_MS         = 10;
@@ -1273,6 +1282,25 @@ static void runRole(uwb::Qm33120& uwb)
     uint32_t rangeCount = 0, rangeOkCount = 0, rangeFailCount = 0;
     DistanceStats stats;
 
+    // Per-cycle counters (CONFIG_UWB_TWR_RETRY_MAX). Identical bookkeeping
+    // to the SS-TWR TAG loop above - see its comment for the full
+    // rationale. One cycle = the first attempt of a DS-TWR exchange
+    // (Poll/Response/Final[/Result]) plus any immediate retries it
+    // triggered within the same call to runRole()'s main loop; the loop
+    // still starts one new cycle every RANGE_INTERVAL_MS regardless of how
+    // many attempts the previous cycle used. With RETRY_MAX == 0 a cycle is
+    // always exactly one attempt, so these mirror rangeCount/rangeOkCount/
+    // rangeFailCount above one-for-one.
+    // サイクル単位のカウンタ (CONFIG_UWB_TWR_RETRY_MAX)。上のSS-TWR TAGループと
+    // 全く同じ集計方式 - 詳細な理由はそちらのコメント参照。1サイクル = DS-TWR
+    // 交換 (Poll/Response/Final[/Result]) の最初の試行と、それに続く即時
+    // 再試行をまとめたもの。前サイクルが何回試行を使ったかによらず、新しい
+    // サイクルは RANGE_INTERVAL_MS ごとに始まる。RETRY_MAX == 0 なら1サイクルは
+    // 常にちょうど1試行なので、上の rangeCount/rangeOkCount/rangeFailCount と
+    // 1対1で一致する。
+    uint32_t cycles = 0, cyclesOk = 0, cyclesFail = 0;
+    uint32_t retriesUsed = 0, rescued = 0;
+
     while (1) {
         if ((nowMs() - lastRangeMs) < RANGE_INTERVAL_MS) {
             vTaskDelay(pdMS_TO_TICKS(1));
@@ -1280,34 +1308,127 @@ static void runRole(uwb::Qm33120& uwb)
         }
         lastRangeMs = nowMs();
 
-        // 距離は Anchor(respondDSRange) 側で計算済みのものをそのまま受け取るだけ
-        // （requestDSRange() は再計算しない。cpp:1152-1153 相当）。
-        const uwb::DSRangeResult result = uwb.requestDSRange(makeRangeConfig());
-        rangeCount++;
+        // Ranging cycle: one attempt, plus - when RETRY_MAX > 0 and the
+        // attempt failed - up to RETRY_MAX extra immediate attempts within
+        // the same cycle. Mirrors the SS-TWR TAG loop above exactly,
+        // including why a retry's Poll cannot be confused with a previous
+        // (failed) exchange's Response: Qm33120::requestDSRange() also
+        // draws a fresh sequence number on every call, before it is ever
+        // compared against an incoming frame (uwb_qm33120_twr.cpp: "const
+        // uint8_t pollSeq = ++_impl->tx_sequence;") - there is no separate
+        // sequence counter in main.cpp to manage for this.
+        // 測距サイクル: 1回の試行に加え、RETRY_MAX > 0 かつその試行が失敗した
+        // 場合、同じサイクル内で最大 RETRY_MAX 回まで即座に追加試行する。上の
+        // SS-TWR TAGループと全く同じ仕組み。再試行のPollが直前の(失敗した)
+        // 交換のResponseと取り違えられない理由も同じ: Qm33120::requestDSRange()
+        // も呼ばれるたびに、受信フレームと照合する前に内部の tx_sequence
+        // カウンタをインクリメントする (uwb_qm33120_twr.cpp の "const uint8_t
+        // pollSeq = ++_impl->tx_sequence;")。main.cpp 側で別途管理する
+        // シーケンスカウンタは無い。
+        uwb::DSRangeResult result;
+        uint32_t attemptsThisCycle = 0;
+        for (uint32_t attempt = 0; attempt <= RETRY_MAX; attempt++) {
+            if (attempt > 0) {
+                // Tiny gap before a retry's Poll - same rationale as the
+                // SS-TWR TAG loop above.
+                // 再試行のPoll送信前の小休止 - 理由は上のSS-TWR TAGループと同じ。
+                vTaskDelay(pdMS_TO_TICKS(2));
+            }
+            attemptsThisCycle++;
+
+            // 距離は Anchor(respondDSRange) 側で計算済みのものをそのまま受け取るだけ
+            // （requestDSRange() は再計算しない。cpp:1152-1153 相当）。
+            result = uwb.requestDSRange(makeRangeConfig());
+            rangeCount++;
+            if (result.success) {
+                rangeOkCount++;
+                // Distance accumulation moved to the per-cycle bookkeeping
+                // below, so a rescued cycle (fails then succeeds on a
+                // retry) adds its distance exactly once, not once per
+                // attempt (mirrors the SS-TWR TAG loop above).
+                // 距離の集計は下のサイクル単位の処理へ移した（上のSS-TWR TAG
+                // ループと同じく、再試行で救済されたサイクルでも距離はサイクル
+                // につき1回だけ加算される）。
+            } else {
+                rangeFailCount++;
+            }
+
+            if ((rangeCount % TAG_LOG_INTERVAL) == 10) {
+                const float rate = (rangeCount == 0) ? 0.0f
+                                                      : (100.0f * static_cast<float>(rangeOkCount) /
+                                                         static_cast<float>(rangeCount));
+                if (result.success) {
+                    ESP_LOGI(TAG,
+                             "DS_RANGE_STAT count=%lu ok=%lu fail=%lu rate=%.1f%% last=OK seq=%u distance_mm=%ld "
+                             "distance_m=%.3f mean_mm=%.1f std_mm=%.1f n=%lu elapsed_ms=%lu",
+                             (unsigned long)rangeCount, (unsigned long)rangeOkCount, (unsigned long)rangeFailCount,
+                             rate, result.sequence, (long)result.distanceMm, result.distanceM, stats.mean,
+                             stats.stddev(), (unsigned long)stats.count, (unsigned long)result.elapsedMs);
+                } else {
+                    // elapsed_ms tells which wait timed out (Response wait ends at ~5 ms,
+                    // Result wait at ~9-10 ms); tx_margin_us != 0 means the Final was scheduled.
+                    // elapsed_ms でどの待ちが切れたか（Response 待ち ≈5 ms、Result 待ち ≈9〜10 ms）、
+                    // tx_margin_us が 0 でなければ Final の遅延送信まで進んだことが分かる。
+                    ESP_LOGW(TAG, "DS_RANGE_STAT count=%lu ok=%lu fail=%lu rate=%.1f%% last=FAIL seq=%u error=%s elapsed_ms=%lu tx_margin_us=%ld",
+                             (unsigned long)rangeCount, (unsigned long)rangeOkCount, (unsigned long)rangeFailCount,
+                             rate, result.sequence, uwb.lastErrorName(), (unsigned long)result.elapsedMs,
+                             (long)result.txMarginUs);
+                }
+            }
+
+            if (result.success) {
+                // First success in this cycle - stop, no more retries needed.
+                // このサイクルで最初に成功した時点で打ち切り、これ以上再試行しない。
+                break;
+            }
+        }
+
+        // Per-cycle bookkeeping - identical to the SS-TWR TAG loop above;
+        // see its comment for the full rationale.
+        // サイクル単位の集計 - 上のSS-TWR TAGループと全く同じ（詳細は
+        // そちらのコメント参照）。
+        cycles++;
+        retriesUsed += (attemptsThisCycle - 1);
         if (result.success) {
-            rangeOkCount++;
+            cyclesOk++;
+            if (attemptsThisCycle > 1) {
+                rescued++;
+            }
             stats.add(result.distanceM * 1000.0f);
         } else {
-            rangeFailCount++;
+            cyclesFail++;
         }
 
-        if ((rangeCount % TAG_LOG_INTERVAL) != 0) {
-            continue;
+        // Per-cycle success/failure bit string - same mechanism as CSEQ64
+        // in the SS-TWR TAG loop above (1 = the cycle produced a distance,
+        // 0 = every attempt in it failed).
+        // サイクル単位の成否ビット列 - 上のSS-TWR TAGループの CSEQ64 と全く
+        // 同じ仕組み（1=そのサイクルは距離を得られた、0=サイクル内の全試行が
+        // 失敗）。
+        {
+            static char cseqBuf[65];
+            static uint32_t cseqN = 0;
+            cseqBuf[cseqN % 64] = result.success ? '1' : '0';
+            cseqN++;
+            if ((cseqN % 64) == 0) {
+                cseqBuf[64] = '\0';
+                ESP_LOGI(TAG, "CSEQ64 count=%lu bits=%s", (unsigned long)cycles, cseqBuf);
+            }
         }
 
-        const float rate =
-            (rangeCount == 0) ? 0.0f : (100.0f * static_cast<float>(rangeOkCount) / static_cast<float>(rangeCount));
-        if (result.success) {
-            ESP_LOGI(TAG,
-                     "DS_RANGE_STAT count=%lu ok=%lu fail=%lu rate=%.1f%% last=OK seq=%u distance_mm=%ld "
-                     "distance_m=%.3f mean_mm=%.1f std_mm=%.1f n=%lu elapsed_ms=%lu",
-                     (unsigned long)rangeCount, (unsigned long)rangeOkCount, (unsigned long)rangeFailCount, rate,
-                     result.sequence, (long)result.distanceMm, result.distanceM, stats.mean, stats.stddev(),
-                     (unsigned long)stats.count, (unsigned long)result.elapsedMs);
-        } else {
-            ESP_LOGW(TAG, "DS_RANGE_STAT count=%lu ok=%lu fail=%lu rate=%.1f%% last=FAIL seq=%u error=%s",
-                     (unsigned long)rangeCount, (unsigned long)rangeOkCount, (unsigned long)rangeFailCount, rate,
-                     result.sequence, uwb.lastErrorName());
+        // Emitted unconditionally, even when RETRY_MAX == 0 (in which case
+        // cycles/cyclesOk/cyclesFail track rangeCount/rangeOkCount/
+        // rangeFailCount one-for-one) - keeps the log format uniform across
+        // both configurations (mirrors SS_CYCLE_STAT above).
+        // RETRY_MAX == 0 のとき（cycles/cyclesOk/cyclesFail が rangeCount/
+        // rangeOkCount/rangeFailCount と1対1で一致する）でも無条件に出す -
+        // 両設定でログ形式を揃えるため（上の SS_CYCLE_STAT と同じ）。
+        if ((cycles % TAG_LOG_INTERVAL) == 0) {
+            const float cycleRate =
+                (cycles == 0) ? 0.0f : (100.0f * static_cast<float>(cyclesOk) / static_cast<float>(cycles));
+            ESP_LOGI(TAG, "DS_CYCLE_STAT cycles=%lu ok=%lu fail=%lu rate=%.1f%% retries=%lu rescued=%lu",
+                     (unsigned long)cycles, (unsigned long)cyclesOk, (unsigned long)cyclesFail, cycleRate,
+                     (unsigned long)retriesUsed, (unsigned long)rescued);
         }
     }
 }
@@ -1546,9 +1667,19 @@ static void runRole(uwb::Qm33120& uwb)
     while (1) {
         const uwb::DSResponderResult result = uwb.respondDSRange(makeRangeConfig());
         if (!result.success) {
-            if (result.error == uwb::Error::RxTimeout) {
-                // まだPollが来ていないだけ。原本のANCHOR例と同じく無視して再ループ。
+            if ((result.error == uwb::Error::RxTimeout) && (result.sequence == 0)) {
+                // No Poll yet (sequence is filled only after a Poll was parsed; requester only on
+                // success). Ignore and loop, as the original ANCHOR example does.
+                // まだPollが来ていないだけ（sequence は Poll を解釈した後にだけ入る。requester は成功時のみ）。
+                // 原本のANCHOR例と同じく無視して再ループ。
                 continue;
+            }
+            if (result.error == uwb::Error::RxTimeout) {
+                // Poll was received and answered, but the Final never arrived: a real failure
+                // of the exchange (previously swallowed silently). Log every one.
+                // Poll は受けて応答したのに Final が届かなかった＝交換の実失敗（以前は黙って捨てていた）。
+                ESP_LOGW(TAG, "DS_RESP_STAT stage=final_wait seq=%u requester=0x%04X elapsed_ms=%lu tx_margin_us=%ld",
+                         result.sequence, result.requester, (unsigned long)result.elapsedMs, (long)result.txMarginUs);
             }
             failCount++;
             if ((failCount % ANCHOR_LOG_INTERVAL) == 0) {

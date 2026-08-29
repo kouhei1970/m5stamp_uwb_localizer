@@ -908,6 +908,52 @@ TX power 既定 / 両機 PLL 粗調整コード 0x23 固定 / `UWB_TWR_RETRY_MAX
 向き 4〜6（4〜6%）のような配置では素の成功率が桁で落ちるので、再試行 2 回では足りない。
 PLL 粗調整コードの固定（0x23）は起動時温度依存の暫定策のままで、恒久対策は未実装。
 
+#### 【未解決】DS-TWR は同じ PHY で 0〜23%（2026-08-29 午後〜夕方、ユーザー指示で一時中断）
+
+本番ファーム（`firmware/tag` / `anchor`）の既定は DS-TWR なので、850 kbps / 256 で DS-TWR を採った。
+**SS-TWR が 95% 通る同じ電波条件で、DS-TWR は 0〜23%**（再試行なし。試行: 0/470、22/220、0/220、
+68/300〈周期 150 ms〉、29/141、34/291、0/200）。
+
+観測事実（すべて実機ログ）:
+1. タグの失敗は全件 `RX_TIMEOUT elapsed_ms=6 tx_margin_us=0`＝**Poll を送った後 Response が来ない**
+   （Final の予約まで到達していない）。成功した交換はアンカー側でも距離計算まで完了（1.01〜1.05 m、std 21 mm）。
+2. **起動直後は成功し、その後まとめて死ぬ**: e17 は最初の 22 サイクル成功→以後全滅。周期 150 ms では
+   最初の 50 サイクル 46/50 → 15 秒単位で全滅と復活を繰り返す。
+3. アンカーの全呼び出しログ（`DS_RESP_RET`）で時系列を見ると、**Poll 待ち中の RX_ERROR（受信エラー）
+   1 回を境に、以後 2〜3 秒〜十数秒、アンカーはフレームを一切検出しない**（200 ms 窓が `RX_TIMEOUT
+   seq=0` で空振り続ける。受信エラーすら出ない）。次に RX_ERROR が起きるとその直後から復活する。
+4. 交差試験: **DS タグ + SS アンカー → SS アンカーは 45 秒間フレームを 1 枚も見ない**（不一致フレーム
+   としても記録されない）。**SS タグ + DS アンカー → DS アンカーは SS の Poll を受ける**（不一致 /
+   受信エラーとして記録）。→ 疑いは **DS タグ (`requestDSRange()`) の送信側**、または「タグの Poll が
+   受信側の空白時間にだけ当たる」タイミング。
+5. 否定した仮説: 周期の位相ロック（150 ms でも起きる）、Result の繰り返し送信（回数 1）、
+   フレームフィルタ（未使用）、宛先/PAN（SS と同一）、DS アンカーの受信エラー分岐に SS と同じ
+   `readRxPower()` を足す（11.7%、効果なし。元に戻した）。
+6. コード上、SS と DS の Poll 送信手順は同一（`stopRadioAndClearIoStatus` → PRETOC 0 → rxaftertxdelay →
+   rxtimeout → writetxdata → writetxfctrl → `dwt_starttx(IMMEDIATE|RESPONSE_EXPECTED)`）。
+
+解析エージェントが SDK ソースで確認した事実と、次に打つ実験（`components/qm33120w_sdk/dw3720/dw3720_device.c`）:
+- `dwt_starttx()` の即時送信は HPDWARN を見ず常に成功を返す → タグの「送信成功」は電波が出た証拠にならない。
+- `dwt_forcetrxoff()` はチップが IDLE を自己申告していると **何もしない**（条件付き no-op）→ 呼び出し
+  冒頭の「リセット」は保証ではない。実験: `SYS_STATE_LO` を各 Poll 直前に記録し、健全期と沈黙期で比べる。
+- `requestDSRange()` は要求側で唯一 **遅延送信（`CMD_DTX_W4R`、Final）** を使う。SS 要求側は使わない。
+  実験 A: 沈黙期に各 Poll 直前で `PLL_STATUS` のロックを読む。**実験 B（最有力）: Final の送信を省いて
+  Response 受信で成功扱いにし、それでも沈黙が起きるか**（遅延送信の脚が原因かを分離）。
+- 軽微: `requestDSRange()` の 2 箇所の受信タイムアウト出口が `stopRadioAndClearRxStatus()`（TXFRS を消さない）。
+  実害は無いはずだが `stopRadioAndClearIoStatus()` に揃える。
+
+**現状の判断**: DS-TWR は PHY ではなく状態機械側の問題で、SS-TWR（再試行込みで 99.95%）とは別件。
+本番へ 99% を持ち込む最短路は **本番タグ/アンカーを SS-TWR（`UWB_TAG_METHOD_SS` / `UWB_ANCHOR_METHOD_SS`）
+に切り替え + 850 kbps + 再試行**（SS-TWR の測距精度は `clock_ppm` 補正込みで中央値 1.03 m / std 40 mm）。
+DS-TWR を使うなら上記の実験 B から。
+
+実装済み（本コミット）: DS-TWR タグにも `UWB_TWR_RETRY_MAX` の再試行と `DS_CYCLE_STAT` / `CSEQ64` を追加
+（`tag_ds850_retry2` ビルドあり、未計測）。DS の失敗行に `elapsed_ms` / `tx_margin_us`、アンカーに
+Final 待ちタイムアウトの `stage=final_wait` 行を追加。`tools/serial/twr_stats.py` が DS ログも集計。
+
+**中断時点の書き込み状態**: A（`usbmodem1101`）= `anc_ds_dbg`、B（`usbmodem101`）= `tag_ds_dbg`（DS-TWR /
+850 kbps / 256）。SS の到達構成に戻すには `anc_850_p256` / `tag_retry2`（または `tag_retry4`）を焼く。
+
 #### 現時点の判断（2026-08-29 深夜、ユーザーと合意）—— **翌日午後に覆った（上記【到達】参照）。記録として残す**
 
 **この 2 個体（同一ロット）では、ソフトと設置だけで 99% に届く見込みは薄い。**
