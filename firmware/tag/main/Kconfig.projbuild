@@ -83,6 +83,53 @@ menu "UWB Tag Configuration"
             ポーリングが終わり次第すぐ次の周を始める。下流の消費側の
             想定周期に合わせて意図的に更新レートを抑えたい場合に上げる。
 
+    config UWB_TAG_RETRY_MAX
+        int "1台のアンカーへの測距が失敗したときの即時再試行回数"
+        range 0 4
+        default 2
+        help
+            uwb::SchedulerConfig::retryMax に渡す値。0なら1回試行して失敗
+            したらそのままスキップする（従来の挙動）。1以上にすると、
+            最初の試行が失敗したアンカーに対し、同じ周のうちにこの回数まで
+            再試行する（試行ごとに UWB_TAG_RETRY_DELAY_MS だけ待つ）。1台
+            あたりの最大試行回数は 1+この値 になる。
+
+            実測根拠（firmware/twr、UWB_TWR_RETRY_MAX=2、
+            docs/HANDOFF.md §0-C「再試行系列」「再試行の待ち時間」）:
+            850kbpsでSS-TWR/DS-TWRとも周期成功率99.9%まで上がった
+            （DS-TWRはUWB_TAG_RETRY_DELAY_MSを適切な値にした場合）。
+
+            サイクル時間への影響（最悪ケース、1台あたり）: 最大
+            (1+この値) × (ホストのタイムアウト + UWB_TAG_RETRY_DELAY_MS)。
+            既定値（この値=2、DS-TWRのホストタイムアウト約20ms、
+            RETRY_DELAY_MS=10ms）なら 3 × 30ms = 90ms/台。ただし再試行が
+            発生するサイクル自体が全体の1〜2割程度しかないため、平均への
+            影響は+1.2ms/アンカー程度にとどまる（同節の実測）。
+
+    config UWB_TAG_RETRY_DELAY_MS
+        int "再試行のPoll送信前に追加で待つ時間 [ms]"
+        range 0 100
+        default 10 if UWB_TAG_METHOD_DS
+        default 2
+        help
+            uwb::SchedulerConfig::retryDelayMs に渡す値。
+            UWB_TAG_RETRY_MAX=0 のときは使われない。
+
+            DS-TWRでは**10ms以上が必須**: アンカーは自身のResponse送信後、
+            次のFinalを待つ窓（850kbps/256・PollingBothプリセットで
+            Response遅延3000UUS + W4R（Wait-for-Response）1500UUS +
+            RXタイムアウト3000UUS、合わせてPoll受信からおよそ+8.2msまで）の
+            中にいる間は再試行のPollを聞いていない。即時再試行（0ms）だと
+            2回目の試行の失敗率が39〜44%だったのに対し、10ms待つと12%まで
+            下がり、周期成功率は96%台から99.9〜100%へ上がった
+            （docs/HANDOFF.md §0-C「再試行の待ち時間」e37〜e41、
+            UWB_TWR_RETRY_MAX=2実測）。
+
+            SS-TWRでは待ちは不要: Response待ち失敗の時点でアンカーは既に
+            Poll待ちへ戻っているため、2msの短い間隔だけで2回目の失敗率
+            7.5%（独立試行相当。同節e34）。既定を2msにしてあるのはこの
+            実測に合わせたもの。
+
     config UWB_TAG_STATS_INTERVAL_MS
         int "測距成功率(\"type\":\"stats\")行を出す間隔 [ms]（0で出力しない）"
         range 0 60000

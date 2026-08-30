@@ -453,16 +453,21 @@ static void printFixLine(double t, uint32_t cycleMs, const uwb::AnchorTable& tab
 /**
  * @brief 約1秒ごとに出す "type":"stats" 行（タスクE、docs/HANDOFF.md §5）。
  *
- * uwb::AnchorStats{attempts,successes,successRate()}（uwb_ranging_types.hpp）
- * は実装済みだが接続先が無かったので、ここで RangingScheduler::stats() を
- * JSON Lines 出力へつなぐ。毎周期(約31Hz)出る "fix" 行に足すとログが太る
- * ため、あえて別行・別間隔にする（決定事項。呼び出し側で
- * CONFIG_UWB_TAG_STATS_INTERVAL_MS ごとに間引いて呼ぶこと）。
+ * uwb::AnchorStats{attempts,successes,retries,rescued,successRate()}
+ * （uwb_ranging_types.hpp）は実装済みだが接続先が無かったので、ここで
+ * RangingScheduler::stats() を JSON Lines 出力へつなぐ。毎周期(約31Hz)出る
+ * "fix" 行に足すとログが太るため、あえて別行・別間隔にする（決定事項。
+ * 呼び出し側で CONFIG_UWB_TAG_STATS_INTERVAL_MS ごとに間引いて呼ぶこと）。
  * JsonLinesHal は未知の type を "other" として黙って読み捨てる仕様なので
  * （本ファイル冒頭コメント参照）、既存のPython可視化との互換性は保たれる。
  *
  * その周期に測ったものだけでなく、**登録されている全アンカー**
  * （無効化されているものも含む。stats_[i] は attempts=0 のまま）を出す。
+ *
+ * retries/rescued は再試行（CONFIG_UWB_TAG_RETRY_MAX/
+ * CONFIG_UWB_TAG_RETRY_DELAY_MS、docs/HANDOFF.md §0-C「再試行の待ち時間」）
+ * の内訳: retriesは無線試行としての再試行の総回数、rescuedは最初の試行が
+ * 失敗し再試行のいずれかで成功したサイクル数（succの内数）。
  */
 static void printStatsLine(double t, const uwb::AnchorTable& table, const uwb::RangingScheduler& scheduler,
                             uint32_t cycleMs)
@@ -479,9 +484,11 @@ static void printStatsLine(double t, const uwb::AnchorTable& table, const uwb::R
         const uwb::AnchorStats& s = scheduler.stats(i);
         char id[8];
         formatAnchorId(table.entry(i).short_addr, id, sizeof(id));
-        jsonAppend(buf, JSON_BUF_SIZE, &off, "%s{\"a\":\"%s\",\"att\":%lu,\"succ\":%lu,\"rate\":%.4f}",
+        jsonAppend(buf, JSON_BUF_SIZE, &off,
+                   "%s{\"a\":\"%s\",\"att\":%lu,\"succ\":%lu,\"rate\":%.4f,\"retries\":%lu,\"rescued\":%lu}",
                    (i == 0) ? "" : ",", id, static_cast<unsigned long>(s.attempts),
-                   static_cast<unsigned long>(s.successes), static_cast<double>(s.successRate()));
+                   static_cast<unsigned long>(s.successes), static_cast<double>(s.successRate()),
+                   static_cast<unsigned long>(s.retries), static_cast<unsigned long>(s.rescued));
     }
     jsonAppendClose(buf, JSON_BUF_SIZE, &off); // 【修正7】末尾の閉じは必ず書く（jsonAppendClose() 冒頭コメント参照）
     std::fputs(buf, stdout);
@@ -612,6 +619,17 @@ extern "C" void app_main(void)
     schedCfg.tagShortAddr         = TAG_SHORT_ADDR;
     schedCfg.perAnchorIntervalMs = CONFIG_UWB_TAG_PER_ANCHOR_INTERVAL_MS;
     schedCfg.cycleIntervalMs      = CONFIG_UWB_TAG_CYCLE_INTERVAL_MS;
+    // 失敗したアンカーへの即時再試行（docs/HANDOFF.md §0-C「再試行の待ち時間」）。
+    // DS-TWRはretryDelayMsに≥10msが必須（既定はKconfigのdefault 10 if
+    // UWB_TAG_METHOD_DS）。根拠はKconfig.projbuildのUWB_TAG_RETRY_DELAY_MS
+    // ヘルプとSchedulerConfig::retryDelayMsのフィールドコメント参照。
+    // Retry a failed anchor immediately within the same cycle
+    // (docs/HANDOFF.md §0-C "retry wait time"). DS-TWR needs
+    // retryDelayMs >= 10ms (Kconfig defaults to 10 for UWB_TAG_METHOD_DS).
+    // See Kconfig.projbuild's UWB_TAG_RETRY_DELAY_MS help and the
+    // SchedulerConfig::retryDelayMs field comment for the rationale.
+    schedCfg.retryMax      = CONFIG_UWB_TAG_RETRY_MAX;
+    schedCfg.retryDelayMs = CONFIG_UWB_TAG_RETRY_DELAY_MS;
     // ssDefaults/dsDefaultsは構造体既定値(=PollingBothの値と
     // 完全一致。docs/TIMING_PRESETS.md §2)のまま個別上書きされていないので、
     // 実効プリセットがPollingBoth(明示選択時、またはIRQ線が死んでいて

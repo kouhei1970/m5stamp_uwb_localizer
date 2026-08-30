@@ -38,6 +38,32 @@ struct SchedulerConfig {
      *  台数と方式(SS/DS)を調整する運用を想定。 */
     uint32_t cycleIntervalMs = 0;
 
+    /** 1台のアンカーへの測距が失敗したとき、同じ周内で即座に許す追加試行の
+     *  回数。0なら1回試行して失敗ならそのままスキップする（従来の挙動）。
+     *  1台あたりの最大試行回数は 1+retryMax になる。firmware/twr での実測
+     *  （UWB_TWR_RETRY_MAX=2、docs/HANDOFF.md §0-C「再試行系列」「再試行の
+     *  待ち時間」）でSS-TWR/DS-TWRとも周期成功率99.9%まで上がることを
+     *  確認済み。 */
+    uint8_t retryMax = 0;
+
+    /** 再試行1回ごとに、そのPoll送信前に待つ時間 [ms]。retryMax==0のときは
+     *  使われない。
+     *
+     *  DS-TWRでは**10ms以上が必須**: アンカーは自身のResponse送信後、次の
+     *  Finalを待つ窓（850kbps/256・PollingBothプリセットでResponse遅延
+     *  3000UUS + W4R（Wait-for-Response）1500UUS + RXタイムアウト3000UUS、
+     *  合計するとPoll受信からおよそ+8.2msまで）の中にいる間、再試行の
+     *  Pollを聞いていない（アンカー側は`final_wait error=RX_ERROR`として
+     *  記録する）。即時再試行（0ms、固定間隔なし）だと2回目の試行の失敗率
+     *  が39〜44%だったのに対し、10ms待つと12%まで下がり、周期成功率は
+     *  96%台から99.9〜100%まで上がった（docs/HANDOFF.md §0-C「再試行の
+     *  待ち時間」e37〜e41、RETRY_MAX=2実測）。
+     *
+     *  SS-TWRでは待ちは不要: Response待ち失敗の時点でアンカーは既にPoll
+     *  待ちへ戻っているため、2msの短い間隔だけで2回目の失敗率7.5%
+     *  （独立試行相当。同節e34）。 */
+    uint32_t retryDelayMs = 0;
+
     /** SS-TWR使用時の個別パラメータの既定値。initiatorAddress/responderAddress/
      *  panId は runCycle() が毎回アンカーごとに上書きするので、ここでは
      *  タイムアウト等のみ意味を持つ。 */
@@ -51,10 +77,14 @@ struct SchedulerConfig {
 /**
  * @brief アンカー登録テーブルを順にポーリングする測距スケジューラ。
  *
- * 欠測（応答なし/タイムアウト）は常態として扱う: runCycle() は失敗した
- * アンカーをスキップして次へ進むだけで、エラー扱いにはしない。統計
- * （stats()）で成功率を、lastCycleMs() で1周の所要時間を確認できる
- * （R6: 更新レート設計の実測根拠）。
+ * 欠測（応答なし/タイムアウト）は常態として扱う: 最初の試行が失敗した
+ * アンカーは、cfg_.retryMax回まで同じ周内で即座に再試行し（各試行の前に
+ * cfg_.retryDelayMsだけ待つ。DS-TWRでの根拠はSchedulerConfig::retryDelayMs
+ * のフィールドコメント参照）、それでも失敗したらそのままスキップして次へ
+ * 進むだけで、エラー扱いにはしない。統計（stats()）で成功率・再試行回数・
+ * 再試行で救済された回数を、lastCycleMs() で1周の所要時間を確認できる
+ * （R6: 更新レート設計の実測根拠。再試行に要した時間もlastCycleMs()に
+ * 含まれる — rangeOne()内の待ち・再試行は周の内側で起きるため）。
  */
 class RangingScheduler {
 public:
@@ -99,8 +129,11 @@ private:
     uint32_t lastCycleStartMs_  = 0;
     bool hasLastCycleStart_      = false;
 
-    /** 1台ぶんの測距を実行し、RangingSample を埋める。 */
-    RangingSample rangeOne(size_t anchorIndex);
+    /** 1台ぶんの測距を実行し、RangingSample を埋める。cfg_.retryMax回までは
+     *  内部で再試行し（cfg_.retryDelayMsぶん待ってから）、最初に成功した
+     *  時点で打ち切る。実際に使った試行回数（1以上、再試行なしなら1）を
+     *  attemptsUsed へ書き戻す。 */
+    RangingSample rangeOne(size_t anchorIndex, uint32_t& attemptsUsed);
 };
 
 } // namespace uwb

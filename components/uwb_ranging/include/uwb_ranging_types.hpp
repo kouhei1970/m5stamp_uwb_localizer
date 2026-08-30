@@ -62,10 +62,26 @@ struct RangingSample {
     int64_t t_us = 0;
 };
 
-/** 1台ぶんの測距成功率統計。 */
+/**
+ * @brief 1台ぶんの測距成功率統計。
+ *
+ * attempts/successes は「サイクル」単位で数える（1回の runCycle() 呼び出しで
+ * このアンカーへ測距を試みたら attempts が1増える。内部で何回再試行しても
+ * サイクルとしては1のままで、既存の「周期成功率」の意味を保つ）。個々の
+ * 無線試行（再試行込み）の回数を知りたい場合は attempts + retries を見る。
+ */
 struct AnchorStats {
-    uint32_t attempts  = 0; //!< スケジューラがこのアンカーへ測距を試みた回数
-    uint32_t successes = 0; //!< うち成功した回数
+    uint32_t attempts  = 0; //!< スケジューラがこのアンカーへ測距を試みたサイクル数
+                             //!< （runCycle() 1回につき最大1増える。再試行の回数は含まない）
+    uint32_t successes = 0; //!< うち成功したサイクル数（再試行で救済された分も含む）
+
+    /** 最初の試行が失敗した後、追加で行った再試行（無線試行）の総回数。
+     *  1サイクルにつき0〜cfg_.retryMax（SchedulerConfig::retryMax）。 */
+    uint32_t retries = 0;
+
+    /** 最初の試行は失敗したが、再試行のいずれかで成功したサイクル数
+     *  （attempts/successes の内数）。 */
+    uint32_t rescued = 0;
 
     /** 成功率 [0,1]。attempts==0 のときは 0 を返す。 */
     float successRate() const

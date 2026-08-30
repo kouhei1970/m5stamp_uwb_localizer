@@ -1159,16 +1159,24 @@ W (xxx) uwb_tag: dim=2 (z_fixed=1.200m) へフォールバックしました
 #### `"type":"stats"` — 約 1 秒ごと。アンカーごとの成功率
 
 ```json
-{"v":1,"type":"stats","t":13.002,"tag":"tag0","cycle_ms":210,"anchors":[{"a":"A0002","att":31,"succ":30,"rate":0.9677}, ...]}
+{"v":1,"type":"stats","t":13.002,"tag":"tag0","cycle_ms":210,"anchors":[{"a":"A0002","att":31,"succ":30,"rate":0.9677,"retries":3,"rescued":2}, ...]}
 ```
 
 | フィールド | 意味 | 見かた |
 |---|---|---|
-| `att` / `succ` | 測距の試行回数 / 成功回数 | |
+| `att` / `succ` | 測距の試行回数（サイクル単位。1周でこのアンカーを試みたら1） / 成功回数 | |
 | **`rate`** | 成功率 | **特定のアンカーだけ低いなら、そのアンカーの設置（NLOS・向き・距離）を疑う。** 全台低いならタイミングプリセットの不一致や SPI を疑う |
+| `retries` | 最初の試行が失敗した後に行った無線再試行の総回数 | 頻発するなら `CONFIG_UWB_TAG_RETRY_MAX` / `CONFIG_UWB_TAG_RETRY_DELAY_MS` の見直しを検討 |
+| `rescued` | 最初の試行は失敗したが再試行で成功したサイクル数（`succ` の内数） | `att` に対する比率が高いなら、素の（再試行なしの）成功率が低いということ |
 
 **アンカーテーブルを差し替える（`anchor set` → `save`）と統計はリセットされます。**
 間隔は `menuconfig` → `UWB Tag Configuration` → `CONFIG_UWB_TAG_STATS_INTERVAL_MS`。
+
+失敗したアンカーへの即時再試行は `menuconfig` → `UWB Tag Configuration` →
+`CONFIG_UWB_TAG_RETRY_MAX`（既定2回） / `CONFIG_UWB_TAG_RETRY_DELAY_MS`
+（DS-TWR既定10ms、SS-TWR既定2ms）で設定する。DS-TWRで10ms未満にすると、
+アンカーが自身のFinal待ち窓の中で再試行のPollを聞き逃し、2回目の試行の
+失敗率が跳ね上がる（実測根拠は `docs/HANDOFF.md` §0-C「再試行の待ち時間」）。
 
 > Lv3（EKF、移動体向けの平滑化）は既定で無効です。有効にすると `solve_us_lv3` と
 > `"lv3":{...}` が増えます（`menuconfig` → `UWB Tag Configuration` → 毎周期 Lv3 EKF も呼ぶ）。
