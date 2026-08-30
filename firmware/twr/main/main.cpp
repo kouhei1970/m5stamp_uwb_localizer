@@ -1064,6 +1064,31 @@ static void runRole(uwb::Qm33120& uwb)
                 // 再試行のPoll送信前の小休止。直前の(失敗した)交換で受信機が
                 // アイドルに戻ってから、ANCHORが再アームする時間を確保する。
                 vTaskDelay(pdMS_TO_TICKS(2));
+#if CONFIG_UWB_TWR_RETRY_DELAY_MS > 0
+                // Diagnostic/tuning: additional delay on top of the fixed
+                // 2ms gap above, before this retry's Poll. Same knob as the
+                // DS-TWR TAG loop below, applied here for parity - the
+                // measured rationale (an immediate retry landing while the
+                // ANCHOR is still inside its own Final-wait window and not
+                // listening for Polls) is a DS-TWR-specific mechanism (see
+                // the DS-TWR TAG loop's comment and Kconfig.projbuild
+                // UWB_TWR_RETRY_DELAY_MS); SS-TWR's ANCHOR has no such
+                // Final-wait window, but this delay is harmless here too
+                // and lets an SS-TWR counter-test use the same setting on
+                // both TAG loops. Does not affect the ranging cycle period
+                // (UWB_TWR_RANGE_INTERVAL_MS above).
+                // 診断/調整用: 上の固定2msの小休止に追加する遅延。下の
+                // DS-TWR TAGループと同じオプションを、対称性のためこちらにも
+                // 適用する - 実測の根拠（即座の再試行がANCHOR自身のFinal
+                // 待ち窓の中に飛んでいき、ANCHORがPollを聞いていない状態に
+                // なる）はDS-TWR固有の仕組み（詳細は下のDS-TWR TAGループの
+                // コメントとKconfig.projbuildのUWB_TWR_RETRY_DELAY_MS参照）。
+                // SS-TWRのANCHORにはこのFinal待ち窓自体が無いが、ここに
+                // 遅延を入れても害はなく、SS-TWRの切り分けテストでも両
+                // TAGループに同じ設定を使える。測距サイクルの周期
+                // （上のUWB_TWR_RANGE_INTERVAL_MS）には影響しない。
+                vTaskDelay(pdMS_TO_TICKS(CONFIG_UWB_TWR_RETRY_DELAY_MS));
+#endif
             }
             attemptsThisCycle++;
 
@@ -1119,7 +1144,17 @@ static void runRole(uwb::Qm33120& uwb)
             }
 #endif
 
-            if ((rangeCount % TAG_LOG_INTERVAL) == 0) {
+            // 診断: UWB_TWR_DIAG_LOG_EVERY_FAIL=y なら間引きを待たず失敗を毎回
+            // ログに出す（既定nはこのオプション追加前と同じ、10回に1回のみ）。
+            // Diagnostic: with UWB_TWR_DIAG_LOG_EVERY_FAIL=y, log every
+            // failure without waiting for the periodic interval (default n
+            // is unchanged from before this option existed - every 10th).
+#if CONFIG_UWB_TWR_DIAG_LOG_EVERY_FAIL
+            const bool logThisAttempt = ((rangeCount % TAG_LOG_INTERVAL) == 0) || !result.success;
+#else
+            const bool logThisAttempt = (rangeCount % TAG_LOG_INTERVAL) == 0;
+#endif
+            if (logThisAttempt) {
                 const float rate = (rangeCount == 0) ? 0.0f
                                                       : (100.0f * static_cast<float>(rangeOkCount) /
                                                          static_cast<float>(rangeCount));
@@ -1141,12 +1176,18 @@ static void runRole(uwb::Qm33120& uwb)
                     char statusBuf[72];
                     char rslBuf[8];
                     char fpBuf[8];
+                    // attempt=: 0=サイクルの最初の試行、1..=再試行
+                    // (UWB_TWR_RETRY_MAX/UWB_TWR_RETRY_DELAY_MS参照)。
+                    // attempt=: 0 = the cycle's first attempt, 1.. = retries
+                    // (see UWB_TWR_RETRY_MAX/UWB_TWR_RETRY_DELAY_MS).
                     ESP_LOGW(TAG,
-                             "SS_RANGE_STAT count=%lu ok=%lu fail=%lu rate=%.1f%% last=FAIL seq=%u error=%s temp=%.1fC "
+                             "SS_RANGE_STAT count=%lu ok=%lu fail=%lu rate=%.1f%% last=FAIL seq=%u attempt=%u "
+                             "error=%s temp=%.1fC "
                              "rx_status=0x%08lX [%s] rsl_dbm=%s fp_dbm=%s accum=%u elapsed_ms=%lu rx_seen=%u rx_rej=%u "
                              "rej_mask=0x%02X rej_len=%u rej_seq=%u",
                              (unsigned long)rangeCount, (unsigned long)rangeOkCount, (unsigned long)rangeFailCount,
-                             rate, result.sequence, uwb.lastErrorName(), dieTempC(), (unsigned long)result.rxStatus,
+                             rate, result.sequence, (unsigned)attempt, uwb.lastErrorName(), dieTempC(),
+                             (unsigned long)result.rxStatus,
                              rxStatusBits(result.rxStatus, statusBuf, sizeof(statusBuf)),
                              fmtDbmQ8(result.rslDbmQ8, rslBuf, sizeof(rslBuf)),
                              fmtDbmQ8(result.fpDbmQ8, fpBuf, sizeof(fpBuf)), (unsigned)result.rxAccumCount,
@@ -1294,6 +1335,36 @@ static uwb::DSRangeConfig makeRangeConfig()
     // downgraded at runtime because the IRQ line is dead) - the Kconfig
     // default is BothIrq, for which it does change the values.
     uwb::applyTimingProfile(range, g_effectiveTimingProfile);
+#if CONFIG_UWB_TWR_DIAG_FINAL_TX_DELAY_UUS > 0
+    // Diagnostic: override the Final delayed-TX offset, applied AFTER
+    // applyTimingProfile() above so it wins over whichever UWB_TIMING_PROFILE
+    // preset ended up effective. DS TAG only (see Kconfig.projbuild
+    // UWB_TWR_DIAG_FINAL_TX_DELAY_UUS); the ANCHOR's Final RX window
+    // (finalRxAfterResponseTxDelayUus) is unaffected by this option, so an
+    // override below 1500 is expected to make the ANCHOR miss the Final.
+    // 診断: Final の遅延送信オフセットを上書きする。上の applyTimingProfile()
+    // の後に適用するので、実行時に有効な UWB_TIMING_PROFILE プリセットが
+    // 何であってもこちらが勝つ。DS TAG限定（Kconfig.projbuild の
+    // UWB_TWR_DIAG_FINAL_TX_DELAY_UUS 参照）。ANCHOR側のFinal受信窓
+    // （finalRxAfterResponseTxDelayUus）はこのオプションでは変わらないため、
+    // 1500未満に下げるとANCHORがFinalを取りこぼすはず。
+    range.finalTxDelayUus = CONFIG_UWB_TWR_DIAG_FINAL_TX_DELAY_UUS;
+#endif
+#if CONFIG_UWB_TWR_DIAG_DS_HOST_TIMEOUT_MS > 0
+    // Diagnostic: override hostTimeoutMs (the host-side polling backstop
+    // used by requestDSRange() while waiting for Response/Final/Result),
+    // applied AFTER applyTimingProfile() above. Applies to BOTH DS TAG and
+    // DS ANCHOR makeRangeConfig()s (see Kconfig.projbuild
+    // UWB_TWR_DIAG_DS_HOST_TIMEOUT_MS); this is the TAG half of that pair,
+    // the ANCHOR half is in the ANCHOR block's makeRangeConfig() below.
+    // 診断: hostTimeoutMs（requestDSRange()がResponse/Final/結果フレームを
+    // 待つ間に使うホスト側ポーリング上限）を上書きする。上の
+    // applyTimingProfile()の後に適用する。DS TAG・DS ANCHOR両方の
+    // makeRangeConfig()に適用される（Kconfig.projbuild の
+    // UWB_TWR_DIAG_DS_HOST_TIMEOUT_MS 参照）。これはそのうちのTAG側
+    // （ANCHOR側は下のANCHORブロックのmakeRangeConfig()にある）。
+    range.hostTimeoutMs = CONFIG_UWB_TWR_DIAG_DS_HOST_TIMEOUT_MS;
+#endif
     return range;
 }
 
@@ -1354,6 +1425,28 @@ static void runRole(uwb::Qm33120& uwb)
                 // SS-TWR TAG loop above.
                 // 再試行のPoll送信前の小休止 - 理由は上のSS-TWR TAGループと同じ。
                 vTaskDelay(pdMS_TO_TICKS(2));
+#if CONFIG_UWB_TWR_RETRY_DELAY_MS > 0
+                // Diagnostic/tuning: additional delay so the ANCHOR's own
+                // Final-wait window (respondDSRange() keeps listening for a
+                // Final for several ms after it already answered this same
+                // Poll with a Response) has time to expire and the ANCHOR to
+                // return to Poll-wait before this retry's Poll goes out.
+                // Measured on the bench: 2nd-attempt (1st retry) failure
+                // rate 44% vs 10% for the 1st attempt (DS-TWR, 850kbps) -
+                // see Kconfig.projbuild UWB_TWR_RETRY_DELAY_MS for the full
+                // rationale. Does not affect the ranging cycle period
+                // (UWB_TWR_RANGE_INTERVAL_MS above).
+                // 診断/調整用: 再試行のPollを送る前に、ANCHOR自身のFinal待ち窓
+                // （respondDSRange()は同じPollに既にResponseで応答済みでも、
+                // その後さらに数msFinalを待ち続ける）が終わってPoll待ちへ
+                // 戻る時間を確保するための追加遅延。実機測定: 2回目の試行
+                // （1回目の再試行）の失敗率は44%で、1回目の試行の10%
+                // （DS-TWR, 850kbps）より大幅に高かった - 詳しい根拠は
+                // Kconfig.projbuild の UWB_TWR_RETRY_DELAY_MS 参照。測距
+                // サイクルの周期（上のUWB_TWR_RANGE_INTERVAL_MS）には
+                // 影響しない。
+                vTaskDelay(pdMS_TO_TICKS(CONFIG_UWB_TWR_RETRY_DELAY_MS));
+#endif
             }
             attemptsThisCycle++;
 
@@ -1383,9 +1476,20 @@ static void runRole(uwb::Qm33120& uwb)
             // Additionally log every failure whose stage is not
             // ResponseWait (rare Final/Result-stage failures) - keep the
             // every-10th rule for the rest.
+            //
+            // 診断: UWB_TWR_DIAG_LOG_EVERY_FAIL=y なら上のResponseWait例外を
+            // 包含して広げ、段階を問わず失敗を毎回ログに出す（既定nは上の
+            // 従来ルールのまま）。
+            // Diagnostic: with UWB_TWR_DIAG_LOG_EVERY_FAIL=y, widen the
+            // ResponseWait exception above to log every failure regardless
+            // of stage (default n keeps the rule above unchanged).
+#if CONFIG_UWB_TWR_DIAG_LOG_EVERY_FAIL
+            const bool logThisAttempt = ((rangeCount % TAG_LOG_INTERVAL) == 0) || !result.success;
+#else
             const bool logThisAttempt =
                 ((rangeCount % TAG_LOG_INTERVAL) == 0) ||
                 (!result.success && (result.stage != uwb::DSStage::ResponseWait));
+#endif
             if (logThisAttempt) {
                 const float rate = (rangeCount == 0) ? 0.0f
                                                       : (100.0f * static_cast<float>(rangeOkCount) /
@@ -1404,12 +1508,18 @@ static void runRole(uwb::Qm33120& uwb)
                     // tx_margin_us が 0 でなければ Final の遅延送信まで進んだことが分かる。
                     // stage/rx_status/rx_seen/rx_rej/wedged は2026-08-29 DS-TWR原因特定で追加
                     // (docs/HANDOFF.md §0-C、DSRangeResult のフィールドコメント参照)。
+                    // attempt=: 0=サイクルの最初の試行、1..=再試行
+                    // (UWB_TWR_RETRY_MAX/UWB_TWR_RETRY_DELAY_MS参照)。
+                    // attempt=: 0 = the cycle's first attempt, 1.. = retries
+                    // (see UWB_TWR_RETRY_MAX/UWB_TWR_RETRY_DELAY_MS).
                     ESP_LOGW(TAG,
-                             "DS_RANGE_STAT count=%lu ok=%lu fail=%lu rate=%.1f%% last=FAIL seq=%u error=%s "
+                             "DS_RANGE_STAT count=%lu ok=%lu fail=%lu rate=%.1f%% last=FAIL seq=%u attempt=%u "
+                             "error=%s "
                              "elapsed_ms=%lu tx_margin_us=%ld stage=%s rx_status=0x%08lX rx_seen=%u rx_rej=%u "
                              "wedged=%u",
                              (unsigned long)rangeCount, (unsigned long)rangeOkCount, (unsigned long)rangeFailCount,
-                             rate, result.sequence, uwb.lastErrorName(), (unsigned long)result.elapsedMs,
+                             rate, result.sequence, (unsigned)attempt, uwb.lastErrorName(),
+                             (unsigned long)result.elapsedMs,
                              (long)result.txMarginUs, uwb::dsStageName(result.stage),
                              (unsigned long)result.rxStatus, (unsigned)result.rxSeen, (unsigned)result.rxRejected,
                              (unsigned)result.txWedged);
@@ -1721,6 +1831,37 @@ static uwb::DSRangeConfig makeRangeConfig()
     // downgraded at runtime because the IRQ line is dead) - the Kconfig
     // default is BothIrq, for which it does change the values.
     uwb::applyTimingProfile(range, g_effectiveTimingProfile);
+#if CONFIG_UWB_TWR_DIAG_FINAL_RX_AFTER_RESP_TX_DELAY_UUS > 0
+    // Diagnostic: override the Final-frame RX-after-Response-TX delay (when
+    // the ANCHOR's Final RX window opens, measured from its own Response
+    // TX), applied AFTER applyTimingProfile() above so it wins over
+    // whichever UWB_TIMING_PROFILE preset ended up effective. DS ANCHOR
+    // only (see Kconfig.projbuild
+    // UWB_TWR_DIAG_FINAL_RX_AFTER_RESP_TX_DELAY_UUS); does not touch the
+    // TAG's finalTxDelayUus.
+    // 診断: Final受信窓（自身のResponse送信を基準に、いつFinal受信を
+    // 開始するか）を上書きする。上のapplyTimingProfile()の後に適用する
+    // ので、実行時に有効なUWB_TIMING_PROFILEプリセットが何であっても
+    // こちらが勝つ。DS ANCHOR限定（Kconfig.projbuild の
+    // UWB_TWR_DIAG_FINAL_RX_AFTER_RESP_TX_DELAY_UUS 参照）。TAG側の
+    // finalTxDelayUusには触れない。
+    range.finalRxAfterResponseTxDelayUus = CONFIG_UWB_TWR_DIAG_FINAL_RX_AFTER_RESP_TX_DELAY_UUS;
+#endif
+#if CONFIG_UWB_TWR_DIAG_DS_HOST_TIMEOUT_MS > 0
+    // Diagnostic: override hostTimeoutMs (the host-side polling backstop
+    // used by respondDSRange()'s Final-wait loop), applied AFTER
+    // applyTimingProfile() above. Applies to BOTH DS TAG and DS ANCHOR
+    // makeRangeConfig()s (see Kconfig.projbuild
+    // UWB_TWR_DIAG_DS_HOST_TIMEOUT_MS); this is the ANCHOR half of that
+    // pair, the TAG half is in the TAG block's makeRangeConfig() above.
+    // 診断: hostTimeoutMs（respondDSRange()のFinal待ちループが使う
+    // ホスト側ポーリング上限）を上書きする。上のapplyTimingProfile()の
+    // 後に適用する。DS TAG・DS ANCHOR両方のmakeRangeConfig()に適用される
+    // （Kconfig.projbuild の UWB_TWR_DIAG_DS_HOST_TIMEOUT_MS 参照）。
+    // これはそのうちのANCHOR側（TAG側は上のTAGブロックの
+    // makeRangeConfig()にある）。
+    range.hostTimeoutMs = CONFIG_UWB_TWR_DIAG_DS_HOST_TIMEOUT_MS;
+#endif
     // 【修正2】SS-TWR ANCHORブロック(makeRangeConfig()冒頭コメント参照)と
     // 同じ理由・同じ扱いでPoll待ちのホストタイムアウトを上書きできるように
     // する(respondDSRange()のPoll待ちループが使う。Final待ちは
@@ -1760,20 +1901,29 @@ static void runRole(uwb::Qm33120& uwb)
                 // 原本のANCHOR例と同じく無視して再ループ。
                 continue;
             }
-            if (result.error == uwb::Error::RxTimeout) {
-                // Poll was received and answered, but the Final never arrived: a real failure
-                // of the exchange (previously swallowed silently). Log every one.
-                // Poll は受けて応答したのに Final が届かなかった＝交換の実失敗（以前は黙って捨てていた）。
-                // stage/rx_status/rx_errors/wedged は2026-08-29 DS-TWR原因特定で追加
-                // (docs/HANDOFF.md §0-C)。stageは以前は"final_wait"の固定文字列
-                // だったが、結果の実際の段階名(DSResponderStage)に置き換えた。
-                ESP_LOGW(TAG,
-                         "DS_RESP_STAT stage=%s seq=%u requester=0x%04X elapsed_ms=%lu tx_margin_us=%ld "
-                         "rx_status=0x%08lX rx_errors=%u wedged=%u",
-                         uwb::dsResponderStageName(result.stage), result.sequence, result.requester,
-                         (unsigned long)result.elapsedMs, (long)result.txMarginUs, (unsigned long)result.rxStatus,
-                         (unsigned)result.rxErrors, (unsigned)result.txWedged);
-            }
+            // Poll was received and answered (sequence != 0), but the exchange still failed -
+            // for any error kind, not just RxTimeout (Final never arrived is one case, but a
+            // corrupt/rejected Final, a TX failure sending the Result, etc. are others): a real
+            // failure of the exchange (previously swallowed silently, then logged for RxTimeout
+            // only). Log every one, with the error kind, so no failure kind is invisible.
+            // 2026-08-30: an anchor run counted fail=24 but only 12 RX_TIMEOUT lines were
+            // logged - the other 12 failures (different error kinds) were invisible.
+            // Poll は受けて応答した（sequence != 0）のに交換が失敗＝RxTimeout（Finalが
+            // 届かなかった）に限らず、あらゆるエラー種別で実失敗（以前は黙って捨てていた、
+            // その後RxTimeoutのときだけログしていた）。エラー種別を添えて全件ログする
+            // （どの失敗種別も見えなくならないように）。
+            // 2026-08-30: ある実機ランでアンカーの fail=24 に対し RX_TIMEOUT のログが
+            // 12件しかなく、残り12件（別のエラー種別）が見えなくなっていた。
+            // stage/error/rx_status/rx_errors/wedged は2026-08-29 DS-TWR原因特定で追加
+            // (docs/HANDOFF.md §0-C)。stageは以前は"final_wait"の固定文字列
+            // だったが、結果の実際の段階名(DSResponderStage)に置き換えた。errorは
+            // 2026-08-30に追加。
+            ESP_LOGW(TAG,
+                     "DS_RESP_STAT stage=%s error=%s seq=%u requester=0x%04X elapsed_ms=%lu tx_margin_us=%ld "
+                     "rx_status=0x%08lX rx_errors=%u wedged=%u",
+                     uwb::dsResponderStageName(result.stage), uwb.lastErrorName(), result.sequence,
+                     result.requester, (unsigned long)result.elapsedMs, (long)result.txMarginUs,
+                     (unsigned long)result.rxStatus, (unsigned)result.rxErrors, (unsigned)result.txWedged);
             failCount++;
             if ((failCount % ANCHOR_LOG_INTERVAL) == 0) {
                 ESP_LOGW(TAG,
@@ -1997,6 +2147,79 @@ extern "C" void app_main(void)
             (deltaUus > 0) ? (RX_TIMEOUT_UUS + static_cast<uint32_t>(deltaUus)) : RX_TIMEOUT_UUS;
         ESP_LOGI(TAG, "diag: resp_tx_delay_uus=%u rx_timeout_uus=%lu",
                  (unsigned)CONFIG_UWB_TWR_DIAG_RESP_TX_DELAY_UUS, (unsigned long)effectiveRxTimeoutUus);
+    }
+#endif
+
+#if defined(CONFIG_UWB_TWR_DIAG_FINAL_TX_DELAY_UUS) && \
+    defined(CONFIG_UWB_TWR_DIAG_FINAL_RX_AFTER_RESP_TX_DELAY_UUS) && \
+    defined(CONFIG_UWB_TWR_DIAG_DS_HOST_TIMEOUT_MS) && \
+    ((CONFIG_UWB_TWR_DIAG_FINAL_TX_DELAY_UUS > 0) || \
+     (CONFIG_UWB_TWR_DIAG_FINAL_RX_AFTER_RESP_TX_DELAY_UUS > 0) || \
+     (CONFIG_UWB_TWR_DIAG_DS_HOST_TIMEOUT_MS > 0)) && \
+    CONFIG_UWB_TWR_METHOD_DS && !CONFIG_UWB_TWR_ROLE_ANCHOR
+    // Diagnostic: log the effective DS-TWR TAG timing fields whenever ANY of
+    // the three DS diag overrides is non-zero - not just this side's own
+    // finalTxDelayUus/hostTimeoutMs, but also the ANCHOR-only
+    // finalRxAfterResponseTxDelayUus (that one has no effect here; the gate
+    // just makes a test build that sets any one of the three still show this
+    // side's effective config for context, symmetric with the ANCHOR-side
+    // block below). Mirrors makeRangeConfig() (DS TAG block above)'s formula
+    // purely for the boot log; grep key "diag: final_tx_delay_uus=" is
+    // unchanged from before UWB_TWR_DIAG_DS_HOST_TIMEOUT_MS /
+    // UWB_TWR_DIAG_FINAL_RX_AFTER_RESP_TX_DELAY_UUS were added (see
+    // Kconfig.projbuild for all three options).
+    // 診断: DS-TWR の3つの診断上書きオプション（このTAG側が使う
+    // finalTxDelayUus・hostTimeoutMs、ANCHOR限定の
+    // finalRxAfterResponseTxDelayUus）のいずれか1つでも非ゼロなら、TAG側の
+    // 実効タイミング設定を起動ログに出す（finalRxAfterResponseTxDelayUus
+    // 自体はここでは効かないが、1つだけ設定したテストビルドでも下の
+    // ANCHOR側ブロックと対称にこの側の実効値を確認できるようにする）。
+    // makeRangeConfig()（上のDS TAGブロック）と同じ式を起動ログ用に
+    // ここでも計算する。grepキー "diag: final_tx_delay_uus=" は
+    // UWB_TWR_DIAG_DS_HOST_TIMEOUT_MS /
+    // UWB_TWR_DIAG_FINAL_RX_AFTER_RESP_TX_DELAY_UUS 追加前と変わらない
+    // （3つとも Kconfig.projbuild 参照）。
+    {
+        const unsigned effFinalTxDelayUus = (CONFIG_UWB_TWR_DIAG_FINAL_TX_DELAY_UUS > 0)
+                                                 ? (unsigned)CONFIG_UWB_TWR_DIAG_FINAL_TX_DELAY_UUS
+                                                 : (unsigned)FINAL_TX_DLY_UUS;
+        const unsigned effHostTimeoutMs = (CONFIG_UWB_TWR_DIAG_DS_HOST_TIMEOUT_MS > 0)
+                                               ? (unsigned)CONFIG_UWB_TWR_DIAG_DS_HOST_TIMEOUT_MS
+                                               : (unsigned)RANGE_HOST_TIMEOUT_MS;
+        ESP_LOGI(TAG,
+                 "diag: final_tx_delay_uus=%u final_rx_after_response_tx_delay_uus=%u "
+                 "result_rx_after_final_tx_delay_uus=%u host_timeout_ms=%u",
+                 effFinalTxDelayUus, (unsigned)FINAL_RX_AFTER_RESPONSE_TX_DLY_UUS,
+                 (unsigned)RESULT_RX_AFTER_FINAL_TX_DLY_UUS, effHostTimeoutMs);
+    }
+#endif
+
+#if defined(CONFIG_UWB_TWR_DIAG_FINAL_TX_DELAY_UUS) && \
+    defined(CONFIG_UWB_TWR_DIAG_FINAL_RX_AFTER_RESP_TX_DELAY_UUS) && \
+    defined(CONFIG_UWB_TWR_DIAG_DS_HOST_TIMEOUT_MS) && \
+    ((CONFIG_UWB_TWR_DIAG_FINAL_TX_DELAY_UUS > 0) || \
+     (CONFIG_UWB_TWR_DIAG_FINAL_RX_AFTER_RESP_TX_DELAY_UUS > 0) || \
+     (CONFIG_UWB_TWR_DIAG_DS_HOST_TIMEOUT_MS > 0)) && \
+    CONFIG_UWB_TWR_METHOD_DS && CONFIG_UWB_TWR_ROLE_ANCHOR
+    // Diagnostic: log the effective DS-TWR ANCHOR timing fields whenever ANY
+    // of the three DS diag overrides is non-zero - symmetric with the
+    // TAG-side block above (see its comment for the full rationale); this is
+    // the ANCHOR half, printing finalRxAfterResponseTxDelayUus and
+    // hostTimeoutMs (this side's two overridable fields).
+    // 診断: DS-TWR の3つの診断上書きオプションのいずれか1つでも非ゼロなら、
+    // ANCHOR側の実効タイミング設定を起動ログに出す（対称のTAG側は上の
+    // ブロック参照）。この側で上書き可能な finalRxAfterResponseTxDelayUus
+    // と hostTimeoutMs を出す。
+    {
+        const unsigned effFinalRxAfterRespTxDelayUus =
+            (CONFIG_UWB_TWR_DIAG_FINAL_RX_AFTER_RESP_TX_DELAY_UUS > 0)
+                ? (unsigned)CONFIG_UWB_TWR_DIAG_FINAL_RX_AFTER_RESP_TX_DELAY_UUS
+                : (unsigned)FINAL_RX_AFTER_RESPONSE_TX_DLY_UUS;
+        const unsigned effHostTimeoutMs = (CONFIG_UWB_TWR_DIAG_DS_HOST_TIMEOUT_MS > 0)
+                                               ? (unsigned)CONFIG_UWB_TWR_DIAG_DS_HOST_TIMEOUT_MS
+                                               : (unsigned)RANGE_HOST_TIMEOUT_MS;
+        ESP_LOGI(TAG, "diag: final_rx_after_response_tx_delay_uus=%u host_timeout_ms=%u",
+                 effFinalRxAfterRespTxDelayUus, effHostTimeoutMs);
     }
 #endif
 

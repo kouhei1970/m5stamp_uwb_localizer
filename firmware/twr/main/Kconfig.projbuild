@@ -276,6 +276,113 @@ menu "UWB TWR Configuration"
             ANCHOR側の挙動はこのオプションの影響を受けない（再試行かどうかに
             関わらず、受信したPollには常に応答する）。
 
+    config UWB_TWR_RETRY_DELAY_MS
+        int "TAG: delay before each immediate retry attempt [ms] (0 = retry at once)"
+        range 0 100
+        default 0
+        help
+            Adds a delay of this many ms before each retry attempt within a
+            ranging cycle (only takes effect when UWB_TWR_RETRY_MAX > 0),
+            applied in addition to the existing fixed ~2ms gap before a
+            retry's Poll (both TAG loops already wait 2ms so the ANCHOR has
+            time to re-arm its receiver after the previous failed exchange).
+            The default, 0, adds nothing - identical to the behaviour before
+            this option existed.
+
+            Rationale (DS-TWR): when the TAG's Response wait times out
+            (about 4-6ms after its Poll), the ANCHOR may still be inside its
+            own Final-wait window - it already answered that Poll with a
+            Response and is now listening for a Final for several more ms
+            (docs/HANDOFF.md section 0-C). An immediate retry Poll can land
+            in that window, while the ANCHOR is not listening for Polls at
+            all, and is simply lost. Measured on the bench: the 2nd-attempt
+            (1st retry) failure rate was 44%, versus 10% for the 1st
+            attempt (DS-TWR, 850kbps). A delay here lets the ANCHOR's own
+            Final-wait window expire and return to Poll-wait before the
+            retry's Poll goes out.
+
+            Applies to BOTH TAG loops (SS-TWR and DS-TWR), same as
+            UWB_TWR_RETRY_MAX. Does not change the ranging cycle period
+            (UWB_TWR_RANGE_INTERVAL_MS): as already documented on
+            UWB_TWR_RETRY_MAX, a cycle that takes longer (because of retries
+            and now this delay) just makes the next cycle start right after
+            it finishes, not exactly one UWB_TWR_RANGE_INTERVAL_MS after the
+            previous cycle started.
+            TAG: サイクル内の各再試行の前に、この値[ms]だけ追加の遅延を
+            入れる（UWB_TWR_RETRY_MAX > 0のときのみ効果を持つ）。両TAGループに
+            既にある、再試行のPoll送信前の固定約2msの小休止（ANCHORが直前の
+            失敗した交換の後に受信機を再アームする時間を確保するため）に
+            加えて適用する。既定の0は何も追加しない（このオプションが
+            追加される前と同じ挙動）。
+
+            根拠 (DS-TWR): TAGのResponse待ちがタイムアウトする（Pollから
+            約4〜6ms後）とき、ANCHORはまだ自身のFinal待ち窓の中にいることが
+            ある - そのPollには既にResponseで応答済みで、さらに数ms
+            Finalを待ち続けている（docs/HANDOFF.md §0-C）。即座の再試行Pollは
+            その窓の間に飛んでいき、ANCHORがPollを全く聞いていない状態で
+            失われる。実機測定: 2回目の試行（1回目の再試行）の失敗率は
+            44%で、1回目の試行の10%（DS-TWR, 850kbps）より大幅に高かった。
+            ここで遅延を入れることで、再試行のPollを送る前にANCHOR自身の
+            Final待ち窓が終わってPoll待ちへ戻るのを待てる。
+
+            SS-TWR・DS-TWR両方のTAGループに適用される（UWB_TWR_RETRY_MAXと
+            同じ）。測距サイクルの周期（UWB_TWR_RANGE_INTERVAL_MS）自体は
+            変えない: UWB_TWR_RETRY_MAXで既に説明した通り、（再試行とこの
+            遅延により）時間がかかったサイクルは終わった直後に次のサイクルが
+            始まるだけであり、前のサイクル開始からちょうど
+            UWB_TWR_RANGE_INTERVAL_MS後になるとは限らない。
+
+    config UWB_TWR_DIAG_LOG_EVERY_FAIL
+        bool "Diagnostic: log every failed ranging attempt, not just every 10th (both TAG loops)"
+        default n
+        help
+            When y, both TAG loops (SS-TWR and DS-TWR) log every failed
+            attempt with the usual FAIL line (SS_RANGE_STAT / DS_RANGE_STAT
+            last=FAIL), instead of only every TAG_LOG_INTERVAL-th attempt
+            (main.cpp, currently a hard-coded 10 - not itself a Kconfig
+            option). In the DS-TWR loop this supersedes (is strictly wider
+            than) the existing "log every failure whose stage is not
+            ResponseWait" rule (2026-08-29 DS-TWR原因特定) - those still log
+            too, plus now the ResponseWait-stage ones as well.
+
+            Also adds an attempt=%u field to the FAIL line in both loops
+            (0 = the cycle's first attempt, 1.. = retries, i.e. the same
+            attempt counter used by the UWB_TWR_RETRY_MAX/
+            UWB_TWR_RETRY_DELAY_MS per-cycle retry loop), so a retry's
+            failure can be told apart from a first attempt's in the log
+            regardless of this option's setting.
+
+            The default, n, leaves both loops' FAIL logging exactly as it
+            was before this option existed (periodic-only for SS-TWR,
+            periodic + non-ResponseWait-stage for DS-TWR) - only the new
+            attempt= field is always added.
+
+            Verbose; intended for a retry-tuning counter-test (bench-only,
+            alongside UWB_TWR_RETRY_MAX/UWB_TWR_RETRY_DELAY_MS), not routine
+            use.
+            診断用: y にすると、両TAGループ（SS-TWR・DS-TWR）が
+            TAG_LOG_INTERVAL回（main.cppのハードコード値、現在10。Kconfig
+            オプションではない）に1回の間引きではなく、失敗した試行を毎回
+            ログに出す（通常のFAIL行: SS_RANGE_STAT / DS_RANGE_STAT
+            last=FAIL）。DS-TWRループでは、既存の「stageがResponseWait以外の
+            失敗は毎回ログ」ルール（2026-08-29 DS-TWR原因特定）を包含して
+            広げる形になる（そちらも引き続きログされ、これに加えて
+            ResponseWait段階の失敗も出るようになる）。
+
+            両ループのFAIL行に attempt=%u フィールドも追加する（0=サイクルの
+            最初の試行、1..=再試行。UWB_TWR_RETRY_MAX/UWB_TWR_RETRY_DELAY_MS
+            のサイクル内再試行ループが使うのと同じ試行カウンタ）。これは
+            このオプションの設定に関わらず常に追加され、再試行の失敗か
+            最初の試行の失敗かをログだけで区別できるようにする。
+
+            既定のnは、このオプションが追加される前と全く同じFAILログの
+            挙動を保つ（SS-TWRは間引きのみ、DS-TWRは間引き+非ResponseWait
+            段階のみ）- 新しい attempt= フィールドだけは常に追加される。
+
+            冗長なため、再試行チューニングの切り分けテスト用
+            （UWB_TWR_RETRY_MAX/UWB_TWR_RETRY_DELAY_MSと合わせてベンチでのみ
+            使用）を想定しており、常用は想定していない。
+
     config UWB_TWR_DIAG_NO_LNA_PA
         bool "Diagnostic: do not enable external LNA/PA mode"
         default n
@@ -567,6 +674,176 @@ menu "UWB TWR Configuration"
             では 4500 UUS）に同じ延長分を足す。縮めることはしない
             （差が 0 以下なら窓は変更しない）。
 
+    config UWB_TWR_DIAG_FINAL_TX_DELAY_UUS
+        int "Diagnostic: DS tag Final delayed-TX offset override [UUS] (0 = preset default)"
+        range 0 20000
+        default 0
+        help
+            Overrides DSRangeConfig::finalTxDelayUus in the DS-TWR TAG's
+            makeRangeConfig(), applied AFTER uwb::applyTimingProfile() so it
+            wins over whichever UWB_TIMING_PROFILE preset ended up effective
+            at runtime (docs/TIMING_PRESETS.md; init() can downgrade an IRQ
+            preset to PollingBoth if the IRQ line turns out dead). The
+            default of this option, 0, leaves finalTxDelayUus untouched -
+            i.e. exactly the firmware's built-in value (currently 3000).
+            Applies to the DS TAG only; the DS ANCHOR's makeRangeConfig() is
+            not touched by this option.
+
+            Used to reproduce the DW3000 UM section 9.4.1 delayed-TX errata:
+            the old preset value 1800 at 850kbps/preamble256 left only
+            0.04-1.04ms of margin before the deadline, which is why it was
+            raised to the new preset of 3000 (docs/HANDOFF.md section 0-C).
+            This option lets a test build dial finalTxDelayUus back down (or
+            further up) without editing code, to reproduce or bracket that
+            errata on the bench.
+
+            CORRECTED 2026-08-30 (measured on the bench, build e30): the
+            claim that used to be here - "any override value >= 1500 is
+            still inside the ANCHOR's window and will be received" - is
+            WRONG. The two fields are measured from different reference
+            points: this option (TAG side) counts from the Response frame's
+            RMARKER, while the ANCHOR's
+            UWB_TWR_DIAG_FINAL_RX_AFTER_RESP_TX_DELAY_UUS counts from the
+            ANCHOR's own Response TX completion (dwt_setrxaftertxdelay()) -
+            offset by the Response frame's remaining on-air time after its
+            RMARKER (~267us at 850kbps/preamble256/24-byte Response;
+            docs/TIMING_PRESETS.md section 2.4, docs/HANDOFF.md section
+            0-C). Concretely, at 850kbps/preamble256 the TAG's Final
+            preamble starts at (this option's value, in real us) - 264 UUS
+            (~270us, the SHR length) after the Response RMARKER. With this
+            option set to 1800 and the ANCHOR left at its default 1500, the
+            ANCHOR's RX window opens ~228us AFTER the Final preamble has
+            already started (only ~41us of SHR left when it opens), so the
+            Final is missed 100% of the time (measured 2026-08-30, e30:
+            0/690). To actually test 1800 on the bench, also set the
+            ANCHOR's UWB_TWR_DIAG_FINAL_RX_AFTER_RESP_TX_DELAY_UUS=500 (the
+            pre-2026-08-29 anchor value), which opens the window well before
+            the Final preamble arrives.
+            診断用: DS-TWR TAG の makeRangeConfig() で
+            DSRangeConfig::finalTxDelayUus を上書きする。
+            uwb::applyTimingProfile() の**後**に適用するので、実行時に実際に
+            有効な UWB_TIMING_PROFILE プリセット（docs/TIMING_PRESETS.md。
+            IRQ 線が死んでいると init() が IRQ プリセットを PollingBoth へ
+            降格させることがある）が何であっても、こちらが最終的に勝つ。
+            このオプションの既定値0は finalTxDelayUus に触れない
+            （ファームウェア組み込みの現在値3000のまま）。DS TAG限定で、
+            DS ANCHOR の makeRangeConfig() はこのオプションで変更しない。
+
+            DW3000 UM §9.4.1の遅延送信エラッタを机上再現するためのもの:
+            旧プリセット値1800（850kbps/preamble256）では締切までの余裕が
+            0.04〜1.04msしかなく、これが新プリセット3000への引き上げ理由
+            だった（docs/HANDOFF.md §0-C）。このオプションでコード修正なしに
+            finalTxDelayUusを下げ（あるいはさらに上げ）て、実機でこの
+            エラッタを再現・境界確認できる。
+
+            【2026-08-30訂正、実機e30で確認】ここに以前あった「上書き値が
+            1500以上であれば窓の内側に収まり受信される」という記述は誤り
+            だった。2つの値は基準点が異なる: 本オプション（TAG側）は
+            ResponseフレームのRMARKER基準、ANCHOR側の
+            UWB_TWR_DIAG_FINAL_RX_AFTER_RESP_TX_DELAY_UUSは自分の
+            Response送信完了（dwt_setrxaftertxdelay()）基準で、両者は
+            ResponseのRMARKER後の残り伝送時間（850kbps/preamble256/
+            24バイトのResponseで≈267µs。docs/TIMING_PRESETS.md §2.4、
+            docs/HANDOFF.md §0-C参照）だけずれる。具体的には850kbps/
+            preamble256でタグのFinalプリアンブル先頭は、本オプションの値
+            （実µs換算）−264 UUS（≈270µs、SHR長）だけResponseのRMARKER後に
+            来る。本オプションを1800、ANCHOR側を既定の1500のままにすると、
+            ANCHORの受信窓はFinalのプリアンブルが始まった**後**（≈228µs
+            遅れて）開き、開いた時点で残るSHRはわずか≈41µsしかないため
+            Finalを100%取りこぼす（2026-08-30実測、e30: 0/690）。実機で
+            1800を試す場合は、ANCHOR側の
+            UWB_TWR_DIAG_FINAL_RX_AFTER_RESP_TX_DELAY_UUS=500（2026-08-29
+            より前のANCHOR既定値）も同時に設定すること。この値なら窓は
+            Finalプリアンブル到達より十分前に開く。
+
+    config UWB_TWR_DIAG_FINAL_RX_AFTER_RESP_TX_DELAY_UUS
+        int "Diagnostic: DS anchor Final RX-after-Response-TX delay override [UUS] (0 = preset default)"
+        range 0 20000
+        default 0
+        help
+            Overrides DSRangeConfig::finalRxAfterResponseTxDelayUus in the
+            DS-TWR ANCHOR's makeRangeConfig(), applied AFTER
+            uwb::applyTimingProfile() so it wins over whichever
+            UWB_TIMING_PROFILE preset ended up effective at runtime
+            (docs/TIMING_PRESETS.md; init() can downgrade an IRQ preset to
+            PollingBoth if the IRQ line turns out dead). The default of this
+            option, 0, leaves finalRxAfterResponseTxDelayUus untouched -
+            i.e. exactly the firmware's built-in value (currently 1500).
+            Applies to the DS ANCHOR only; the DS TAG's makeRangeConfig() is
+            not touched by this option.
+
+            Used to rebuild the pre-fix timing for a counter-test: the value
+            was 500 before 2026-08-29 (docs/HANDOFF.md section 0-C), raised
+            to 1500 in the same fix that raised the TAG's
+            UWB_TWR_DIAG_FINAL_TX_DELAY_UUS preset from 1800 to 3000, so the
+            two stayed symmetric - finalTxDelayUus (TAG) and
+            finalRxAfterResponseTxDelayUus (ANCHOR) both describe the same
+            physical gap (the Final frame's flight time after the Response)
+            from opposite ends of the link.
+            診断用: DS-TWR ANCHOR の makeRangeConfig() で
+            DSRangeConfig::finalRxAfterResponseTxDelayUus を上書きする。
+            uwb::applyTimingProfile() の**後**に適用するので、実行時に実際に
+            有効な UWB_TIMING_PROFILE プリセット（docs/TIMING_PRESETS.md。
+            IRQ 線が死んでいると init() が IRQ プリセットを PollingBoth へ
+            降格させることがある）が何であっても、こちらが最終的に勝つ。
+            このオプションの既定値0は finalRxAfterResponseTxDelayUus に
+            触れない（ファームウェア組み込みの現在値1500のまま）。DS
+            ANCHOR限定で、DS TAG の makeRangeConfig() はこのオプションで
+            変更しない。
+
+            机上再現用の切り分けテストのためのもの: 2026-08-29
+            (docs/HANDOFF.md §0-C) より前の値は500で、TAG側の
+            UWB_TWR_DIAG_FINAL_TX_DELAY_UUS のプリセットを1800から3000へ
+            引き上げたのと同じ修正で1500へ引き上げ、両者を対称に保った
+            （finalTxDelayUus（TAG側）と finalRxAfterResponseTxDelayUus
+            （ANCHOR側）は、リンクの両端から見た同じ物理的な間隔
+            ―Responseの後にFinalフレームが飛んでいる時間―を指す）。
+
+    config UWB_TWR_DIAG_DS_HOST_TIMEOUT_MS
+        int "Diagnostic: DS-TWR hostTimeoutMs override [ms], both TAG and ANCHOR (0 = preset default)"
+        range 0 1000
+        default 0
+        help
+            Overrides DSRangeConfig::hostTimeoutMs in BOTH the DS-TWR TAG's
+            and the DS-TWR ANCHOR's makeRangeConfig(), applied AFTER
+            uwb::applyTimingProfile() so it wins over whichever
+            UWB_TIMING_PROFILE preset ended up effective at runtime. The
+            default of this option, 0, leaves hostTimeoutMs untouched - i.e.
+            exactly the firmware's built-in value (currently 20). Unlike the
+            other DS diagnostics above, this one option applies to both
+            roles' makeRangeConfig() at once, because hostTimeoutMs is the
+            same host-side polling backstop on both ends: requestDSRange()
+            (TAG - waits for Response/Final/Result) and respondDSRange()'s
+            Final-wait loop (ANCHOR) both use it (the separate Poll-wait
+            uses pollHostTimeoutMs, untouched by this option).
+
+            Used to rebuild the pre-fix timing for a counter-test: the value
+            was 10ms before 2026-08-29 (docs/HANDOFF.md section 0-C), raised
+            to 20ms because the margin against the hardware RX-frame-timeout
+            (RXFTO) that actually closes the Final RX window was only
+            about 2.5ms (RXFTO fires about 7.5ms after the Response
+            delayed-TX is armed; a 10ms host timeout could race it if
+            host-side logging or scheduling jitter shifted the host clock
+            by more than that).
+            診断用: DSRangeConfig::hostTimeoutMs を DS-TWR TAG・ANCHOR
+            両方の makeRangeConfig() で上書きする。uwb::applyTimingProfile()
+            の**後**に適用するので、実行時に有効な UWB_TIMING_PROFILE
+            プリセットが何であってもこちらが勝つ。このオプションの既定値0は
+            hostTimeoutMs に触れない（ファームウェア組み込みの現在値20の
+            まま）。上の他のDS診断オプションと違い、これは1個のオプションで
+            両ロールの makeRangeConfig() に同時に適用される。hostTimeoutMs
+            は両端で同じ役割のホスト側ポーリング上限だからで、
+            requestDSRange()（TAG側。Response/Final/結果フレームを待つ）と
+            respondDSRange()のFinal待ちループ（ANCHOR側）の両方がこれを
+            使う（Poll待ちは別フィールドpollHostTimeoutMsを使い、この
+            オプションでは変更しない）。
+
+            机上再現用の切り分けテストのためのもの: 2026-08-29
+            (docs/HANDOFF.md §0-C) より前の値は10msで、Final受信窓を
+            実際に閉じるハードウェアのRXFTO（受信フレームタイムアウト）に
+            対する余裕が約2.5msしかなかった（Response遅延送信を予約して
+            からRXFTOが立つまで約7.5ms。ホスト側のログ出力等でジッタが
+            それを超えると逆転しうる）ため、20msへ引き上げた。
 
     config UWB_TWR_DIAG_RF_PORT
         int "Diagnostic: RF port control (0=driver default, 1=force RF1, 2=force RF2, 3=auto 1->2, 4=auto 2->1)"

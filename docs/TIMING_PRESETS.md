@@ -298,6 +298,70 @@ Final 側にも与える。
 RXFTO（T0+4.62 ms、Poll 受信からは概算で+7.5 ms 程度）より先にホスト側
 タイムアウトで打ち切られないための余裕。フィールドコメント参照）。
 
+#### 受信窓の基準点（2026-08-30 判明）
+
+**上の「アンカーの Final 受信窓」の検算（T0 = Response 送信終了時刻）は正しいが、
+2026-08-29 時点では見落としていた前提が 1 つある: `finalRxAfterResponseTxDelayUus`
+と `finalTxDelayUus` は基準点が異なる。** これを取り違えたまま `finalTxDelayUus` だけ
+旧値 1800 に戻すテストをすると、受信窓側は新値 1500 のままなので Final を毎回取り
+こぼす（実機 e30、`docs/HANDOFF.md` §0-C「e30: もう一つの設計ミス」参照、周期成功率
+0.0%）。
+
+**基準点の違い**:
+- `finalRxAfterResponseTxDelayUus` は `dwt_setrxaftertxdelay()` に渡る。Qorvo
+  DW3XXX Software API Guide（`assets/DW3_QM33_SDK_1.1.1/Drivers/` 配下）4p12 §5.3.24
+  はこの関数を「delay ... after a frame transmission has completed」（フレーム
+  送信が**完了した後**の遅延）と説明しており、基準は**自分（アンカー）の Response
+  送信完了時刻**である。
+- `finalTxDelayUus` は `dwt_setdelayedtrxtime()` に渡り（× `kUusToDwtTime` で
+  DTU 化）、同ガイド §5.3.4 の記載どおり、遅延送信の予約時刻は**RMARKER**（フレームの
+  基準時刻、タイムスタンプが打たれる瞬間で同期ヘッダの終わりに立つ）で解釈される。
+  つまり基準は**Response の RMARKER**（タグが読み取った受信タイムスタンプ）である。
+
+両者の基準点は「Response の RMARKER」から「Response の送信完了」までの**残り伝送
+時間**分だけずれている。850 kbps・24 バイトの Response で再導出すると:
+
+$$\text{PHR} \approx 21.3\,\mu s,\quad
+\text{データ部} = (8\times24+48)\times1.0256\,\mu s \approx 246.1\,\mu s$$
+
+$$21.3 + 246.1 \approx \mathbf{267\,\mu s}$$
+
+（§1.1 の「フレーム末尾の 41 µs 手前」は 6.8 Mbps・preamble 128 の短いフレームの値で、
+850 kbps・256 では PHR がそのままでデータ部の伝送時間が大きく伸びるため大きく異なる。
+Response(24B) の場合の値が本項の 267 µs）。
+
+**Response の RMARKER を基準点 R として再検算した表**（e25〜e30 の実測と一致することを
+`docs/HANDOFF.md` §0-C で確認済み）:
+
+| | 1800/500（旧プリセット） | 1800/1500（e30、不成立） | 3000/1500（新プリセット） |
+|---|---:|---:|---:|
+| アンカーの Final 受信窓が開く（R 基準 = R+267+`finalRxAfterResponseTxDelayUus`） | R+780 µs | R+1806 µs | R+1806 µs |
+| Final のプリアンブル先頭到達（R 基準 = R+`finalTxDelayUus`(実µs)−SHR269µs） | R+1577 µs | R+1577 µs | R+2808 µs |
+| 差（窓が開く − プリアンブル到達） | −797 µs | **+228 µs** | −1002 µs |
+| 判定 | ✅ | ❌（残る SHR は 41 µs のみ→毎回取りこぼす） | ✅ |
+
+**設計則**: アンカーの受信窓が開く時刻は、必ずタグの Final プリアンブル先頭到達より
+十分早くなければならない。式で書くと、
+
+$$t_{\text{window open}} = t_{\text{RMARKER,Resp}} + T_{\text{rest,Resp}} + \text{finalRxAfterResponseTxDelayUus}$$
+
+が
+
+$$t_{\text{RMARKER,Final}} - T_{\text{SHR}}$$
+
+より、余裕（目安 0.5 ms 以上）を持って早くなければならない。ここで
+$T_{\text{rest,Resp}}$ は Response フレームの RMARKER 後の残り伝送時間（850 kbps・24 バイトで
+上記の ≈267 µs）、$t_{\text{RMARKER,Final}}$ はタグが `finalTxDelayUus`（実 µs 換算）で
+予約する Final の RMARKER 時刻（= DX_TIME）、$T_{\text{SHR}}$ は Final の SHR 長（850 kbps・
+preamble 256 で 269 µs）である。「$T_{\text{rest,Resp}}$ を無視して `finalRxAfterResponseTxDelayUus`
+の数値だけを `finalTxDelayUus` と比較する」（旧 Kconfig ヘルプ文の誤り、
+`firmware/twr/main/Kconfig.projbuild` で訂正済み）は、この 267 µs 分だけずれた誤った
+判定になる。
+
+**一次資料**: Qorvo DW3XXX Software API Guide（`assets/DW3_QM33_SDK_1.1.1/Drivers/`
+配下）4p12 §5.3.24（`dwt_setrxaftertxdelay()`: "delay ... after a frame transmission
+has completed"）および §5.3.4（delayed TX の予約時刻は RMARKER で解釈される）。
+
 ---
 
 ## 3. バージョンと種別をフレームに載せる

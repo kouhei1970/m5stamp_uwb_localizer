@@ -171,6 +171,15 @@ struct DSRangeConfig {
     uint16_t responderAddress               = 0x0002;
     //!< UUS。dwt_setrxaftertxdelay() に直接渡る。Poll送信後、Response受信を
     //!< 開始するまでの待ち（uwb_qm33120_twr.cpp: requestDSRange:301）。
+    //!<
+    //!< 【2026-08-30実機確認】同様の注意: 本フィールドもdwt_setrxaftertxdelay()
+    //!< 基準で自分のPoll送信完了（末尾）起点。responseTxDelayUusはPollの
+    //!< RMARKER起点で、両者はPoll残り伝送時間分ずれる（850kbps/16Bで
+    //!< ≈202µs、6.8Mbpsで≈41µs。詳細はfinalRxAfterResponseTxDelayUus参照）。
+    //!< Same caveat as finalRxAfterResponseTxDelayUus: counts from the END
+    //!< of our own Poll TX, while responseTxDelayUus counts from the Poll's
+    //!< RMARKER instead - offset by ~202us (850kbps/16B) / ~41us (6.8Mbps)
+    //!< of remaining on-air time (docs/TIMING_PRESETS.md section 2.4).
     uint32_t responseRxAfterTxDelayUus      = 1500;
     //!< UUS。× kUusToDwtTime してDTU化し dwt_setdelayedtrxtime() に渡る。
     //!< Responder側がPoll受信時刻を基準に自分のResponse遅延送信時刻を計算
@@ -208,6 +217,15 @@ struct DSRangeConfig {
     //!< あり、実際に覆っている（docs/TIMING_PRESETS.md参照。UMはRX_FWTOが
     //!< フレーム受信中も数え続け、フレームの途中で打ち切りうると明記して
     //!< いるため、窓はフレーム全体を覆わなければならない）。
+    //!<
+    //!< 【2026-08-30実機確認】注意: 本フィールドはdwt_setrxaftertxdelay()
+    //!< 基準で自分のResponse送信完了（末尾）起点。finalTxDelayUusは
+    //!< ResponseのRMARKER起点で、両者はResponse残り伝送時間分ずれる
+    //!< （850kbps/24Bで≈267µs、6.8Mbpsで≈41µs。混同するとFinal全滅、e30）。
+    //!< Counts from the END of our own Response TX (dwt_setrxaftertxdelay()),
+    //!< while finalTxDelayUus counts from the Response's RMARKER instead -
+    //!< offset by ~267us (850kbps/24B) / ~41us (6.8Mbps) of remaining
+    //!< on-air time. Confusing the two silently drops every Final (e30).
     uint32_t finalRxAfterResponseTxDelayUus = 1500;
     /**
      * UUS。dwt_setrxaftertxdelay() に直接渡る。Initiator側がFinal送信後、
