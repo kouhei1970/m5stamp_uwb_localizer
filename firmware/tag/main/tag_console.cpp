@@ -28,6 +28,12 @@
  * 実際に再現を確認済み）。座標もアンテナ遅延も負の値を普通に取るので、
  * ここでは argtable3 の解析を使わない。linenoise による行編集・履歴・
  * help コマンドは従来どおり console コンポーネントのものを使う。
+ *
+ * v2（uwb::RangingService 導入後）のロック方針は tag_console.hpp 冒頭の
+ * コメント参照: 表の編集は service.tableMutex() を取って直接
+ * AnchorTable::update()/set() を呼ぶ。resetStats()/reinitEkf() は
+ * tableMutex() を離してから呼ぶ（内部で取り直すため、二重取得は
+ * デッドロックする）。
  */
 #include "tag_console.hpp"
 
@@ -53,22 +59,24 @@ const char* kLogTag = "uwb_tag_console";
 
 /* ------------------------------------------------------------------ 共有状態 */
 
+/** g_saved / g_jsonOutput / g_tableGeneration の保護用。アンカー表そのもの
+ *  は service.tableMutex() が守るので、この mutex とは別物（tag_console.hpp
+ *  冒頭コメント参照）。 */
 SemaphoreHandle_t g_mutex = nullptr;
 StaticInfo g_info;
 
-/** 編集用のシャドウコピー。コンソールはこちらだけを書き換える。 */
-uwb::AnchorEntry g_edit[uwb::kMaxAnchors];
-size_t g_editCount = 0;
+/** 生きたアンカー登録テーブルと測位サービス（sharedInit() が受け取った参照）。 */
+uwb::AnchorTable* g_table      = nullptr;
+uwb::RangingService* g_service = nullptr;
 
-/** 測位ループにまだ渡していない変更があるか。 */
-bool g_pending = false;
-
-/** 現在の編集内容が NVS に保存済みか。
+/** 現在の表の内容が NVS に保存済みか。
  *  起動時は「NVSから読めた場合のみ保存済み」とする（既定値で起動した場合は
  *  NVS には何も無いので未保存）。編集で false、save で true になる。 */
 bool g_saved = false;
 
-Status g_status;
+/** アンカー表の「世代」。tag_console.hpp の tableGeneration() 参照。 */
+uint32_t g_tableGeneration = 0;
+
 bool g_jsonOutput = true;
 
 bool lock()
@@ -84,6 +92,56 @@ void unlock()
     if (g_mutex != nullptr) {
         xSemaphoreGive(g_mutex);
     }
+}
+
+bool readSaved()
+{
+    bool saved = false;
+    if (lock()) {
+        saved = g_saved;
+        unlock();
+    }
+    return saved;
+}
+
+void markUnsaved()
+{
+    if (lock()) {
+        g_saved = false;
+        unlock();
+    }
+}
+
+void markSaved()
+{
+    if (lock()) {
+        g_saved = true;
+        unlock();
+    }
+}
+
+void bumpTableGeneration()
+{
+    if (lock()) {
+        ++g_tableGeneration;
+        unlock();
+    }
+}
+
+/**
+ * @brief 表を編集したコマンドの共通の締めくくり。
+ *
+ * **呼び出し側は service.tableMutex() を既に離していること**
+ * （resetStats()/reinitEkf() が内部で取り直すため）。
+ */
+void afterTableEdit()
+{
+    markUnsaved();
+    if (g_service != nullptr) {
+        g_service->resetStats();
+        g_service->reinitEkf(); // enableEkf==false のときは no-op
+    }
+    bumpTableGeneration();
 }
 
 /* ------------------------------------------------------------------ 引数解析 */
@@ -157,26 +215,27 @@ void printUsageAnchor()
                 static_cast<unsigned>(uwb::kMaxAnchors));
 }
 
-/** ロック済みの状態でテーブルを表示する。 */
-void printTableLocked()
+/** 呼び出し側が service.tableMutex() を保持した状態で呼ぶこと。 */
+void printTableLocked(bool saved)
 {
     std::printf("idx  addr       x[m]      y[m]      z[m]   delay[m]  enabled\n");
-    for (size_t i = 0; i < g_editCount; ++i) {
-        const uwb::AnchorEntry& e = g_edit[i];
+    const size_t count = g_table->size();
+    for (size_t i = 0; i < count; ++i) {
+        const uwb::AnchorEntry& e = g_table->entry(i);
         std::printf("%3u  0x%04X  %8.3f  %8.3f  %8.3f  %9.4f  %s\n", static_cast<unsigned>(i),
                     static_cast<unsigned>(e.short_addr), static_cast<double>(e.pos[0]),
                     static_cast<double>(e.pos[1]), static_cast<double>(e.pos[2]),
                     static_cast<double>(e.antenna_delay_m), e.enabled ? "yes" : "no");
     }
     size_t enabled = 0;
-    for (size_t i = 0; i < g_editCount; ++i) {
-        if (g_edit[i].enabled) {
+    for (size_t i = 0; i < count; ++i) {
+        if (g_table->entry(i).enabled) {
             ++enabled;
         }
     }
-    std::printf("件数 %u / 上限 %u（うち enabled %u）  NVS: %s\n",
-                static_cast<unsigned>(g_editCount), static_cast<unsigned>(uwb::kMaxAnchors),
-                static_cast<unsigned>(enabled), g_saved ? "保存済み" : "未保存（save が必要）");
+    std::printf("件数 %u / 上限 %u（うち enabled %u）  NVS: %s\n", static_cast<unsigned>(count),
+                static_cast<unsigned>(uwb::kMaxAnchors), static_cast<unsigned>(enabled),
+                saved ? "保存済み" : "未保存（save が必要）");
     if (enabled < 4) {
         std::printf("注意: 3D 測位には有効測距が最低 4 件必要です\n");
     }
@@ -193,12 +252,21 @@ int cmdAnchor(int argc, char** argv)
     const int nArgs       = argc - 2;
     const char* const* a  = argv + 2;
 
+    if (g_table == nullptr || g_service == nullptr) {
+        std::printf("内部エラー: コンソールが初期化されていません\n");
+        return 1;
+    }
+    SemaphoreHandle_t mtx = g_service->tableMutex();
+    if (mtx == nullptr) {
+        std::printf("内部エラー: 測位サービスが起動していません\n");
+        return 1;
+    }
+
     if (std::strcmp(sub, "list") == 0) {
-        if (!lock()) {
-            return 1;
-        }
-        printTableLocked();
-        unlock();
+        const bool saved = readSaved();
+        xSemaphoreTake(mtx, portMAX_DELAY);
+        printTableLocked(saved);
+        xSemaphoreGive(mtx);
         return 0;
     }
 
@@ -229,52 +297,73 @@ int cmdAnchor(int argc, char** argv)
             }
         }
 
-        if (!lock()) {
-            return 1;
-        }
+        xSemaphoreTake(mtx, portMAX_DELAY);
+
         // 【修正6】docs/archive/REVIEW_2026-08-21.md app層M-3: 自タグの
         // アドレスとの一致（上のチェック）だけでは、既に登録済みの「他の
         // スロット」と同じアドレスを別スロットへ入れることを防げない。
         // 同一の物理アンカーを別座標の2観測として測位に混ぜてしまうため、
         // 自スロット(idx)以外に同じアドレスが無いか確認してから拒否する。
-        // 件数を伸ばす（下の extended 処理）より前、まだ g_edit を書き換えて
-        // いない時点でチェックする（拡張で作る空きスロットは short_addr=0の
-        // プレースホルダなので、ここでは既存の実体のあるスロットだけを見る）。
-        for (size_t i = 0; i < g_editCount; ++i) {
-            if ((i != idx) && (g_edit[i].short_addr == addr)) {
-                unlock();
+        const size_t count = g_table->size();
+        for (size_t i = 0; i < count; ++i) {
+            if ((i != idx) && (g_table->entry(i).short_addr == addr)) {
+                xSemaphoreGive(mtx);
                 std::printf("アドレス 0x%04X は既に anchor[%u] で使われています\n",
                             static_cast<unsigned>(addr), static_cast<unsigned>(i));
                 return 1;
             }
         }
+
         // idx が現在の件数以上なら、そこまで件数を伸ばす。間のスロットは
-        // 「未設定（enabled=false）」のプレースホルダになる。
+        // 「未設定（enabled=false）」のプレースホルダになる。件数が変わる
+        // 編集は AnchorTable::update() では表せないため set() で丸ごと
+        // 差し替える。
         bool extended = false;
-        if (idx >= g_editCount) {
-            for (size_t i = g_editCount; i <= idx; ++i) {
-                g_edit[i] = uwb::AnchorEntry{};
+        size_t newCount = count;
+        if (idx >= count) {
+            uwb::AnchorEntry buf[uwb::kMaxAnchors];
+            for (size_t i = 0; i < count; ++i) {
+                buf[i] = g_table->entry(i);
             }
-            g_editCount = idx + 1;
-            extended     = true;
+            for (size_t i = count; i <= idx; ++i) {
+                buf[i] = uwb::AnchorEntry{};
+            }
+            buf[idx].short_addr = addr;
+            buf[idx].pos[0]       = pos[0];
+            buf[idx].pos[1]       = pos[1];
+            buf[idx].pos[2]       = pos[2];
+            buf[idx].enabled       = true;
+            newCount                = idx + 1;
+            if (!g_table->set(buf, newCount)) {
+                xSemaphoreGive(mtx);
+                std::printf("テーブルの更新に失敗しました\n");
+                return 1;
+            }
+            extended = true;
+        } else {
+            uwb::AnchorEntry e = g_table->entry(idx);
+            e.short_addr         = addr;
+            e.pos[0]              = pos[0];
+            e.pos[1]              = pos[1];
+            e.pos[2]              = pos[2];
+            // 座標を入れたということは使うつもりのはずなので有効化する。
+            // antenna_delay_m は既存の値を保つ（anchor delay で別に設定する）。
+            e.enabled = true;
+            g_table->update(idx, e);
         }
-        g_edit[idx].short_addr = addr;
-        g_edit[idx].pos[0]      = pos[0];
-        g_edit[idx].pos[1]      = pos[1];
-        g_edit[idx].pos[2]      = pos[2];
-        // 座標を入れたということは使うつもりのはずなので有効化する。
-        // antenna_delay_m は既存の値を保つ（anchor delay で別に設定する）。
-        g_edit[idx].enabled = true;
-        g_pending            = true;
-        g_saved              = false;
-        const size_t count   = g_editCount;
-        unlock();
+
+        if (g_info.applyPlacementPolicy != nullptr) {
+            g_info.applyPlacementPolicy(*g_table);
+        }
+        xSemaphoreGive(mtx);
+
+        afterTableEdit();
 
         std::printf("anchor[%u] = 0x%04X (%.3f, %.3f, %.3f) enabled=yes\n", static_cast<unsigned>(idx),
                     static_cast<unsigned>(addr), static_cast<double>(pos[0]), static_cast<double>(pos[1]),
                     static_cast<double>(pos[2]));
         if (extended) {
-            std::printf("件数を %u 件に広げました\n", static_cast<unsigned>(count));
+            std::printf("件数を %u 件に広げました\n", static_cast<unsigned>(newCount));
         }
         std::printf("次の測位周期から反映されます。残すには save を実行してください\n");
         return 0;
@@ -285,13 +374,12 @@ int cmdAnchor(int argc, char** argv)
             std::printf("引数の数が違います。例: anchor delay 0 0.15\n");
             return 1;
         }
+        xSemaphoreTake(mtx, portMAX_DELAY);
+        const size_t count = g_table->size();
+        xSemaphoreGive(mtx);
+
         size_t idx  = 0;
         float delay = 0.0f;
-        if (!lock()) {
-            return 1;
-        }
-        const size_t count = g_editCount;
-        unlock();
         if (!parseIndex(a[0], count, &idx)) {
             std::printf("idx が範囲外です（0〜%u）: %s\n", static_cast<unsigned>((count == 0) ? 0 : count - 1),
                         a[0]);
@@ -302,13 +390,13 @@ int cmdAnchor(int argc, char** argv)
             return 1;
         }
 
-        if (!lock()) {
-            return 1;
-        }
-        g_edit[idx].antenna_delay_m = delay;
-        g_pending                    = true;
-        g_saved                      = false;
-        unlock();
+        xSemaphoreTake(mtx, portMAX_DELAY);
+        uwb::AnchorEntry e   = g_table->entry(idx);
+        e.antenna_delay_m     = delay;
+        g_table->update(idx, e);
+        xSemaphoreGive(mtx);
+
+        afterTableEdit();
         std::printf("anchor[%u].antenna_delay_m = %.4f m（次の測位周期から反映）\n",
                     static_cast<unsigned>(idx), static_cast<double>(delay));
         return 0;
@@ -321,11 +409,10 @@ int cmdAnchor(int argc, char** argv)
             std::printf("引数の数が違います。例: anchor %s 0\n", isEnable ? "enable" : "disable");
             return 1;
         }
-        if (!lock()) {
-            return 1;
-        }
-        const size_t count = g_editCount;
-        unlock();
+        xSemaphoreTake(mtx, portMAX_DELAY);
+        const size_t count = g_table->size();
+        xSemaphoreGive(mtx);
+
         size_t idx = 0;
         if (!parseIndex(a[0], count, &idx)) {
             std::printf("idx が範囲外です（0〜%u）: %s\n", static_cast<unsigned>((count == 0) ? 0 : count - 1),
@@ -333,13 +420,16 @@ int cmdAnchor(int argc, char** argv)
             return 1;
         }
 
-        if (!lock()) {
-            return 1;
+        xSemaphoreTake(mtx, portMAX_DELAY);
+        uwb::AnchorEntry e = g_table->entry(idx);
+        e.enabled            = isEnable;
+        g_table->update(idx, e);
+        if (g_info.applyPlacementPolicy != nullptr) {
+            g_info.applyPlacementPolicy(*g_table);
         }
-        g_edit[idx].enabled = isEnable;
-        g_pending            = true;
-        g_saved              = false;
-        unlock();
+        xSemaphoreGive(mtx);
+
+        afterTableEdit();
         std::printf("anchor[%u].enabled = %s（次の測位周期から反映）\n", static_cast<unsigned>(idx),
                     isEnable ? "yes" : "no");
         return 0;
@@ -357,17 +447,29 @@ int cmdAnchor(int argc, char** argv)
             return 1;
         }
 
-        if (!lock()) {
+        xSemaphoreTake(mtx, portMAX_DELAY);
+        // 増やしたぶんは「未設定（enabled=false）」で埋める。減らすぶんは
+        // 単に buf に写さない（AnchorTable::set() が丸ごと差し替える）。
+        uwb::AnchorEntry buf[uwb::kMaxAnchors];
+        const size_t oldCount = g_table->size();
+        for (size_t i = 0; i < n && i < oldCount; ++i) {
+            buf[i] = g_table->entry(i);
+        }
+        for (size_t i = oldCount; i < n; ++i) {
+            buf[i] = uwb::AnchorEntry{};
+        }
+        const bool ok = g_table->set(buf, n);
+        if (ok && g_info.applyPlacementPolicy != nullptr) {
+            g_info.applyPlacementPolicy(*g_table);
+        }
+        xSemaphoreGive(mtx);
+
+        if (!ok) {
+            std::printf("テーブルの更新に失敗しました\n");
             return 1;
         }
-        // 増やしたぶんは「未設定（enabled=false）」で埋める。
-        for (size_t i = g_editCount; i < n; ++i) {
-            g_edit[i] = uwb::AnchorEntry{};
-        }
-        g_editCount = n;
-        g_pending    = true;
-        g_saved      = false;
-        unlock();
+
+        afterTableEdit();
         std::printf("件数を %u 件にしました（次の測位周期から反映）。"
                     "新しいスロットは anchor set で設定してください\n",
                     static_cast<unsigned>(n));
@@ -389,11 +491,11 @@ int cmdOutput(int argc, char** argv)
     }
 
     if (argc < 2) {
-        if (!lock()) {
-            return 1;
+        bool on = true;
+        if (lock()) {
+            on = g_jsonOutput;
+            unlock();
         }
-        const bool on = g_jsonOutput;
-        unlock();
         std::printf("json output = %s\n", on ? "on" : "off");
         return 0;
     }
@@ -409,18 +511,17 @@ int cmdOutput(int argc, char** argv)
         return 1;
     }
 
-    if (!lock()) {
-        return 1;
+    if (lock()) {
+        g_jsonOutput = on;
+        unlock();
     }
-    g_jsonOutput = on;
     if (on) {
         // 出力を止めている間に設定を変えたかどうかに関わらず、再開直後に
         // "anchors" 行を出し直したい（下流の JSON Lines 消費側は、途中から
-        // 読み始めるとアンカー一覧を取り逃すため）。測位ループにテーブルを
-        // 取り込み直させることで、その経路で anchors 行が再出力される。
-        g_pending = true;
+        // 読み始めるとアンカー一覧を取り逃すため）。tableGeneration() を
+        // 進めることで、それを監視している uwb_log タスクに再出力させる。
+        bumpTableGeneration();
     }
-    unlock();
     std::printf("json output = %s\n", on ? "on" : "off");
     return 0;
 }
@@ -432,16 +533,20 @@ int cmdSave(int argc, char** argv)
     (void)argc;
     (void)argv;
 
-    uwb::AnchorEntry snapshot[uwb::kMaxAnchors];
-    size_t count = 0;
-    if (!lock()) {
+    if (g_table == nullptr || g_service == nullptr) {
+        std::printf("内部エラー: コンソールが初期化されていません\n");
         return 1;
     }
-    count = g_editCount;
+    SemaphoreHandle_t mtx = g_service->tableMutex();
+
+    uwb::AnchorEntry snapshot[uwb::kMaxAnchors];
+    size_t count = 0;
+    xSemaphoreTake(mtx, portMAX_DELAY);
+    count = g_table->size();
     for (size_t i = 0; i < count; ++i) {
-        snapshot[i] = g_edit[i];
+        snapshot[i] = g_table->entry(i);
     }
-    unlock();
+    xSemaphoreGive(mtx);
 
     if (count == 0) {
         std::printf("テーブルが空です。anchor set / anchor count で設定してください\n");
@@ -454,10 +559,7 @@ int cmdSave(int argc, char** argv)
         return 1;
     }
 
-    if (lock()) {
-        g_saved = true;
-        unlock();
-    }
+    markSaved();
     std::printf("NVS へ保存しました: アンカー %u 件\n", static_cast<unsigned>(count));
     return 0;
 }
@@ -476,15 +578,20 @@ int cmdResetConfig(int argc, char** argv)
     }
 
     size_t restored = 0;
-    if (g_info.defaults != nullptr && lock()) {
+    if (g_info.defaults != nullptr && g_table != nullptr && g_service != nullptr) {
         restored = (g_info.defaultCount < uwb::kMaxAnchors) ? g_info.defaultCount : uwb::kMaxAnchors;
-        for (size_t i = 0; i < restored; ++i) {
-            g_edit[i] = g_info.defaults[i];
+        SemaphoreHandle_t mtx = g_service->tableMutex();
+        xSemaphoreTake(mtx, portMAX_DELAY);
+        const bool ok = g_table->set(g_info.defaults, restored);
+        if (ok && g_info.applyPlacementPolicy != nullptr) {
+            g_info.applyPlacementPolicy(*g_table);
         }
-        g_editCount = restored;
-        g_pending    = true;
-        g_saved      = false; // NVS は空になったので「保存済み」ではない
-        unlock();
+        xSemaphoreGive(mtx);
+        if (!ok) {
+            restored = 0;
+        } else {
+            afterTableEdit();
+        }
     }
     std::printf("NVS を消去し、kAnchors[] の既定値 %u 件に戻しました（次の測位周期から反映）\n",
                 static_cast<unsigned>(restored));
@@ -498,23 +605,31 @@ int cmdInfo(int argc, char** argv)
     (void)argc;
     (void)argv;
 
-    if (!lock()) {
+    if (g_table == nullptr || g_service == nullptr) {
+        std::printf("内部エラー: コンソールが初期化されていません\n");
         return 1;
     }
-    const Status status = g_status;
-    const bool saved     = g_saved;
-    const bool jsonOn    = g_jsonOutput;
-    const size_t count   = g_editCount;
+
+    uwb::CycleResult result;
+    const bool haveResult = g_service->getLatest(result);
+
+    SemaphoreHandle_t mtx = g_service->tableMutex();
+    xSemaphoreTake(mtx, portMAX_DELAY);
+    const size_t count = g_table->size();
     size_t enabled       = 0;
     for (size_t i = 0; i < count; ++i) {
-        if (g_edit[i].enabled) {
+        if (g_table->entry(i).enabled) {
             ++enabled;
         }
     }
-    unlock();
+    xSemaphoreGive(mtx);
 
-    const double okRate =
-        (status.epochs == 0) ? 0.0 : (100.0 * static_cast<double>(status.okFixes) / status.epochs);
+    const bool saved  = readSaved();
+    bool jsonOn         = true;
+    if (lock()) {
+        jsonOn = g_jsonOutput;
+        unlock();
+    }
 
     std::printf("=== uwb_tag ===\n");
     std::printf("  board        : %s\n", g_info.boardName);
@@ -528,16 +643,25 @@ int cmdInfo(int argc, char** argv)
                 uwb::configSourceName(g_info.source), saved ? "保存済み" : "未保存（save が必要）");
     std::printf("  nvs          : %s\n", uwb::ConfigStore::isReady() ? "使用可" : "使用不可（既定値のみ）");
     std::printf("  json output  : %s\n", jsonOn ? "on" : "off");
-    std::printf("  epochs       : %lu（ok %lu / %.1f%%）  cycle: %lu ms\n",
-                static_cast<unsigned long>(status.epochs), static_cast<unsigned long>(status.okFixes),
-                okRate, static_cast<unsigned long>(status.cycleMs));
-    if (status.lastOk) {
-        std::printf("  last fix     : p=(%.3f, %.3f, %.3f) gdop=%.2f rms=%.3f n=%d/%d\n",
-                    static_cast<double>(status.p[0]), static_cast<double>(status.p[1]),
-                    static_cast<double>(status.p[2]), static_cast<double>(status.gdop),
-                    static_cast<double>(status.residualRms), status.nUsed, status.nTotal);
+    // 【v2での変更】RangingService は「累積の epoch数/ok数」を公開していない
+    // （CycleResult は直近1周期ぶんのスナップショットのみ。
+    // docs/ARCHITECTURE_V2.md §3.1 の API にも累積カウンタは無い）。
+    // 旧来の「epochs（ok率%）」表示は落とし、直近の seq（単調増加の周期番号）
+    // と cycle_ms、直近の ok/ambiguous を表示する形に変えた。
+    if (haveResult) {
+        std::printf("  last cycle   : seq=%lu  cycle: %lu ms\n", static_cast<unsigned long>(result.seq),
+                    static_cast<unsigned long>(result.cycleMs));
+        if (result.lv2.ok) {
+            std::printf("  last fix     : p=(%.3f, %.3f, %.3f) gdop=%.2f rms=%.3f n=%d/%d ambiguous=%s\n",
+                        static_cast<double>(result.lv2.p[0]), static_cast<double>(result.lv2.p[1]),
+                        static_cast<double>(result.lv2.p[2]), static_cast<double>(result.lv2.gdop),
+                        static_cast<double>(result.lv2.residualRms), result.lv2.nUsed, result.lv2.nTotal,
+                        result.lv2.ambiguous ? "yes" : "no");
+        } else {
+            std::printf("  last fix     : (未取得 / 直近は測位不能)\n");
+        }
     } else {
-        std::printf("  last fix     : (未取得 / 直近は測位不能)\n");
+        std::printf("  last cycle   : (測位サービスからまだ結果を受け取っていません)\n");
     }
     std::printf("  free heap    : %lu bytes\n", static_cast<unsigned long>(esp_get_free_heap_size()));
     return 0;
@@ -634,10 +758,10 @@ void registerCommands()
  * 公開 API
  * ==================================================================== */
 
-bool sharedInit(const uwb::AnchorEntry* initial, size_t initialCount, const StaticInfo& info)
+bool sharedInit(uwb::AnchorTable& table, uwb::RangingService& service, const StaticInfo& info)
 {
-    if (initial == nullptr || info.defaults == nullptr) {
-        ESP_LOGE(kLogTag, "sharedInit() に nullptr が渡されました");
+    if (info.defaults == nullptr) {
+        ESP_LOGE(kLogTag, "sharedInit() に defaults=nullptr の StaticInfo が渡されました");
         return false;
     }
     if (g_mutex == nullptr) {
@@ -648,45 +772,23 @@ bool sharedInit(const uwb::AnchorEntry* initial, size_t initialCount, const Stat
         return false;
     }
 
-    g_info      = info;
-    g_editCount = (initialCount < uwb::kMaxAnchors) ? initialCount : uwb::kMaxAnchors;
-    for (size_t i = 0; i < g_editCount; ++i) {
-        g_edit[i] = initial[i];
-    }
-    // 起動直後は測位ループへ渡すべき差分は無い（同じ内容で始まっているため）。
-    g_pending    = false;
-    g_saved      = (info.source == uwb::ConfigSource::Nvs);
-    g_status     = Status{};
-    g_jsonOutput = true;
+    g_table   = &table;
+    g_service = &service;
+    g_info     = info;
+    g_saved    = (info.source == uwb::ConfigSource::Nvs);
+    g_jsonOutput       = true;
+    g_tableGeneration = 0;
     return true;
 }
 
-bool takePendingTable(uwb::AnchorEntry* out, size_t outCap, size_t* outCount)
+uint32_t tableGeneration()
 {
-    if (out == nullptr || outCount == nullptr || !lock()) {
-        return false;
-    }
-    if (!g_pending) {
+    uint32_t v = 0;
+    if (lock()) {
+        v = g_tableGeneration;
         unlock();
-        return false;
     }
-    const size_t count = (g_editCount < outCap) ? g_editCount : outCap;
-    for (size_t i = 0; i < count; ++i) {
-        out[i] = g_edit[i];
-    }
-    *outCount = count;
-    g_pending  = false;
-    unlock();
-    return true;
-}
-
-void publishStatus(const Status& status)
-{
-    if (!lock()) {
-        return;
-    }
-    g_status = status;
-    unlock();
+    return v;
 }
 
 bool jsonOutputEnabled()

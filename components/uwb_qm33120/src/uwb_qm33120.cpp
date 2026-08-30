@@ -699,6 +699,12 @@ bool Qm33120::init(const PhyConfig& phy)
                  timingProfileName(requested));
     }
 
+    // docs/ARCHITECTURE_V2.md §4: record the PhyConfig actually resolved
+    // above (resolvedPHY - may differ from the caller's raw `phy` argument
+    // if only `channel` was non-default, see resolvePHYConfig()/R7) so
+    // logPhy() can report what really got written to the chip.
+    _impl->applied_phy = resolvedPHY;
+
     _impl->initialized = true;
     setError(Error::Ok);
     return true;
@@ -1035,6 +1041,11 @@ bool Qm33120::isInitialized() const
 bool Qm33120::irqActive() const
 {
     return _impl->irq_active;
+}
+
+uint16_t Qm33120::txAntennaDelay() const
+{
+    return _impl->tx_antenna_delay;
 }
 
 Error Qm33120::lastError() const

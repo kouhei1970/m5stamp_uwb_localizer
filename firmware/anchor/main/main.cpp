@@ -56,6 +56,8 @@
 #include "uwb_port.h"
 #include "uwb_status_led.h"
 #include "uwb_qm33120.hpp"
+#include "uwb_qm33120_distance_stats.hpp" // uwb::DistanceStats (docs/ARCHITECTURE_V2.md §2.3, moved here from a local copy - see below)
+#include "uwb_qm33120_phy_kconfig.hpp" // docs/ARCHITECTURE_V2.md §4: phyConfigFromKconfig()
 
 #if CONFIG_UWB_ANCHOR_CONSOLE
 #include "anchor_console.hpp"
@@ -135,27 +137,17 @@ static inline uint16_t currentShortAddr()
 /**
  * @brief 距離サンプル(mm)の平均・標準偏差をオンライン計算する
  * (Welfordのアルゴリズム)。全サンプルを保持せずに済むので長時間の実機運用に使える。
- * firmware/twr/main/main.cpp の DistanceStats と同一実装。
+ *
+ * 【docs/ARCHITECTURE_V2.md §2.3】以前はここにローカル定義（firmware/twr/main/
+ * main.cpp の DistanceStats と同一実装）を持っていたが、新設の
+ * uwb::Responder（components/uwb_qm33120/include/uwb_qm33120_responder_fsm.hpp
+ * の ResponderStats::distance）も同じ実装を必要としたため、
+ * components/uwb_qm33120/include/uwb_qm33120_distance_stats.hpp（ESP-IDF非依存）
+ * へ移し、ここではそちらの型を使う（呼び出し側のコード
+ * DistanceStats stats; stats.add(...); stats.mean; stats.stddev(); は無改造）。
+ * firmware/twr は引き続き自前のローカル定義を持つ（未変更、単独ビルド可能）。
  */
-struct DistanceStats {
-    uint32_t count = 0;
-    double mean    = 0.0;
-    double m2      = 0.0;
-
-    void add(float distanceMm)
-    {
-        count++;
-        const double delta = static_cast<double>(distanceMm) - mean;
-        mean += delta / static_cast<double>(count);
-        const double delta2 = static_cast<double>(distanceMm) - mean;
-        m2 += delta * delta2;
-    }
-
-    double stddev() const
-    {
-        return (count < 2) ? 0.0 : std::sqrt(m2 / static_cast<double>(count - 1));
-    }
-};
+using DistanceStats = uwb::DistanceStats;
 
 /**
  * @brief 測距統計をコンソール(info コマンド)へ公開する。
@@ -424,7 +416,10 @@ extern "C" void app_main(void)
 
     uwb::Qm33120 uwbDevice;
     const uwb::Config cfg = makeConfigFromBoard();
-    const uwb::PhyConfig phy; // 既定値: ch9, preamble128, PAC8, 6.8Mbps (uwb_qm33120_types.hpp参照)
+    // docs/ARCHITECTURE_V2.md §4: PHY を共通 Kconfig (UWB_PHY_*,
+    // components/uwb_qm33120/Kconfig) から選ぶ。firmware/tag はまだこの関数を
+    // 使っておらず uwb::PhyConfig の構造体既定のまま（別エージェント作業中）。
+    const uwb::PhyConfig phy = uwb::phyConfigFromKconfig();
 
     if (!uwbDevice.begin(cfg, phy)) {
         ESP_LOGE(TAG, "begin() failed: error=%s", uwbDevice.lastErrorName());
@@ -443,6 +438,24 @@ extern "C" void app_main(void)
         ESP_LOGE(TAG, "PHY init did not complete (isInitialized()==false), aborting");
         return;
     }
+
+    // docs/ARCHITECTURE_V2.md §4: 実際に適用された PHY 設定を起動ログへ出す
+    // （firmware/twr と同じ書式。スクリプトが grep する）。
+    uwbDevice.logPhy(TAG);
+
+#if defined(CONFIG_UWB_PHY_PLL_COARSE_CH9) && (CONFIG_UWB_PHY_PLL_COARSE_CH9 != 0)
+    // docs/ARCHITECTURE_V2.md §4: firmware/twr の DIAG_PLL_COARSE_CH9 の
+    // 本番機版。非ゼロなら begin() 直後に ch9 の PLL 粗調整コードを強制する。
+    {
+        const bool pllOk = uwbDevice.forcePllCoarse(static_cast<uint8_t>(CONFIG_UWB_PHY_PLL_COARSE_CH9));
+        if (!pllOk) {
+            ESP_LOGW(TAG,
+                     "forcePllCoarse(0x%02X) could not lock the forced code; radio fell back to its normal "
+                     "calibration path (see the DIAG_PLL_COARSE(*) lines above)",
+                     (unsigned)CONFIG_UWB_PHY_PLL_COARSE_CH9);
+        }
+    }
+#endif
 
     // init() may have downgraded the requested TIMING_PROFILE to PollingBoth
     // if the IRQ line turned out to be dead (Qm33120::verifyIrqLine()). Carry

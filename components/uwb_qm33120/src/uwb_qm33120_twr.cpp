@@ -601,43 +601,30 @@ ResponderResult Qm33120::respondRange(const RangeConfig& range)
                                        parsed.src, extended, timingPeerVersion, timingPeerProfile);
                 }
 
-                uint8_t ts[5] = {0};
-                dwt_readrxtimestamp(ts, static_cast<dwt_ip_sts_segment_e>(0));
-                const uint64_t pollRxTs = detail::get40le(ts);
-                const uint32_t respTxTime =
-                    static_cast<uint32_t>((pollRxTs + (range.responseTxDelayUus * detail::kUusToDwtTime)) >> 8);
-                const uint64_t respTxTs =
-                    ((static_cast<uint64_t>(respTxTime & 0xFFFFFFFEUL)) << 8) + _impl->tx_antenna_delay;
+                // 【docs/ARCHITECTURE_V2.md §1、2026-08-30追記】Response の
+                // 組み立て・遅延送信の予約・エラッタ検査は
+                // detail::buildAndArmResponse() に共通化した（uwb::Responder
+                // と共有、uwb_qm33120_internal.hpp 参照）。数式・バイト位置・
+                // 呼び出し順序は元のまま（一切変更していない）。
+                uint64_t pollRxTs = 0;
+                const char respPrefix[3] = {'T', 'W', 'R'}; // 【タスクC-2】"TWR"11バイト->13バイト (docs/TIMING_PRESETS.md §3.2)。
+                const detail::ResponseArmOutcome arm = detail::buildAndArmResponse(
+                    respPrefix, /*responseExpected=*/false, /*rxAfterTxDelayUus=*/0U, /*rxTimeoutUus=*/0U,
+                    parsed.sequence, range.panId, range.responderAddress, parsed.src, range.responseTxDelayUus,
+                    _impl->tx_antenna_delay, static_cast<uint8_t>(_impl->config.timing_profile), pollRxTs);
 
-                // 【タスクC-2】Response ペイロードにもプリセットの版/種別を
-                // 載せる (docs/TIMING_PRESETS.md §3.2: "TWR" 11バイト -> 13バイト)。
-                uint8_t respPayload[13] = {'T', 'W', 'R'};
-                detail::set32le(&respPayload[3], static_cast<uint32_t>(pollRxTs));
-                detail::set32le(&respPayload[7], static_cast<uint32_t>(respTxTs));
-                respPayload[11] = kTimingPresetVersion;
-                respPayload[12] = static_cast<uint8_t>(_impl->config.timing_profile);
+                // 締切まで何µs残っていたか（予約する直前に測った値）。負なら
+                // dwt_starttx() は送信を取り消す（detail::delayedTxMarginUs()
+                // のコメント参照）ので、TxStartFailed の原因がここで確定する。
+                result.txMarginUs = arm.txMarginUs;
 
-                uint8_t respFrame[22] = {0};
-                detail::buildShortAddressFrame(respFrame, parsed.sequence, range.panId, range.responderAddress,
-                                                parsed.src, respPayload, sizeof(respPayload));
-
-                dwt_setdelayedtrxtime(respTxTime);
-                if (dwt_writetxdata(sizeof(respFrame), respFrame, 0) != DWT_SUCCESS) {
+                if (arm.dataFailed) {
                     detail::stopRadioAndClearTxStatus();
                     result.error = Error::TxDataFailed;
                     setError(result.error);
                     return result;
                 }
-                dwt_writetxfctrl(sizeof(respFrame) + FCS_LEN, 0, 1);
-
-                // 締切まで何µs残っているかを、予約する直前に測って持ち出す。
-                // 負なら dwt_starttx() は送信を取り消す（detail::delayedTxMarginUs()
-                // のコメント参照）ので、TxStartFailed の原因がここで確定する。
-                // Carry out how much of the deadline is left, measured just
-                // before arming: a negative margin is why dwt_starttx() fails.
-                result.txMarginUs = detail::delayedTxMarginUs(respTxTime);
-
-                if (dwt_starttx(DWT_START_TX_DELAYED) != DWT_SUCCESS) {
+                if (arm.startFailed) {
                     detail::stopRadioAndClearTxStatus();
                     result.requester = parsed.src;
                     result.sequence   = parsed.sequence;
@@ -645,15 +632,12 @@ ResponderResult Qm33120::respondRange(const RangeConfig& range)
                     setError(result.error);
                     return result;
                 }
-
-                // 【2026-08-29 DS-TWR原因特定、docs/HANDOFF.md §0-C(2)】
-                // dwt_starttx()はDWT_SUCCESSを返したが、DW3000 UM §9.4.1
-                // エラッタ（予約締切に対しリード時間が足りず無警告で未送信）
-                // にチップが陥っていないかを直接検査する。detail::
-                // abortIfDelayedTxWedged() のコメント参照。
-                // dwt_starttx() succeeded, but check for the UM §9.4.1
-                // errata (accepted, yet silently not transmitted).
-                if (detail::abortIfDelayedTxWedged()) {
+                if (arm.wedged) {
+                    // 【2026-08-29 DS-TWR原因特定、docs/HANDOFF.md §0-C(2)】
+                    // dwt_starttx()はDWT_SUCCESSを返したが、DW3000 UM §9.4.1
+                    // エラッタ（予約締切に対しリード時間が足りず無警告で未送信）
+                    // にチップが陥っていた（detail::abortIfDelayedTxWedged()、
+                    // buildAndArmResponse() 内部で検査済み）。
                     result.txWedged  = true;
                     result.requester = parsed.src;
                     result.sequence  = parsed.sequence;
@@ -662,35 +646,29 @@ ResponderResult Qm33120::respondRange(const RangeConfig& range)
                     return result;
                 }
 
-                // 【修正1】遅延送信の予約（dwt_setdelayedtrxtime()〜
-                // dwt_starttx(DELAYED)成功）が完全に終わった後なので、ここで
-                // 初めてタイミング不一致のログを出す。数百バイトの日本語
-                // ESP_LOGWが遅くても、もう予約時刻に影響しない。
+                // 【修正1】遅延送信の予約（buildAndArmResponse() 内部の
+                // dwt_setdelayedtrxtime()〜dwt_starttx(DELAYED)成功）が完全に
+                // 終わった後なので、ここで初めてタイミング不一致のログを出す。
+                // 数百バイトの日本語ESP_LOGWが遅くても、もう予約時刻に影響しない。
                 logTimingMismatch(timingMismatchKind, "respondRange: Poll<-TAG", parsed.src,
                                    _impl->config.timing_profile, timingPeerVersion, timingPeerProfile);
 
-                const uint32_t txStartMs = detail::nowMs();
-                while ((detail::nowMs() - txStartMs) < 20) {
-                    const uint32_t txStatus = dwt_readsysstatuslo();
-                    if ((txStatus & DWT_INT_TXFRS_BIT_MASK) != 0) {
-                        dwt_writesysstatuslo(DWT_INT_TXFRS_BIT_MASK);
-                        // Received-power indication for the Poll just decoded.
-                        // 受信できた Poll フレームの強さの指標。
-                        {
-                            const detail::RxPower power = detail::readRxPower();
-                            result.rslDbmQ8     = power.rslQ8;
-                            result.fpDbmQ8      = power.fpQ8;
-                            result.rxAccumCount = power.accumCount;
-                        }
-                        result.success   = true;
-                        result.sequence  = parsed.sequence;
-                        result.requester = parsed.src;
-                        result.elapsedMs = detail::nowMs() - startMs;
-                        result.error     = Error::Ok;
-                        setError(Error::Ok);
-                        return result;
+                if (detail::waitTxFrsBounded(20)) {
+                    // Received-power indication for the Poll just decoded.
+                    // 受信できた Poll フレームの強さの指標。
+                    {
+                        const detail::RxPower power = detail::readRxPower();
+                        result.rslDbmQ8     = power.rslQ8;
+                        result.fpDbmQ8      = power.fpQ8;
+                        result.rxAccumCount = power.accumCount;
                     }
-                    vTaskDelay(pdMS_TO_TICKS(1));
+                    result.success   = true;
+                    result.sequence  = parsed.sequence;
+                    result.requester = parsed.src;
+                    result.elapsedMs = detail::nowMs() - startMs;
+                    result.error     = Error::Ok;
+                    setError(Error::Ok);
+                    return result;
                 }
 
                 detail::stopRadioAndClearTxStatus();
@@ -1176,60 +1154,47 @@ DSResponderResult Qm33120::respondDSRange(const DSRangeConfig& range)
         return result;
     }
 
-    const uint64_t pollRxTs = detail::readRxTimestamp64();
-    const uint32_t respTxTime =
-        static_cast<uint32_t>((pollRxTs + (range.responseTxDelayUus * detail::kUusToDwtTime)) >> 8);
-    const uint64_t respTxTsPlan =
-        ((static_cast<uint64_t>(respTxTime & 0xFFFFFFFEUL)) << 8) + _impl->tx_antenna_delay;
+    // 【docs/ARCHITECTURE_V2.md §1、2026-08-30追記】Response の組み立て・
+    // 遅延送信の予約・エラッタ検査は detail::buildAndArmResponse() に
+    // 共通化した（uwb::Responder と共有、uwb_qm33120_internal.hpp 参照）。
+    // 数式・バイト位置・呼び出し順序（dwt_setdelayedtrxtime() ->
+    // dwt_setrxaftertxdelay() -> dwt_setrxtimeout() ->
+    // dwt_setpreambledetecttimeout(0) -> dwt_writetxdata() -> ...）は元のまま。
+    // 【R9】Final待ち受け直前のプリアンブル検出タイムアウトを0(無効)にする
+    // 理由は本ファイル冒頭R9コメント参照（PRETOCはRXが開放された時刻を
+    // 起点に走るタイマーで、本実装はRXをTagのFinal送信予定より早く開ける
+    // 設計のため、公式サンプルのPRE_TIMEOUT=5をそのまま使うと必ずRXPTOになる）。
+    uint64_t pollRxTs         = 0;
+    const char respPrefix[3] = {'D', 'W', 'R'}; // 【タスクC-2】"DWR"11バイト->13バイト (docs/TIMING_PRESETS.md §3.2)。
+    const detail::ResponseArmOutcome arm = detail::buildAndArmResponse(
+        respPrefix, /*responseExpected=*/true, range.finalRxAfterResponseTxDelayUus, range.rxTimeoutUus,
+        parsed.sequence, range.panId, range.responderAddress, parsed.src, range.responseTxDelayUus,
+        _impl->tx_antenna_delay, static_cast<uint8_t>(_impl->config.timing_profile), pollRxTs);
 
-    // 【タスクC-2】Response ペイロードにもプリセットの版/種別を載せる
-    // (docs/TIMING_PRESETS.md §3.2: "DWR" 11バイト -> 13バイト)。
-    uint8_t respPayload[13] = {'D', 'W', 'R'};
-    detail::set32le(&respPayload[3], static_cast<uint32_t>(pollRxTs));
-    detail::set32le(&respPayload[7], static_cast<uint32_t>(respTxTsPlan));
-    respPayload[11] = kTimingPresetVersion;
-    respPayload[12] = static_cast<uint8_t>(_impl->config.timing_profile);
+    // Response の遅延送信の締切まで何µs残っていたか（予約する直前に測った
+    // 値）。負なら dwt_starttx() は送信を取り消し、タグ側は「電波が来て
+    // いない」と区別できない失敗（RXFTO のみ）を見ることになる。
+    result.txMarginUs = arm.txMarginUs;
 
-    uint8_t respFrame[22] = {0};
-    detail::buildShortAddressFrame(respFrame, parsed.sequence, range.panId, range.responderAddress, parsed.src,
-                                    respPayload, sizeof(respPayload));
-
-    dwt_setdelayedtrxtime(respTxTime);
-    dwt_setrxaftertxdelay(range.finalRxAfterResponseTxDelayUus);
-    dwt_setrxtimeout(range.rxTimeoutUus);
-    // 【R9】Final待ち受け直前のプリアンブル検出タイムアウト。0=無効。
-    // PRETOCはRXが開放された時刻を起点に走るタイマーであり（本ファイル
-    // 冒頭R9コメント参照）、本実装はRXをTagのFinal送信予定より早く開ける
-    // 設計（PollingBoth: Response送信後3000 UUSでRX開始）なので、公式
-    // ex_05b_ds_twr_resp/ds_twr_responder.c:90,200-203のPRE_TIMEOUT=5を
-    // そのまま設定すると必ずRXPTOで失敗する。Poll待ち（本関数冒頭、
-    // 相手がいつ来るか分からない開放待ち）も同じ理由で0のまま据え置く。
-    dwt_setpreambledetecttimeout(0);
-    if (dwt_writetxdata(sizeof(respFrame), respFrame, 0) != DWT_SUCCESS) {
+    if (arm.dataFailed) {
         detail::stopRadioAndClearIoStatus();
         result.error = Error::TxDataFailed;
         result.stage = DSResponderStage::ResponseTx;
         setError(result.error);
         return result;
     }
-    dwt_writetxfctrl(sizeof(respFrame) + FCS_LEN, 0, 1);
-    // Response の遅延送信の締切まで何µs残っているか（detail::delayedTxMarginUs()）。
-    // 負なら dwt_starttx() は送信を取り消し、タグ側は「電波が来ていない」と
-    // 区別できない失敗（RXFTO のみ）を見ることになる。
-    // How much of the Response deadline is left; negative is why starttx fails.
-    result.txMarginUs = detail::delayedTxMarginUs(respTxTime);
-    if (dwt_starttx(DWT_START_TX_DELAYED | DWT_RESPONSE_EXPECTED) != DWT_SUCCESS) {
+    if (arm.startFailed) {
         detail::stopRadioAndClearIoStatus();
         result.error = Error::TxStartFailed;
         result.stage = DSResponderStage::ResponseTx;
         setError(result.error);
         return result;
     }
-
-    // 【2026-08-29 DS-TWR原因特定、docs/HANDOFF.md §0-C(2)】dwt_starttx()
-    // 成功後、UM §9.4.1 エラッタで実際には送信されていないケースを検出する
-    // （detail::abortIfDelayedTxWedged() のコメント参照）。
-    if (detail::abortIfDelayedTxWedged()) {
+    if (arm.wedged) {
+        // 【2026-08-29 DS-TWR原因特定、docs/HANDOFF.md §0-C(2)】dwt_starttx()
+        // はDWT_SUCCESSを返したが、UM §9.4.1 エラッタで実際には送信されて
+        // いなかった（detail::abortIfDelayedTxWedged()、buildAndArmResponse()
+        // 内部で検査済み）。
         result.txWedged = true;
         result.error    = Error::TxStartFailed;
         result.stage    = DSResponderStage::ResponseTx;
@@ -1317,20 +1282,13 @@ DSResponderResult Qm33120::respondDSRange(const DSRangeConfig& range)
         return result;
     }
 
-    const uint64_t finalRxTs   = detail::readRxTimestamp64();
-    const uint32_t pollTxTs32  = detail::get32le(&finalFrame[12]);
-    const uint32_t respRxTs32  = detail::get32le(&finalFrame[16]);
-    const uint32_t finalTxTs32 = detail::get32le(&finalFrame[20]);
-    const uint32_t pollRxTs32  = static_cast<uint32_t>(pollRxTs);
-    const uint32_t respTxTs32  = static_cast<uint32_t>(detail::readTxTimestamp64());
-    const uint32_t finalRxTs32 = static_cast<uint32_t>(finalRxTs);
-
-    const double ra          = static_cast<double>(static_cast<uint32_t>(respRxTs32 - pollTxTs32));
-    const double rb          = static_cast<double>(static_cast<uint32_t>(finalRxTs32 - respTxTs32));
-    const double da          = static_cast<double>(static_cast<uint32_t>(finalTxTs32 - respRxTs32));
-    const double db          = static_cast<double>(static_cast<uint32_t>(respTxTs32 - pollRxTs32));
-    const double denominator = ra + rb + da + db;
-    if (denominator <= 0.0) {
+    // 【docs/ARCHITECTURE_V2.md §1、2026-08-30追記】距離計算(非対称DS-TWR式)
+    // と Result("DWD")の組み立て・送信は detail::computeDsDistance() /
+    // detail::sendDsResult() に共通化した（uwb::Responder と共有、
+    // uwb_qm33120_internal.hpp 参照）。数式・バイト位置・送信リピートの
+    // 仕組みは元のまま。
+    const detail::DsDistanceResult dist = detail::computeDsDistance(finalFrame, pollRxTs);
+    if (!dist.valid) {
         result.sequence  = parsed.sequence;
         result.requester = parsed.src;
         result.elapsedMs = detail::nowMs() - startMs;
@@ -1342,51 +1300,14 @@ DSResponderResult Qm33120::respondDSRange(const DSRangeConfig& range)
         setError(result.error);
         return result;
     }
+    result.distanceM  = dist.distanceM;
+    result.distanceMm = dist.distanceMm;
 
-    const double tofDtu = ((ra * rb) - (da * db)) / denominator;
-    const double tof    = tofDtu * DWT_TIME_UNITS;
-    result.distanceM    = static_cast<float>(tof * detail::kSpeedOfLightMPerS);
-    result.distanceMm   = static_cast<int32_t>((result.distanceM * 1000.0f) + (result.distanceM >= 0 ? 0.5f : -0.5f));
+    const detail::DsResultSendOutcome sendOutcome = detail::sendDsResult(
+        parsed.sequence, range.panId, range.responderAddress, parsed.src, dist.distanceMm, range.resultRepeatCount,
+        range.resultRepeatGapMs);
 
-    uint8_t distPayload[7] = {'D', 'W', 'D'};
-    detail::set32le(&distPayload[3], static_cast<uint32_t>(result.distanceMm));
-    uint8_t distFrame[16] = {0};
-    detail::buildShortAddressFrame(distFrame, parsed.sequence, range.panId, range.responderAddress, parsed.src,
-                                    distPayload, sizeof(distPayload));
-
-    uint8_t sentCount         = 0;
-    const uint8_t repeatCount = range.resultRepeatCount == 0 ? 1 : range.resultRepeatCount;
-    for (uint8_t i = 0; i < repeatCount; ++i) {
-        dwt_writesysstatuslo(DWT_INT_TXFRS_BIT_MASK);
-        if (dwt_writetxdata(sizeof(distFrame), distFrame, 0) != DWT_SUCCESS) {
-            continue;
-        }
-        dwt_writetxfctrl(sizeof(distFrame) + FCS_LEN, 0, 0);
-        if (dwt_starttx(DWT_START_TX_IMMEDIATE) != DWT_SUCCESS) {
-            detail::stopRadioAndClearTxStatus();
-            continue;
-        }
-
-        bool txDone              = false;
-        const uint32_t txStartMs = detail::nowMs();
-        while ((detail::nowMs() - txStartMs) < 20) {
-            if ((dwt_readsysstatuslo() & DWT_INT_TXFRS_BIT_MASK) != 0) {
-                dwt_writesysstatuslo(DWT_INT_TXFRS_BIT_MASK);
-                txDone = true;
-                sentCount++;
-                break;
-            }
-            vTaskDelay(pdMS_TO_TICKS(1));
-        }
-        if (!txDone) {
-            detail::stopRadioAndClearTxStatus();
-        }
-        if (i + 1 < repeatCount) {
-            vTaskDelay(pdMS_TO_TICKS(range.resultRepeatGapMs));
-        }
-    }
-
-    result.success   = sentCount > 0;
+    result.success   = sendOutcome.sentCount > 0;
     result.sequence  = parsed.sequence;
     result.requester = parsed.src;
     result.elapsedMs = detail::nowMs() - startMs;

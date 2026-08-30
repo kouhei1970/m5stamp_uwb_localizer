@@ -145,6 +145,64 @@ menu "UWB Tag Configuration"
             0 にすると stats 行そのものを出さない（従来どおり fix/meas/
             anchors のみ）。
 
+    config UWB_TAG_SERVICE_TASK_CORE
+        int "uwb_ranging_svc タスク（測距・測位を回す唯一のタスク）を割り当てるコア"
+        range 0 1
+        default 1
+        help
+            uwb::RangingService::start() が xTaskCreatePinnedToCore() へ渡す
+            コア番号（docs/ARCHITECTURE_V2.md §3.1/§3.2）。電波（UWBチップ）を
+            触るのはこのタスクだけ。既定は 1（コア0はコンソール REPL と
+            uwb_log タスクに譲る）。
+
+    config UWB_TAG_SERVICE_TASK_PRIO
+        int "uwb_ranging_svc タスクの優先度"
+        range 1 24
+        default 18
+        help
+            uwb::RangingService::start() が xTaskCreatePinnedToCore() へ渡す
+            優先度。無線の応答待ち（W4R/RXタイムアウト等）に遅れが出ないよう、
+            他の常駐タスク（コンソール REPL・uwb_log。後者は既定 prio=10 固定、
+            main.cpp の kLogTaskPrio）より高く設定してあること。
+
+    config UWB_TAG_SERVICE_TASK_STACK
+        int "uwb_ranging_svc タスクのスタックサイズ [bytes]"
+        range 4096 32768
+        default 8192
+        help
+            uwb::RangingService::start() が xTaskCreatePinnedToCore() へ渡す
+            スタックサイズ。このタスクは RangingScheduler::runCycle()
+            （TWR往復）と PositioningPipeline::solve()/updateEkf()（Lv0/Lv2/
+            EKFソルバ）を毎周期呼ぶ — v1 では app_main のタスクスタック
+            （CONFIG_ESP_MAIN_TASK_STACK_SIZE、sdkconfig.defaults で12288に
+            引き上げ済み。理由は9x9 double行列を積むEKF連鎖 約3.5KB +
+            Lv0/Lv2経路 約2KB。docs/REVIEW_2026-08-21.md §0 #3参照）で
+            発生していたのと同じ呼び出し連鎖がこちらに移った。
+
+            **未測定**（実機が無いため計測できていない）: 上のv1実測の内訳
+            （EKF連鎖3.5KB + Lv0/Lv2 2KB ≈ 5.5KB）に、TWR往復自体のローカル
+            変数・呼び出しフレーム（Qm33120::requestDSRange() 等、SPI/IRQ
+            待ちを含む）の見積り分を足して8192を既定にした。5秒後の
+            uxTaskGetStackHighWaterMark() ログ（uwb_log タスクが出す）で
+            実測し、2KB未満ならこの値を上げること。
+
+    config UWB_TAG_LOG_TASK_STACK
+        int "uwb_log タスク（JSON Lines出力・診断ログ）のスタックサイズ [bytes]"
+        range 4096 32768
+        default 6144
+        help
+            main.cpp が起こす uwb_log タスク（コア0固定、優先度は
+            uwb_ranging_svc より低い固定値10）のスタックサイズ。
+            JSON整形用の2KBバッファ（g_jsonBuf）自体は .bss 上に置いてあり
+            タスクスタックは消費しないが、printf系（vsnprintf/fputs）の
+            内部フレームと、旧コンソールの `replCfg.task_stack_size=6144`
+            （anchor list が1行あたり4個の浮動小数点をprintfする分の余裕を
+            見て設定されていた値）を参考に、同じ6144を既定にした。
+
+            **未測定**（実機が無いため計測できていない）。5秒後の
+            uxTaskGetStackHighWaterMark() ログで実測し、2KB未満ならこの値を
+            上げること。
+
     config UWB_TAG_CONSOLE
         bool "シリアルコンソール (USB-Serial/JTAG) を有効にする"
         default y

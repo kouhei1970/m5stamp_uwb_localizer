@@ -1,16 +1,22 @@
-# uwb_ranging — アンカー登録テーブル + 測距スケジューラ + 測位パイプライン。
+# uwb_ranging — アンカー登録テーブル + 測距スケジューラ + 測位パイプライン
+# + RangingService（タグの測距・測位を1本の専用タスクにまとめたサービス、
+# docs/ARCHITECTURE_V2.md §3.1）。
 #
 # ハード非依存部分（uwb_ranging_anchor_table.cpp / uwb_ranging_pipeline.cpp、
-# uwb_loc.h にしか依存しない）と、ハード依存部分（uwb_ranging_scheduler.cpp、
-# uwb_qm33120 経由でTWRを叩く）に分かれている。ハード非依存部分は
-# tests/host/pipeline がホストで直接コンパイルする対象でもある
-# （そちらは本 CMakeLists を使わず、Makefile が同じ2ファイルを直接指定する）。
+# uwb_loc.h にしか依存しない）と、ハード依存部分（uwb_ranging_scheduler.cpp /
+# uwb_ranging_service.cpp、uwb_qm33120・FreeRTOS 経由でTWRを叩く）に
+# 分かれている。ハード非依存部分は tests/host/pipeline がホストで直接
+# コンパイルする対象でもある（そちらは本 CMakeLists を使わず、Makefile が
+# 同じ2ファイルを名指しで指定する。uwb_ranging_scheduler.cpp /
+# uwb_ranging_service.cpp はその Makefile には**含めない** — ホストには
+# UWBチップもESP-IDF/FreeRTOSも無いため）。
 
 idf_component_register(
     SRCS
         "src/uwb_ranging_anchor_table.cpp"
         "src/uwb_ranging_pipeline.cpp"
         "src/uwb_ranging_scheduler.cpp"
+        "src/uwb_ranging_service.cpp"
     INCLUDE_DIRS
         "include"
     REQUIRES

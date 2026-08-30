@@ -128,6 +128,79 @@ public:
      */
     bool irqActive() const;
 
+    /**
+     * @brief Force the DW3720's channel-9 PLL VCO coarse-tune code to `code`
+     * and re-lock the PLL on it (docs/ARCHITECTURE_V2.md §4). Shared driver
+     * version of firmware/twr's `diagForcePllCoarseCh9()`
+     * (main.cpp, gated by Kconfig UWB_TWR_DIAG_PLL_COARSE_CH9) - same
+     * register-level procedure (three escalating raw-register sequences,
+     * see uwb_qm33120_phy_kconfig.cpp for the full rationale), parameterized
+     * by `code` instead of a fixed Kconfig value so tag/anchor/twr can each
+     * decide independently whether/when to call it.
+     *
+     * Background (measured on real hardware, firmware/twr): a boot at die
+     * temperature <=31degC gets PLL_COARSE_CODE's ch9 VCO coarse-tune field
+     * (bits[6:0]) = 0x23 (35, the OTP-programmed value) and 38-65% SS-TWR
+     * success; a boot at >=32degC gets 0x24 (36) and 10-20% success.
+     * Hypothesis: 0x24 leaves the VCO on a sub-band edge (worse phase
+     * noise). This function lets a caller force whichever code the cold-boot
+     * case gets, at whatever temperature the current boot happened to be at.
+     *
+     * Must be called after begin()/init() has succeeded (the chip has to be
+     * probed, configured and idle). Logs each attempted sequence and a final
+     * `"DIAG_PLL_COARSE: done ok=%d coarse_final=0x...` line under the
+     * "Qm33120" ESP_LOG tag - deliberately the SAME message text
+     * firmware/twr's own copy prints, since scripts grep for it.
+     *
+     * @param code  Ch9 VCO coarse-tune code to force, 0-127 (bits[6:0] of
+     *              PLL_COARSE_CODE's ch9 field; values outside that range are
+     *              masked to 7 bits before use, same as the Kconfig `range`).
+     * @return true if the PLL reports locked on `code` afterwards (readback
+     *         matched and PLL_STATUS's lock flag is set); false if every
+     *         escalation failed to lock and the function fell back to the
+     *         untouched normal calibration path (radio is left in a working,
+     *         though not necessarily forced, state either way - see the .cpp
+     *         for the fallback details).
+     */
+    bool forcePllCoarse(uint8_t code);
+
+    /**
+     * @brief Log the PHY configuration init() actually applied
+     * (docs/ARCHITECTURE_V2.md §4), in the exact format firmware/twr prints
+     * from main.cpp (`"phy: preamble=%u pac=%u rate=%s ch=%u code=%u/%u
+     * sfd=%u txpower=0x%08lX pgdelay=0x%02X"`) - scripts grep this line, so
+     * the format is reproduced verbatim rather than reinvented.
+     *
+     * Reads back Impl::applied_phy (the resolved PhyConfig init() stored on
+     * success - see resolvePHYConfig() in uwb_qm33120.cpp), not whatever
+     * PhyConfig the caller happened to pass to begin()/init(): if only
+     * `channel` differed from PhyConfig{}'s defaults, init() substitutes the
+     * built-in per-channel recommended profile, so the caller's own local
+     * variable can differ from what was actually written to the chip. Calling
+     * this before a successful begin()/init() logs PhyConfig{}'s defaults
+     * (Impl::applied_phy's own initializer), not a real reading.
+     *
+     * @param tag  ESP_LOG tag to log under (the caller's own tag, e.g.
+     *             "uwb_anchor") - unlike forcePllCoarse(), this line has no
+     *             fixed tag requirement, only a fixed message format.
+     */
+    void logPhy(const char* tag) const;
+
+    /**
+     * @brief The TX antenna delay init() applied (Impl::tx_antenna_delay,
+     * matching PhyConfig::txAntennaDelay from the last successful init()).
+     * New public accessor (docs/ARCHITECTURE_V2.md §2.2/§2.3): the manual
+     * antenna-delay addition when building a delayed-TX Response timestamp
+     * (uwb_qm33120_twr.cpp respondRange()/respondDSRange() cpp:610/1183 -
+     * "遅延送信の起動時刻" vs "アンテナから実際に電波が出る時刻" の差を
+     * 埋めるもの, see uwb_qm33120_twr.cpp's file header comment) needs this
+     * value, but `uwb::Responder` (uwb_qm33120_responder.cpp) is a separate
+     * class from Qm33120 and cannot reach Impl::tx_antenna_delay directly
+     * (Impl is a private nested type; Responder is not a friend). Read-only,
+     * no equivalent in the original M5Stamp_UWB.
+     */
+    uint16_t txAntennaDelay() const;
+
 private:
     struct Impl;
     Impl* _impl;

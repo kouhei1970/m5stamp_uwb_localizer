@@ -1,0 +1,101 @@
+# components/uwb_qm33120 共通 Kconfig (docs/ARCHITECTURE_V2.md §4)
+#
+# ESP-IDF はコンポーネントディレクトリ直下の `Kconfig` ファイルを自動的に
+# 取り込み、"Component config" メニューの下に出す（このファイルを
+# firmware/*/main/Kconfig.projbuild 側から include する必要は無い）。
+# uwb_qm33120 を REQUIRES するファーム（firmware/anchor, firmware/tag,
+# firmware/twr）ならどれでもこのメニューが出る。
+#
+# これは PHY（データ速度・プリアンブル長・送信電力・PGdelay・PLL粗調整）を
+# 個別ファームの DIAG_* オプションとしてではなく、tag/anchor/twr で共通に
+# 選べるようにするための本番向けオプション。firmware/twr の DIAG_PHY_* /
+# DIAG_TXPOWER / DIAG_PGDELAY / DIAG_PLL_COARSE_CH9 (main/Kconfig.projbuild)
+# と対応するが、twr 側は既存の DIAG_* のまま維持する（本ファイルの追加が
+# twr の挙動を変えることは無い）。
+#
+# uwb::phyConfigFromKconfig()（uwb_qm33120_phy_kconfig.hpp/.cpp）がこれらの
+# 値を uwb::PhyConfig へ変換する。
+
+menu "UWB PHY (uwb_qm33120)"
+
+    choice UWB_PHY_DATA_RATE
+        prompt "Data rate"
+        default UWB_PHY_DATA_RATE_6M8
+        help
+            uwb::PhyConfig::dataRate。本番既定は 6.8 Mbps（M5Stamp UWB Module
+            の既定値、uwb_qm33120_types.hpp PhyConfig::dataRate 参照）。
+            850 kbps は firmware/twr の実験（docs/HANDOFF.md）で誤り率が
+            大きく下がることが分かっている代替値。タグ・アンカー双方を
+            同じ値で焼くこと（片側だけ変えると測距が成立しない）。
+
+        config UWB_PHY_DATA_RATE_6M8
+            bool "6.8 Mbps (既定)"
+
+        config UWB_PHY_DATA_RATE_850K
+            bool "850 kbps"
+
+    endchoice
+
+    config UWB_PHY_PREAMBLE_LEN
+        int "Preamble length (symbols): 64 / 128 / 256 / 512 / 1024"
+        default 128
+        help
+            uwb::PhyConfig::preambleLength。有効な値は 64 / 128 / 256 / 512 /
+            1024 のみ（Kconfig の int 型は離散値の列挙を表現できないため、
+            範囲外の値は uwb::phyConfigFromKconfig() が実行時に警告して
+            128 (PAC8) へフォールバックする。firmware/twr の
+            UWB_TWR_DIAG_PHY_PREAMBLE と同じ制約）。
+
+            PAC（Preamble Acquisition Chunk）サイズは Qorvo 推奨規則で
+            プリアンブル長から自動的に決まる（docs/ARCHITECTURE_V2.md §4）:
+                64, 128  -> PAC8
+                256, 512 -> PAC16
+                1024     -> PAC32
+
+            タグ・アンカー双方を同じ値で焼くこと。
+
+    config UWB_PHY_TX_POWER
+        hex "TX_POWER register value (0xfefefefe = ch9 の Qorvo 既定)"
+        range 0x00000000 0xffffffff
+        default 0xfefefefe
+        help
+            uwb::PhyConfig::txPower。DW3720 の TX_POWER レジスタへそのまま
+            書き込まれる値（4バイト = TX_CP_PWR(STS)/TX_SHR_PWR/TX_PHR_PWR/
+            TX_DATA_PWR、上位バイトから順。deca_device_api.h dwt_txconfig_t
+            のコメント参照）。0xfefefefe は Qorvo リファレンス設計の ch9
+            最大値。firmware/twr の UWB_TWR_DIAG_TXPOWER と同じ意味。
+
+    config UWB_PHY_PG_DELAY
+        hex "TX pulse-generator delay / PGdly (0x34 = ch9 の Qorvo 既定)"
+        range 0x00 0x3F
+        default 0x34
+        help
+            uwb::PhyConfig::pgDelay。DW3720 の TX_CTRL_HI PG_DELAY
+            フィールドへ dwt_configuretxrf() 経由で書き込まれる、送信パルス
+            発生器の遅延（送信パルス帯域幅を決める）。0x34 は Qorvo
+            リファレンス設計の ch9 既定値。firmware/twr の
+            UWB_TWR_DIAG_PGDELAY と同じ意味。
+
+    config UWB_PHY_PLL_COARSE_CH9
+        hex "Force ch9 PLL VCO coarse-tune code after init (0x00 = 自動/無効)"
+        range 0x00 0x7F
+        default 0x00
+        help
+            0（既定）なら何もしない（通常のハードウェア PLL 校正のまま）。
+
+            非ゼロを指定すると、begin() 成功直後に
+            uwb::Qm33120::forcePllCoarse() を呼び、ch9 の PLL VCO 粗調整
+            コード（PLL_COARSE_CODE レジスタの ch9 フィールド、bits[6:0]）を
+            この値へ強制し、生レジスタ操作で PLL を再ロックする。
+
+            firmware/twr の診断オプション UWB_TWR_DIAG_PLL_COARSE_CH9 で
+            見つかった「SS-TWR の成功率がタグの init() 時点のダイ温度で
+            決まる（コールドブートでは 0x23、ウォームブートでは 0x24 になり
+            後者は成功率が落ちる）」という現象（docs/HANDOFF.md）への対策を
+            本番機でも使えるようにした共通版。手順そのものは
+            uwb::Qm33120::forcePllCoarse()（components/uwb_qm33120/src/
+            uwb_qm33120_phy_kconfig.cpp）に移植してあり、firmware/twr は
+            引き続き自前のコピー（main.cpp の diagForcePllCoarseCh9()）を
+            使う（本オプションを有効にしても firmware/twr の挙動は変わらない）。
+
+endmenu

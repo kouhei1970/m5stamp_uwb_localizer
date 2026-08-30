@@ -1210,6 +1210,70 @@ jq -r 'select(.type=="fix") | [.t, .ok, .ambiguous, .p[0], .p[1], .p[2], .gdop, 
 3. **タグを 1m 動かして、`p` が 1m 動くか。** 動かないなら座標系の取り違えです。
 4. **`cycle_ms` を記録する。** これが更新レートの実力値です。
 
+<a id="ranging-service"></a>
+
+### 8.6 タグをホストから使う（RangingService）
+
+ここまでの `firmware/tag` は「測距・測位した結果をシリアルへ JSON で流すだけの
+完成品ファーム」でした。将来 StampFly（本プロジェクトが想定するドローン機体）
+に載せて飛行制御と同居させる場合は、JSON を作ってシリアルへ書き出す代わりに、
+**測距・測位を行うプログラムの部品（タスク）から直接、位置の推定値を読み出す**
+形にしたくなります。それを行うのが `components/uwb_ranging` の
+`uwb::RangingService`（[`uwb_ranging_service.hpp`](../components/uwb_ranging/include/uwb_ranging_service.hpp)）です。
+
+`firmware/tag` 自体も v2 からこの `RangingService` を使っています。**電波
+（UWBチップ）を触るのは `RangingService` が起こす専用のタスク（`uwb_ranging_svc`）
+1本だけ**で、測距・測位の結果は次の2通りの受け渡し口から取り出せます
+（「タスク」は FreeRTOS の並行実行単位、「キュー」は先入れ先出しの受け渡し箱、
+「ミューテックス」は複数のタスクが同じデータを同時に触らないための排他ロック
+——これらの用語は以下でも使います）。
+
+| 受け渡し口 | 用途 | 特徴 |
+|---|---|---|
+| `getLatest(CycleResult&)` | 制御ループから「今の最新値」をいつでも取り出す | ブロックしない。1件ぶんのメールボックス（郵便受け）で、`seq`（周期番号。1から単調増加）を前回値と比べれば新しい値が来たか分かる |
+| `latestQueue()` | 「次の更新を待ってから使う」制御ループ向け | 長さ1のキュー。新しい結果が来るたびに前の値を上書きする（`xQueueOverwrite`）。`xQueueReceive()` で待てる |
+| `resultQueue()` | ログ・記録用 | 長さ4のキュー。取りこぼしたら古い方から捨てて詰め直す（drop-oldest）。`firmware/tag` の `uwb_log` タスクはこちらを使う |
+
+いずれも `CycleResult`（1周期ぶんの測距・測位結果。位置・各アンカーの測距値・
+計算時間などを1つの構造体にまとめたもの。ポインタを持たないので単純にコピー
+して使える）を運びます。
+
+将来 StampFly のホストタスク（推定器・飛行制御ループ）から使う最小例（10行）:
+
+```cpp
+// service は起動済みの uwb::RangingService への参照（別途 start() 済み）。
+// lastSeq は呼び出し側が static/メンバ変数として保持しておく初期値0の変数。
+uwb::CycleResult r;
+if (service.getLatest(r) && r.seq != lastSeq) {  // seq の変化で新しい周期か判定
+    lastSeq = r.seq;
+    if (r.lv2.ok && !r.lv2.ambiguous) {           // 測位成立 かつ 高さが信用できる
+        // r.lv2.p[0..2] [m] を推定器（EKF等）や制御ループへ入力する
+        estimator.fuseUwbPosition(r.lv2.p, r.tUs);
+    }
+}
+```
+
+アンカー登録テーブル（`uwb::AnchorTable`）を実行時に書き換える場合（本プロジェクトの
+コンソールの `anchor set` 等）は、必ず `service.tableMutex()` を取ってから
+`AnchorTable::update()`/`set()` を呼び、離してから `service.resetStats()` を
+呼んでください（`RangingService` は測距・測位の1周期の間ずっとこのミューテックスを
+保持するため、表を書き換えるコマンドは実行中の1周期ぶん待たされることがあります。
+設定作業はホットパスではないので許容しています。詳しくはヘッダのコメント、
+および `firmware/tag/main/tag_console.cpp` の実装を参照）。
+
+**関連する Kconfig**（`idf.py menuconfig` → `UWB Tag Configuration`）:
+
+| オプション | 既定 | 内容 |
+|---|---|---|
+| `CONFIG_UWB_TAG_SERVICE_TASK_CORE` | 1 | `uwb_ranging_svc` タスク（電波を触る唯一のタスク）を割り当てるコア |
+| `CONFIG_UWB_TAG_SERVICE_TASK_PRIO` | 18 | 同タスクの優先度 |
+| `CONFIG_UWB_TAG_SERVICE_TASK_STACK` | 8192 | 同タスクのスタックサイズ [bytes]（**未測定**。実機の `uxTaskGetStackHighWaterMark()` ログで確認すること） |
+| `CONFIG_UWB_TAG_LOG_TASK_STACK` | 6144 | JSON Lines 出力を担う `uwb_log` タスクのスタックサイズ [bytes]（同上、**未測定**） |
+
+`firmware/tag` は起動から5秒後に、上の2タスクぶんのスタック残量
+（`uxTaskGetStackHighWaterMark()`）を診断ログへ1回出します。2KB を切っていたら
+上のスタックサイズを上げてください。
+
 ---
 
 <a id="antenna-delay"></a>

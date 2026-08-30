@@ -5,6 +5,13 @@ idf_component_register(
         # respondDSRange, defined as a second translation unit of the same
         # Qm33120 class (see src/uwb_qm33120_twr.cpp header comment).
         "src/uwb_qm33120_twr.cpp"
+        # docs/ARCHITECTURE_V2.md §4: shared PHY Kconfig ->
+        # phyConfigFromKconfig() / Qm33120::forcePllCoarse() / Qm33120::logPhy().
+        "src/uwb_qm33120_phy_kconfig.cpp"
+        # docs/ARCHITECTURE_V2.md §2.2/§2.3: event-driven anchor responder
+        # (Responder class; the pure decision logic in
+        # include/uwb_qm33120_responder_fsm.hpp is header-only and has no .cpp).
+        "src/uwb_qm33120_responder.cpp"
     INCLUDE_DIRS
         "include"
     REQUIRES

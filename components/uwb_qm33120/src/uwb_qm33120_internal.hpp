@@ -31,12 +31,15 @@
 #include <cstring>
 
 #include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 #include "deca_device_api.h"
 #include "deca_private.h"     // dwt_readfromdevice() - raw register read, same pattern as firmware/twr, firmware/probe.
 #include "dw3720_deca_regs.h" // SYS_STATE_LO_ID/LEN - both qm33120w_sdk's public INCLUDE_DIRS ("." / "dw3720").
 
 #include "uwb_qm33120_frame_match.hpp"
+#include "uwb_qm33120_timing.hpp" // kTimingPresetVersion - used by buildAndArmResponse() below.
 #include "uwb_qm33120_types.hpp"
 
 namespace uwb::detail {
@@ -355,6 +358,201 @@ static inline bool abortIfDelayedTxWedged()
     dwt_writesysstatuslo(DWT_INT_TXFRS_BIT_MASK | SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR |
                           SYS_STATUS_ALL_RX_GOOD);
     return true;
+}
+
+/* ---------------------------------------------------------------------
+ * docs/ARCHITECTURE_V2.md §1 (2026-08-30 追記): "旧 respondRange()/
+ * respondDSRange() と新 Responder は、フレーム生成・遅延送信の予約・
+ * エラッタ検査・距離計算を detail:: の補助関数で共有し、コピーしない"。
+ *
+ * 以下の3組は、respondRange()/respondDSRange()（uwb_qm33120_twr.cpp、
+ * ロジック・数式・バイト位置は一切変更しない）と uwb::Responder
+ * （uwb_qm33120_responder.cpp、新規）の両方が呼ぶ共通実装。呼び出し側の
+ * 失敗時クリーンアップ（stopRadioAndClearTxStatus() か
+ * stopRadioAndClearIoStatus() か。SS/DS で元々違う）はここに含めない —
+ * 呼び出し側の責務のまま据え置くことで、2関数間の既存の違いを壊さずに
+ * 済む（詳細は各関数のコメント）。
+ * --------------------------------------------------------------------- */
+
+/**
+ * @brief Response（"TWR"/"DWR"）を組み立てて遅延送信を予約する
+ * （respondRange() cpp:604-663 / respondDSRange() cpp:1179-1238 相当）。
+ *
+ * SS は `rxAfterTxDelayUus=0, rxTimeoutUus=0, responseExpected=false`
+ * （respondRange() が受信ループの先頭で一度だけ設定した値を、ここでも
+ * 同じ値で再設定するだけなので無害 - 直前に別の値を設定するコードは
+ * どこにも無い）。DS は `rxAfterTxDelayUus=range.finalRxAfterResponseTxDelayUus,
+ * rxTimeoutUus=range.rxTimeoutUus, responseExpected=true` を渡す。
+ *
+ * 呼び出し側の失敗時クリーンアップ（dwt_forcetrxoff 相当）は含まない
+ * （上のコメント参照）。`pollRxTsOut` には、DS 側が Final 到着時の距離
+ * 計算（computeDsDistance()）で再び必要とする Poll の RX タイムスタンプ
+ * （40bit チップ時刻）を返す。
+ */
+struct ResponseArmOutcome {
+    bool dataFailed    = false; //!< dwt_writetxdata() failed (Error::TxDataFailed).
+    bool startFailed   = false; //!< dwt_starttx() failed (Error::TxStartFailed).
+    bool wedged        = false; //!< abortIfDelayedTxWedged() caught the UM §9.4.1 errata (Error::TxStartFailed, txWedged=true).
+    int32_t txMarginUs = 0;     //!< delayedTxMarginUs() captured right before dwt_starttx() (0 if dataFailed, matching the original functions never reaching that line either).
+};
+
+static inline ResponseArmOutcome buildAndArmResponse(const char (&payloadPrefix)[3], bool responseExpected,
+                                                       uint32_t rxAfterTxDelayUus, uint32_t rxTimeoutUus,
+                                                       uint8_t pollSequence, uint16_t panId, uint16_t selfAddr,
+                                                       uint16_t peerAddr, uint32_t responseTxDelayUus,
+                                                       uint16_t txAntennaDelay, uint8_t timingProfileRaw,
+                                                       uint64_t& pollRxTsOut)
+{
+    uint8_t ts[5] = {0};
+    dwt_readrxtimestamp(ts, static_cast<dwt_ip_sts_segment_e>(0));
+    const uint64_t pollRxTs = get40le(ts);
+    pollRxTsOut              = pollRxTs;
+
+    const uint32_t respTxTime =
+        static_cast<uint32_t>((pollRxTs + (responseTxDelayUus * kUusToDwtTime)) >> 8);
+    const uint64_t respTxTs = ((static_cast<uint64_t>(respTxTime & 0xFFFFFFFEUL)) << 8) + txAntennaDelay;
+
+    uint8_t respPayload[13] = {static_cast<uint8_t>(payloadPrefix[0]), static_cast<uint8_t>(payloadPrefix[1]),
+                                static_cast<uint8_t>(payloadPrefix[2])};
+    set32le(&respPayload[3], static_cast<uint32_t>(pollRxTs));
+    set32le(&respPayload[7], static_cast<uint32_t>(respTxTs));
+    respPayload[11] = kTimingPresetVersion;
+    respPayload[12] = timingProfileRaw;
+
+    uint8_t respFrame[22] = {0};
+    buildShortAddressFrame(respFrame, pollSequence, panId, selfAddr, peerAddr, respPayload, sizeof(respPayload));
+
+    dwt_setdelayedtrxtime(respTxTime);
+    dwt_setrxaftertxdelay(rxAfterTxDelayUus);
+    dwt_setrxtimeout(rxTimeoutUus);
+    dwt_setpreambledetecttimeout(0); // R9: PRETOC left disabled - see uwb_qm33120_twr.cpp's file header R9 comment.
+
+    ResponseArmOutcome outcome;
+    if (dwt_writetxdata(sizeof(respFrame), respFrame, 0) != DWT_SUCCESS) {
+        outcome.dataFailed = true;
+        return outcome;
+    }
+    dwt_writetxfctrl(sizeof(respFrame) + FCS_LEN, 0, 1);
+    outcome.txMarginUs = delayedTxMarginUs(respTxTime);
+
+    const uint32_t startFlags =
+        static_cast<uint32_t>(DWT_START_TX_DELAYED) | (responseExpected ? static_cast<uint32_t>(DWT_RESPONSE_EXPECTED) : 0U);
+    if (dwt_starttx(startFlags) != DWT_SUCCESS) {
+        outcome.startFailed = true;
+        return outcome;
+    }
+    if (abortIfDelayedTxWedged()) {
+        outcome.wedged = true;
+        return outcome;
+    }
+    return outcome;
+}
+
+/**
+ * @brief TXFRS（送信完了）を最大 boundMs 待つ（respondRange() cpp:672-694 /
+ * respondDSRange() cpp:1372-1380 の "while ((nowMs()-start)<20) {...
+ * vTaskDelay(1);}" と同一構造）。true を返すときだけ TXFRS ビットを
+ * クリア済み（呼び出し側が読みたい診断レジスタ - 受信電力等 - は、
+ * 元のコードと同じくこの後で読むこと）。
+ */
+static inline bool waitTxFrsBounded(uint32_t boundMs)
+{
+    const uint32_t startMs = nowMs();
+    while ((nowMs() - startMs) < boundMs) {
+        if ((dwt_readsysstatuslo() & DWT_INT_TXFRS_BIT_MASK) != 0) {
+            dwt_writesysstatuslo(DWT_INT_TXFRS_BIT_MASK);
+            return true;
+        }
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+    return false;
+}
+
+/**
+ * @brief DS-TWR 非対称式による距離計算（respondDSRange() cpp:1320-1349
+ * 相当。数式・バイト位置は一切変更しない）。
+ * @param finalFrame  Final（"DWF"、24バイト、payload先頭3バイトを除いた
+ *                     [12],[16],[20] に pollTxTs/respRxTs/finalTxTs が
+ *                     入っている）の生バイト列。
+ * @param pollRxTs64  buildAndArmResponse() が返した Poll の RX タイムスタンプ
+ *                     （Response 送信時に読んだのと同じ値を再利用する。
+ *                     respondDSRange() 本体が `pollRxTs` を関数スコープの
+ *                     ローカル変数として使い回すのと同じ）。
+ */
+struct DsDistanceResult {
+    bool valid          = false; //!< false なら denominator<=0 (Error::RangeTimestampInvalid相当)。
+    int32_t distanceMm  = 0;
+    float distanceM      = 0.0f;
+};
+
+static inline DsDistanceResult computeDsDistance(const uint8_t* finalFrame, uint64_t pollRxTs64)
+{
+    const uint64_t finalRxTs   = readRxTimestamp64();
+    const uint32_t pollTxTs32  = get32le(&finalFrame[12]);
+    const uint32_t respRxTs32  = get32le(&finalFrame[16]);
+    const uint32_t finalTxTs32 = get32le(&finalFrame[20]);
+    const uint32_t pollRxTs32  = static_cast<uint32_t>(pollRxTs64);
+    const uint32_t respTxTs32  = static_cast<uint32_t>(readTxTimestamp64());
+    const uint32_t finalRxTs32 = static_cast<uint32_t>(finalRxTs);
+
+    const double ra          = static_cast<double>(static_cast<uint32_t>(respRxTs32 - pollTxTs32));
+    const double rb          = static_cast<double>(static_cast<uint32_t>(finalRxTs32 - respTxTs32));
+    const double da          = static_cast<double>(static_cast<uint32_t>(finalTxTs32 - respRxTs32));
+    const double db          = static_cast<double>(static_cast<uint32_t>(respTxTs32 - pollRxTs32));
+    const double denominator = ra + rb + da + db;
+
+    DsDistanceResult out;
+    if (denominator <= 0.0) {
+        return out;
+    }
+    const double tofDtu = ((ra * rb) - (da * db)) / denominator;
+    const double tof     = tofDtu * DWT_TIME_UNITS;
+    out.distanceM         = static_cast<float>(tof * kSpeedOfLightMPerS);
+    out.distanceMm = static_cast<int32_t>((out.distanceM * 1000.0f) + (out.distanceM >= 0 ? 0.5f : -0.5f));
+    out.valid       = true;
+    return out;
+}
+
+/**
+ * @brief 結果（"DWD"）フレームの組み立てと送信（respondDSRange()
+ * cpp:1351-1387 相当）。`repeatCount==0` は 1 として扱う（既存のまま）。
+ */
+struct DsResultSendOutcome {
+    uint8_t sentCount = 0;
+};
+
+static inline DsResultSendOutcome sendDsResult(uint8_t sequence, uint16_t panId, uint16_t selfAddr,
+                                                 uint16_t peerAddr, int32_t distanceMm, uint8_t repeatCount,
+                                                 uint32_t repeatGapMs)
+{
+    uint8_t distPayload[7] = {'D', 'W', 'D'};
+    set32le(&distPayload[3], static_cast<uint32_t>(distanceMm));
+    uint8_t distFrame[16] = {0};
+    buildShortAddressFrame(distFrame, sequence, panId, selfAddr, peerAddr, distPayload, sizeof(distPayload));
+
+    DsResultSendOutcome outcome;
+    const uint8_t actualRepeat = (repeatCount == 0) ? 1 : repeatCount;
+    for (uint8_t i = 0; i < actualRepeat; ++i) {
+        dwt_writesysstatuslo(DWT_INT_TXFRS_BIT_MASK);
+        if (dwt_writetxdata(sizeof(distFrame), distFrame, 0) != DWT_SUCCESS) {
+            continue;
+        }
+        dwt_writetxfctrl(sizeof(distFrame) + FCS_LEN, 0, 0);
+        if (dwt_starttx(DWT_START_TX_IMMEDIATE) != DWT_SUCCESS) {
+            stopRadioAndClearTxStatus();
+            continue;
+        }
+
+        if (waitTxFrsBounded(20)) {
+            outcome.sentCount++;
+        } else {
+            stopRadioAndClearTxStatus();
+        }
+        if ((i + 1) < actualRepeat) {
+            vTaskDelay(pdMS_TO_TICKS(repeatGapMs));
+        }
+    }
+    return outcome;
 }
 
 } // namespace uwb::detail

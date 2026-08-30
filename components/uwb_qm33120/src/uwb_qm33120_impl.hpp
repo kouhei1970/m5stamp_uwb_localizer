@@ -69,6 +69,19 @@ struct Qm33120::Impl {
      */
     uint16_t warned_peers[8] = {0};
     uint8_t warned_count      = 0;
+
+    /**
+     * @brief The PhyConfig init() last actually resolved and applied
+     * (docs/ARCHITECTURE_V2.md §4, uwb_qm33120_phy_kconfig.cpp
+     * Qm33120::logPhy()). Set in Qm33120::init() right before it returns
+     * true, from the same `resolvedPHY` local that toDwtConfig()/
+     * toDwtTxConfig() are built from - so this reflects the channel-only
+     * recommendedPHYProfile() substitution too (R7), not just the caller's
+     * raw argument. Stays at PhyConfig{}'s own defaults until the first
+     * successful init(). New member added for Phase-4 §4; no equivalent in
+     * the original M5Stamp_UWB::Impl.
+     */
+    PhyConfig applied_phy;
 };
 
 } // namespace uwb
