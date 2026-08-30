@@ -30,10 +30,19 @@
  * help コマンドは従来どおり console コンポーネントのものを使う。
  *
  * v2（uwb::RangingService 導入後）のロック方針は tag_console.hpp 冒頭の
- * コメント参照: 表の編集は service.tableMutex() を取って直接
+ * コメント参照: 表の編集は service.lockTable() を取って直接
  * AnchorTable::update()/set() を呼ぶ。resetStats()/reinitEkf() は
- * tableMutex() を離してから呼ぶ（内部で取り直すため、二重取得は
+ * unlockTable() で離してから呼ぶ（内部で取り直すため、二重取得は
  * デッドロックする）。
+ *
+ * **素の tableMutex() ではなく必ず lockTable()/unlockTable() を使う**
+ * （uwb_ranging_service.hpp 冒頭「tableMutex() の優先度逆転」参照）。
+ * 処理タスク（RangingService 内部、優先度18・連続実行）は1周期を終える
+ * たびに素の tableMutex() を離してすぐ取り直すため、素のハンドルへ直接
+ * xSemaphoreTake() すると、この優先度2のコンソールタスクは無期限に
+ * ブロックし得る（実機で `info` / `anchor list` の固まりとして確認・
+ * 修正済み）。lockTable()/unlockTable() は待ち手を処理タスクへ知らせ、
+ * 処理タスク側が1ティック譲ることで飢餓を避ける。
  */
 #include "tag_console.hpp"
 
@@ -60,8 +69,8 @@ const char* kLogTag = "uwb_tag_console";
 /* ------------------------------------------------------------------ 共有状態 */
 
 /** g_saved / g_jsonOutput / g_tableGeneration の保護用。アンカー表そのもの
- *  は service.tableMutex() が守るので、この mutex とは別物（tag_console.hpp
- *  冒頭コメント参照）。 */
+ *  は service.lockTable()/unlockTable() が守るので、この mutex とは別物
+ *  （tag_console.hpp 冒頭コメント参照）。 */
 SemaphoreHandle_t g_mutex = nullptr;
 StaticInfo g_info;
 
@@ -131,8 +140,9 @@ void bumpTableGeneration()
 /**
  * @brief 表を編集したコマンドの共通の締めくくり。
  *
- * **呼び出し側は service.tableMutex() を既に離していること**
- * （resetStats()/reinitEkf() が内部で取り直すため）。
+ * **呼び出し側は service.unlockTable() で既に離していること**
+ * （resetStats()/reinitEkf() が内部で lockTable()/unlockTable() を
+ * 使って取り直すため、離す前に呼ぶとデッドロックする）。
  */
 void afterTableEdit()
 {
@@ -215,7 +225,7 @@ void printUsageAnchor()
                 static_cast<unsigned>(uwb::kMaxAnchors));
 }
 
-/** 呼び出し側が service.tableMutex() を保持した状態で呼ぶこと。 */
+/** 呼び出し側が service.lockTable() を取った状態で呼ぶこと。 */
 void printTableLocked(bool saved)
 {
     std::printf("idx  addr       x[m]      y[m]      z[m]   delay[m]  enabled\n");
@@ -264,9 +274,9 @@ int cmdAnchor(int argc, char** argv)
 
     if (std::strcmp(sub, "list") == 0) {
         const bool saved = readSaved();
-        xSemaphoreTake(mtx, portMAX_DELAY);
+        g_service->lockTable();
         printTableLocked(saved);
-        xSemaphoreGive(mtx);
+        g_service->unlockTable();
         return 0;
     }
 
@@ -297,7 +307,7 @@ int cmdAnchor(int argc, char** argv)
             }
         }
 
-        xSemaphoreTake(mtx, portMAX_DELAY);
+        g_service->lockTable();
 
         // 【修正6】docs/archive/REVIEW_2026-08-21.md app層M-3: 自タグの
         // アドレスとの一致（上のチェック）だけでは、既に登録済みの「他の
@@ -307,7 +317,7 @@ int cmdAnchor(int argc, char** argv)
         const size_t count = g_table->size();
         for (size_t i = 0; i < count; ++i) {
             if ((i != idx) && (g_table->entry(i).short_addr == addr)) {
-                xSemaphoreGive(mtx);
+                g_service->unlockTable();
                 std::printf("アドレス 0x%04X は既に anchor[%u] で使われています\n",
                             static_cast<unsigned>(addr), static_cast<unsigned>(i));
                 return 1;
@@ -335,7 +345,7 @@ int cmdAnchor(int argc, char** argv)
             buf[idx].enabled       = true;
             newCount                = idx + 1;
             if (!g_table->set(buf, newCount)) {
-                xSemaphoreGive(mtx);
+                g_service->unlockTable();
                 std::printf("テーブルの更新に失敗しました\n");
                 return 1;
             }
@@ -355,7 +365,7 @@ int cmdAnchor(int argc, char** argv)
         if (g_info.applyPlacementPolicy != nullptr) {
             g_info.applyPlacementPolicy(*g_table);
         }
-        xSemaphoreGive(mtx);
+        g_service->unlockTable();
 
         afterTableEdit();
 
@@ -374,9 +384,9 @@ int cmdAnchor(int argc, char** argv)
             std::printf("引数の数が違います。例: anchor delay 0 0.15\n");
             return 1;
         }
-        xSemaphoreTake(mtx, portMAX_DELAY);
+        g_service->lockTable();
         const size_t count = g_table->size();
-        xSemaphoreGive(mtx);
+        g_service->unlockTable();
 
         size_t idx  = 0;
         float delay = 0.0f;
@@ -390,11 +400,11 @@ int cmdAnchor(int argc, char** argv)
             return 1;
         }
 
-        xSemaphoreTake(mtx, portMAX_DELAY);
+        g_service->lockTable();
         uwb::AnchorEntry e   = g_table->entry(idx);
         e.antenna_delay_m     = delay;
         g_table->update(idx, e);
-        xSemaphoreGive(mtx);
+        g_service->unlockTable();
 
         afterTableEdit();
         std::printf("anchor[%u].antenna_delay_m = %.4f m（次の測位周期から反映）\n",
@@ -409,9 +419,9 @@ int cmdAnchor(int argc, char** argv)
             std::printf("引数の数が違います。例: anchor %s 0\n", isEnable ? "enable" : "disable");
             return 1;
         }
-        xSemaphoreTake(mtx, portMAX_DELAY);
+        g_service->lockTable();
         const size_t count = g_table->size();
-        xSemaphoreGive(mtx);
+        g_service->unlockTable();
 
         size_t idx = 0;
         if (!parseIndex(a[0], count, &idx)) {
@@ -420,14 +430,14 @@ int cmdAnchor(int argc, char** argv)
             return 1;
         }
 
-        xSemaphoreTake(mtx, portMAX_DELAY);
+        g_service->lockTable();
         uwb::AnchorEntry e = g_table->entry(idx);
         e.enabled            = isEnable;
         g_table->update(idx, e);
         if (g_info.applyPlacementPolicy != nullptr) {
             g_info.applyPlacementPolicy(*g_table);
         }
-        xSemaphoreGive(mtx);
+        g_service->unlockTable();
 
         afterTableEdit();
         std::printf("anchor[%u].enabled = %s（次の測位周期から反映）\n", static_cast<unsigned>(idx),
@@ -447,7 +457,7 @@ int cmdAnchor(int argc, char** argv)
             return 1;
         }
 
-        xSemaphoreTake(mtx, portMAX_DELAY);
+        g_service->lockTable();
         // 増やしたぶんは「未設定（enabled=false）」で埋める。減らすぶんは
         // 単に buf に写さない（AnchorTable::set() が丸ごと差し替える）。
         uwb::AnchorEntry buf[uwb::kMaxAnchors];
@@ -462,7 +472,7 @@ int cmdAnchor(int argc, char** argv)
         if (ok && g_info.applyPlacementPolicy != nullptr) {
             g_info.applyPlacementPolicy(*g_table);
         }
-        xSemaphoreGive(mtx);
+        g_service->unlockTable();
 
         if (!ok) {
             std::printf("テーブルの更新に失敗しました\n");
@@ -537,16 +547,15 @@ int cmdSave(int argc, char** argv)
         std::printf("内部エラー: コンソールが初期化されていません\n");
         return 1;
     }
-    SemaphoreHandle_t mtx = g_service->tableMutex();
 
     uwb::AnchorEntry snapshot[uwb::kMaxAnchors];
     size_t count = 0;
-    xSemaphoreTake(mtx, portMAX_DELAY);
+    g_service->lockTable();
     count = g_table->size();
     for (size_t i = 0; i < count; ++i) {
         snapshot[i] = g_table->entry(i);
     }
-    xSemaphoreGive(mtx);
+    g_service->unlockTable();
 
     if (count == 0) {
         std::printf("テーブルが空です。anchor set / anchor count で設定してください\n");
@@ -580,13 +589,12 @@ int cmdResetConfig(int argc, char** argv)
     size_t restored = 0;
     if (g_info.defaults != nullptr && g_table != nullptr && g_service != nullptr) {
         restored = (g_info.defaultCount < uwb::kMaxAnchors) ? g_info.defaultCount : uwb::kMaxAnchors;
-        SemaphoreHandle_t mtx = g_service->tableMutex();
-        xSemaphoreTake(mtx, portMAX_DELAY);
+        g_service->lockTable();
         const bool ok = g_table->set(g_info.defaults, restored);
         if (ok && g_info.applyPlacementPolicy != nullptr) {
             g_info.applyPlacementPolicy(*g_table);
         }
-        xSemaphoreGive(mtx);
+        g_service->unlockTable();
         if (!ok) {
             restored = 0;
         } else {
@@ -613,8 +621,7 @@ int cmdInfo(int argc, char** argv)
     uwb::CycleResult result;
     const bool haveResult = g_service->getLatest(result);
 
-    SemaphoreHandle_t mtx = g_service->tableMutex();
-    xSemaphoreTake(mtx, portMAX_DELAY);
+    g_service->lockTable();
     const size_t count = g_table->size();
     size_t enabled       = 0;
     for (size_t i = 0; i < count; ++i) {
@@ -622,7 +629,7 @@ int cmdInfo(int argc, char** argv)
             ++enabled;
         }
     }
-    xSemaphoreGive(mtx);
+    g_service->unlockTable();
 
     const bool saved  = readSaved();
     bool jsonOn         = true;

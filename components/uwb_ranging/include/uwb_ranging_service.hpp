@@ -40,6 +40,58 @@
  * 測位側にも適用したもの）。ログ・JSON出力は呼び出し側（firmware/tag の
  * uwb_log タスク等）の仕事。
  *
+ * ------------------------------------------------------------------
+ * tableMutex() の優先度逆転（実機で確認・修正済み）
+ * ------------------------------------------------------------------
+ * 上の手順4で離した tableMutex_ を、手順1（次の周期の先頭）で即座に
+ * 取り直す。cycleIntervalMs==0（連続実行）だと、この「離す→即取り直す」の
+ * 間隔は数マイクロ秒しかない。FreeRTOS のミューテックスは**待ち行列が
+ * FIFO ではない**（xSemaphoreGive() で目覚めた待ち手が必ず次に取れる
+ * 保証はなく、たまたま先に xSemaphoreTake() を呼んだ側が取る）ため、
+ * core 1・優先度18で回り続けるこの処理タスクは、core 0 の低優先度タスク
+ * （コンソール REPL 優先度2、uwb_net_wscmd 優先度4、uwb_net_tcp 優先度5）
+ * を相手にほぼ確実に競り勝ち続け、それらは `xSemaphoreTake(tableMutex_,
+ * portMAX_DELAY)` で**無期限にブロックする**（実機で `info` / `anchor
+ * list` コマンドが固まる形で確認済み。ロガータスク（core 0・優先度10）は
+ * resultQueue() への送信で同じ瞬間に起こされるため大抵勝ててしまい、
+ * JSON 出力自体は流れ続けるので気づきにくい）。
+ *
+ * 対策として `tableWaiters_`（std::atomic<uint32_t>）で「今 tableMutex_
+ * 待ちの他タスクが何本いるか」を数え、`lockTable()`/`unlockTable()` を
+ * 経由するすべての取得・解放でこれを増減させる。処理タスクは手順4で
+ * tableMutex_ を離した直後に `tableWaiters_` を見て、非ゼロなら
+ * `vTaskDelay(1)` を挟む（CONFIG_FREERTOS_HZ=1000 の下で最低1ms、
+ * ノーウェイト時のコストはゼロ）。これで手順1の再取得の前に他コアの
+ * 待ち手がスケジューラに拾われる猶予ができ、飢餓を避けられる。
+ * コンソールから編集する側（firmware/tag/main/tag_console.cpp）や
+ * resetStats()/reinitEkf() は、素の `tableMutex()` ではなく必ず
+ * `lockTable()`/`unlockTable()` を使うこと。ロガータスク（firmware/tag/
+ * main/main.cpp の uwb_log）は resultQueue() の受信で毎周期起こされ、
+ * この処理タスクが手順1へ戻る前に大抵先着できるため飢餓のリスクが低く、
+ * 素の `tableMutex()` のままにしてある（変更不要）。
+ *
+ * Priority inversion on tableMutex_ (confirmed and fixed on real hardware):
+ * step 4 releases tableMutex_ and step 1 of the very next cycle re-acquires
+ * it, only microseconds apart when cycleIntervalMs==0. FreeRTOS mutexes are
+ * NOT FIFO-fair - whichever task calls xSemaphoreTake() first wins, not
+ * whichever was woken first - so this task (core 1, priority 18, looping
+ * tightly) reliably out-races the low-priority waiters on core 0 (console
+ * REPL prio 2, uwb_net_wscmd prio 4, uwb_net_tcp prio 5), which then block
+ * on xSemaphoreTake(tableMutex_, portMAX_DELAY) forever (reproduced on
+ * hardware: `info` / `anchor list` hang). The logger task (core 0, prio 10)
+ * mostly wins the race because it's woken by the same resultQueue() send
+ * that follows the give, which is why JSON output keeps flowing and masks
+ * the starvation. Fix: `tableWaiters_` (std::atomic<uint32_t>) counts
+ * outstanding waiters; every acquire/release through `lockTable()`/
+ * `unlockTable()` updates it. Right after releasing tableMutex_ in step 4,
+ * the task checks tableWaiters_ and, if nonzero, calls vTaskDelay(1)
+ * (>=1 ms at CONFIG_FREERTOS_HZ=1000, free when nobody is waiting) so a
+ * waiter on the other core gets a chance to run before step 1 re-acquires.
+ * Console edits and resetStats()/reinitEkf() must go through lockTable()/
+ * unlockTable(), not the raw tableMutex(). The logger task keeps using the
+ * raw tableMutex() unchanged - it isn't at starvation risk for the reason
+ * above.
+ *
  * Task/queue layout: one dedicated task owns the radio + solver every
  * cycle; results are handed off via a length-4 "log" queue (drop-oldest on
  * overflow) and a length-1 "latest" queue (xQueueOverwrite) plus a
@@ -49,6 +101,7 @@
  */
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 
@@ -296,6 +349,17 @@ public:
      * 実行中の1周期（DS-TWR・再試行込みで最大で数百ms程度）ぶん待たされる
      * ことがある。設定作業はホットパスではないため許容している。
      *
+     * **このハンドルへ直接 xSemaphoreTake()/xSemaphoreGive() するのは
+     * ロガータスク（firmware/tag/main/main.cpp の uwb_log）専用と
+     * 考えること。** それ以外の呼び出し側（コンソール、resetStats()、
+     * reinitEkf()）は下の lockTable()/unlockTable() を使う — 素の
+     * ハンドルのままだと、このサービス処理タスクが手放した直後に
+     * 自分自身へ取り直してしまい、低優先度の待ち手が無期限に飢餓する
+     * （本ヘッダ冒頭「tableMutex() の優先度逆転」参照。実機で確認・
+     * 修正済み）。ロガータスクは resultQueue() の受信で処理タスクの
+     * 各周期の直後に起こされ、この飢餓の対象にならないため素のハンドル
+     * のままにしてある。
+     *
      * The service task holds this for the ENTIRE cycle (runCycle() through
      * solve()/updateEkf()), not just briefly at the head, because
      * AnchorTable::set() must not run concurrently with a solve reading
@@ -305,9 +369,60 @@ public:
      * few hundred ms with DS-TWR + retries) - acceptable since console
      * edits are not on the hot path.
      *
+     * **Treat direct xSemaphoreTake()/xSemaphoreGive() on this raw handle
+     * as reserved for the logger task** (uwb_log in firmware/tag/main/
+     * main.cpp). Every other caller (console, resetStats(), reinitEkf())
+     * must use lockTable()/unlockTable() below - using the raw handle lets
+     * this service's own task re-acquire it right after releasing it,
+     * starving low-priority waiters indefinitely (see "priority inversion
+     * on tableMutex_" at the top of this header; confirmed and fixed on
+     * hardware). The logger task is woken by resultQueue() right after
+     * each cycle, so it isn't exposed to that starvation and can keep
+     * using the raw handle.
+     *
      * start() 前は nullptr。
      */
     SemaphoreHandle_t tableMutex() const { return tableMutex_; }
+
+    /**
+     * @brief tableMutex() を、飢餓を避けるプロトコル付きで取る。
+     *
+     * `tableWaiters_` を先にインクリメントしてから
+     * `xSemaphoreTake(tableMutex_, portMAX_DELAY)` し、取れたら
+     * デクリメントする。処理タスクは周期の終わりに tableMutex_ を
+     * 離した直後、`tableWaiters_` が非ゼロなら `vTaskDelay(1)` を挟んで
+     * 他コアの待ち手にスケジューラの隙を空ける（本ヘッダ冒頭の
+     * 「tableMutex() の優先度逆転」参照）。**コンソール・resetStats()・
+     * reinitEkf() など、処理タスク以外からアンカー表を編集・参照する側は
+     * 必ずこちらを使うこと**（素の tableMutex() を直接 take しない）。
+     *
+     * Takes tableMutex() with the starvation-avoidance protocol: increments
+     * `tableWaiters_` before xSemaphoreTake(tableMutex_, portMAX_DELAY),
+     * decrements it once acquired. The service task checks tableWaiters_
+     * right after releasing tableMutex_ at the end of each cycle and yields
+     * via vTaskDelay(1) when nonzero, giving a waiter on the other core a
+     * chance to run (see "priority inversion on tableMutex_" above). Every
+     * caller other than the service task itself (console, resetStats(),
+     * reinitEkf()) must use this instead of taking the raw tableMutex().
+     *
+     * start() 前 / stop() 後に呼ぶと tableMutex_==nullptr のまま
+     * xSemaphoreTake(nullptr, ...) を呼ぶことになる点は tableMutex() 同様
+     * （呼び出し側が start() 済みであることを保証すること）。
+     */
+    void lockTable();
+
+    /**
+     * @brief lockTable() で取ったロックを離す。
+     *
+     * 中身は `xSemaphoreGive(tableMutex_)` のみ（tableWaiters_ は
+     * lockTable() 側で既にデクリメント済み）。lockTable() と必ず対で
+     * 呼ぶこと。
+     *
+     * Releases the lock taken by lockTable() (plain
+     * xSemaphoreGive(tableMutex_); tableWaiters_ was already decremented
+     * inside lockTable()). Always pair with lockTable().
+     */
+    void unlockTable();
 
     /** 処理タスクのハンドル。
      *
@@ -343,6 +458,18 @@ private:
     QueueHandle_t latestQueue_ = nullptr; //!< 長さ1、xQueueOverwrite
 
     SemaphoreHandle_t tableMutex_  = nullptr; //!< AnchorTable 保護（tableMutex() 参照）
+
+    /** lockTable() 待ち（xSemaphoreTake() 呼び出し中）の他タスク本数。
+     *  処理タスクが周期の終わりに tableMutex_ を離した直後にこれを見て、
+     *  非ゼロなら vTaskDelay(1) して他コアの待ち手へスケジューラの隙を
+     *  空ける（tableMutex() の優先度逆転対策。本ヘッダ冒頭コメント参照）。
+     *
+     *  Count of other tasks currently blocked inside lockTable()'s
+     *  xSemaphoreTake(). The service task checks this right after
+     *  releasing tableMutex_ at the end of each cycle and yields via
+     *  vTaskDelay(1) when nonzero (starvation fix - see header comment). */
+    std::atomic<uint32_t> tableWaiters_{0};
+
     SemaphoreHandle_t latestMutex_ = nullptr; //!< latest_ メールボックス保護
     SemaphoreHandle_t statsMutex_  = nullptr; //!< statsSnapshot_ 保護
     SemaphoreHandle_t stoppedSem_  = nullptr; //!< タスク終了通知（stop() が待つ）

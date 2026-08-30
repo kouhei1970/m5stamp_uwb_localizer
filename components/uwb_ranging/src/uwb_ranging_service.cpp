@@ -107,6 +107,27 @@ void RangingService::stop()
     }
 }
 
+void RangingService::lockTable()
+{
+    // 先にインクリメントしてから待つ: 処理タスクが周期末で tableMutex_ を
+    // 離した直後にこのカウンタを見て vTaskDelay(1) するかどうかを決める
+    // ため、待ち始める前に「今から待つ」ことを見えるようにしておく必要が
+    // ある（tableMutex() の優先度逆転対策。uwb_ranging_service.hpp 冒頭
+    // コメント参照）。
+    //
+    // Increment before waiting: the service task inspects this counter
+    // right after releasing tableMutex_ at the end of a cycle, so a waiter
+    // must become visible before it actually starts waiting.
+    tableWaiters_.fetch_add(1, std::memory_order_release);
+    xSemaphoreTake(tableMutex_, portMAX_DELAY);
+    tableWaiters_.fetch_sub(1, std::memory_order_release);
+}
+
+void RangingService::unlockTable()
+{
+    xSemaphoreGive(tableMutex_);
+}
+
 bool RangingService::getLatest(CycleResult& out) const
 {
     if (latestMutex_ == nullptr) {
@@ -139,12 +160,14 @@ void RangingService::resetStats()
     // scheduler_ の書き込み（処理タスクが周期の中で行う）と競合しないよう
     // tableMutex() を取ってから触る（tableMutex() のフィールドコメント参照:
     // 処理タスクは1周期の間ずっとこれを保持しているため、ここを取れた時点で
-    // 「今この瞬間は周期の合間」であることが保証される）。
-    xSemaphoreTake(tableMutex_, portMAX_DELAY);
+    // 「今この瞬間は周期の合間」であることが保証される）。コンソールから
+    // 呼ばれ得るので、素の xSemaphoreTake() ではなく lockTable() の
+    // 飢餓対策プロトコルを使う（uwb_ranging_service.hpp 冒頭コメント参照）。
+    lockTable();
     if (scheduler_ != nullptr) {
         scheduler_->resetStats();
     }
-    xSemaphoreGive(tableMutex_);
+    unlockTable();
 
     if (statsMutex_ != nullptr) {
         xSemaphoreTake(statsMutex_, portMAX_DELAY);
@@ -160,11 +183,13 @@ void RangingService::reinitEkf()
     if (!cfg_.enableEkf || tableMutex_ == nullptr) {
         return;
     }
-    xSemaphoreTake(tableMutex_, portMAX_DELAY);
+    // resetStats() 同様、コンソールから呼ばれ得るので lockTable() の
+    // 飢餓対策プロトコルを使う。
+    lockTable();
     if (pipeline_ != nullptr) {
         pipeline_->initEkf();
     }
-    xSemaphoreGive(tableMutex_);
+    unlockTable();
 }
 
 void RangingService::taskTrampoline(void* arg)
@@ -232,6 +257,44 @@ void RangingService::taskMain()
         }
 
         xSemaphoreGive(tableMutex_);
+
+        // --- 飢餓対策: 離した直後に待ち手がいれば1ティック譲る ---
+        // cycleIntervalMs==0（連続実行）だと次周期の頭で即座にこの
+        // tableMutex_ を取り直してしまい、FreeRTOS のミューテックスは
+        // FIFO ではないため core 0 の低優先度タスク（コンソール等）が
+        // 無期限に飢える（uwb_ranging_service.hpp 冒頭「tableMutex() の
+        // 優先度逆転」参照。実機で確認・修正済み）。待ち手がいないときは
+        // vTaskDelay() を呼ばないのでコストはゼロ。
+        //
+        // Starvation fix: yield one tick right after releasing the mutex
+        // if someone is waiting. With cycleIntervalMs==0 this task would
+        // otherwise re-take tableMutex_ again immediately at the top of
+        // the next cycle, and FreeRTOS mutexes aren't FIFO-fair, so a
+        // low-priority waiter on core 0 (console etc.) could starve
+        // forever. Costs nothing when nobody is waiting.
+        // 追記（実機で判明）: 1 tick 譲るだけでは足りない。core 0 に固定された
+        // 待ち手（TCP コンソール・WebSocket コマンドのタスク、優先度 4〜5）は、
+        // その 1 ms の間 core 0 を優先度 10 のログタスク（USB へ毎周期 1 KB
+        // 書き出し）に取られて走れず、依然として飢えた。そこで「待ち手が
+        // ミューテックスを取る（= カウンタが減る）まで、上限 20 ms の範囲で
+        // 1 tick ずつ譲り続ける」。待ち手は取得後すぐカウンタを減らすので、
+        // 通常は 1〜3 ms で再開する。上限は、待ち手が消えた場合でも測距が
+        // 止まらないための安全弁。
+        //
+        // Addendum (measured on hardware): a single tick is not enough.
+        // Waiters pinned to core 0 (TCP console / WebSocket command tasks,
+        // priority 4-5) could not run during that 1 ms because the logger
+        // task (priority 10, ~1 KB of USB output per cycle) owned core 0,
+        // so they still starved. Keep yielding one tick at a time until
+        // the waiter has taken the mutex (the counter drops), bounded by
+        // 20 ms so ranging never stalls if the waiter disappears.
+        if (tableWaiters_.load(std::memory_order_acquire) != 0) {
+            const TickType_t handoffStart = xTaskGetTickCount();
+            do {
+                vTaskDelay(1);
+            } while (tableWaiters_.load(std::memory_order_acquire) != 0 &&
+                     (xTaskGetTickCount() - handoffStart) < pdMS_TO_TICKS(20));
+        }
 
         ++seq;
         result.seq = seq;
