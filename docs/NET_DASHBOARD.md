@@ -126,15 +126,15 @@ idf.py -p /dev/cu.usbmodemXXXX flash monitor
 `monitor` で接続したコンソールから:
 
 ```
-uwb-tag> wifi set itolabwifi-deco ＜パスワード＞
-ssid=itolabwifi-deco を保存し、STA で接続を試みています
+uwb-tag> wifi set lab-wifi-example ＜パスワード＞
+ssid=lab-wifi-example を保存し、STA で接続を試みています
 ```
 
 起動ログ（または再起動後のログ）に次の 1 行が出ます。**この行に IP アドレスと
 URL が両方載っています**:
 
 ```
-I (xxx) uwb_net_wifi: net: mode=sta ssid=itolabwifi-deco ip=192.168.2.50 url=http://192.168.2.50/ mdns=http://uwb-tag.local/
+I (xxx) uwb_net_wifi: net: mode=sta ssid=lab-wifi-example ip=192.168.2.50 url=http://192.168.2.50/ mdns=http://uwb-tag.local/
 ```
 
 ### 2.4 ブラウザで開く
@@ -176,7 +176,7 @@ USB シリアルコンソール・TCP コンソール（§5.1）・ブラウザ�
 ```
 uwb-tag> wifi
 mode         : sta (NVS 設定: auto)
-ssid         : itolabwifi-deco
+ssid         : lab-wifi-example
 password     : (set)
 state        : connected
 ip           : 192.168.2.50
@@ -203,14 +203,14 @@ Kconfig `UWB_NET_AP_PASSWORD`（既定 `uwb-localizer`）、チャネルは `UWB
 
 ### STA 接続時の起動ログの読み方
 
-`itolabwifi-deco` のような SSID を持つルーターへ STA として繋ぎに行くとき、
+`lab-wifi-example` のような SSID を持つルーターへ STA として繋ぎに行くとき、
 `uwb_net_wifi` タグで次のようなログが順に出ます（すべて USB・TCP コンソール
 共通で、`ESP_LOG` 経由なので USB シリアルにのみ出ます。ネットワークへは流れません）。
 
 ```
-I (xxx) uwb_net_wifi: net: STA connecting to ssid=itolabwifi-deco
+I (xxx) uwb_net_wifi: net: STA connecting to ssid=lab-wifi-example
 I (xxx) uwb_net_wifi: net: associated, waiting for DHCP
-W (xxx) uwb_net_wifi: net: STA disconnected ssid=itolabwifi-deco reason=201 (NO_AP_FOUND)
+W (xxx) uwb_net_wifi: net: STA disconnected ssid=lab-wifi-example reason=201 (NO_AP_FOUND)
 ```
 
 1 行目は接続開始（`WIFI_EVENT_STA_START`）、2 行目は 802.11 の関連付け
@@ -445,9 +445,9 @@ WebSocket の**3経路すべてで正常に応答することを確認しまし�
 **実際の PC のブラウザで、生きているデバイスにネットワーク越しに接続して
 ページを開くこと** はまだ行っていません。
 
-**理由（2026-08-31 時点）**: 実験室の SSID `itolabwifi-deco` が、デバイスを
+**理由（2026-08-31 時点）**: 研究室の SSID（固有名は本書に記載しない）が、デバイスを
 置いた場所からは電波として届いていませんでした（`wifi scan` で見えたのは
-別の 2.4GHz ネットワークだけで、`itolabwifi-deco` 自体が一覧に出なかった）。
+別の 2.4GHz ネットワークだけで、当該 SSID 自体が一覧に出なかった）。
 一方 PC 自身は 5GHz 専用のネットワークに繋がっており、ESP32-S3 は 2.4GHz
 専用なのでそのネットワークには参加できません。さらに、無人運転中に PC の
 Wi-Fi をタグの SoftAP へ切り替えると PC 自身が他の作業からネットワークごと
@@ -497,7 +497,7 @@ uwb-tag> wifi set <2.4GHzのSSID> <パスワード>
 
 ```json
 {"v":1,"type":"node","t":123.456,"role":"tag","name":"uwb-tag","addr":"tag0",
- "wifi":{"mode":"sta","ssid":"itolabwifi-deco","ip":"192.168.2.50","rssi":-45,"clients":0},
+ "wifi":{"mode":"sta","ssid":"lab-wifi-example","ip":"192.168.2.50","rssi":-45,"clients":0},
  "uptime_s":123,"heap_free":165000,"heap_min":150000,"drops":0,"ws_clients":1,
  "tcp_console":false,"udp_tx":0,"udp_rx":5808,
  "phy":"850k/pre256/pac8/ch9","pll_coarse":"0x23","method":"DS","retry_max":2,"retry_delay_ms":2}
