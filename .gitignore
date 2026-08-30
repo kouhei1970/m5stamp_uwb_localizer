@@ -41,3 +41,6 @@ assets/QM33120W*.pdf
 # Qorvo official SDK (1.1 GB, Qorvo license; obtain from Qorvo, keep local only)
 # Qorvo 純正 SDK (1.1 GB、Qorvo ライセンス。Qorvo から入手しローカルにのみ置く)
 assets/DW3_QM33_SDK_1.1.1/
+
+# 実験用の変種ビルド (scratchpad/mkbuild3.py が作る firmware/<fw>/build_<name>/)
+firmware/*/build_*/
