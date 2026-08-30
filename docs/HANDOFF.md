@@ -3,9 +3,198 @@
 **このファイルを最初に読むこと。** 全体像・決定事項・落とし穴・次の一手をまとめてある。
 
 **§1 以降は 2026-08-21 時点の記述で、2026-08-27〜29 の実機セッションより前のものである。**
-測距が成立しない件の現在地は下の **§0-B** が正本。
+**DS-TWR が動かない件の原因特定は §0-C（2026-08-29 机上レビュー）が正本。** SS-TWR の到達経緯は §0-B。
 **§0-A（2026-08-28 に立てた IRQ 前提の締切割れ説）は 2026-08-29 の実機測定で棄却済み。**
-経緯の記録として残してあるだけなので、読む順序は §0-B → §0-A とすること。
+経緯の記録として残してあるだけなので、読む順序は §0-C → §0-B → §0-A とすること。
+
+---
+
+## 0-C. 最優先: DS-TWR 不動作の原因特定（2026-08-29 机上レビュー、実機なし）
+
+**読む順序: §0-C → §0-B → §0-A。** 本節は実機を使わず、(a) 前セッションの生ログ（作業領域に残っていた
+e16〜e24、下記）、(b) 本リポジトリのコード、(c) 一次資料（DW3000 User Manual v1.1 §9.4.1 エラッタ、
+Qorvo SDK 1.1.1 の dw3000 / dw3720 ドライバ本体、ex_05a/05b）だけから導いた。**結論は 2 つとも
+実機未検証**であり、次回実機で最初に反証すること（手順は本節末尾）。
+
+**本節で使う用語（初出順）**: RMARKER（測距基準点。タイムスタンプが打たれる時刻で、フレーム先頭ではなく
+同期ヘッダの終わり）、SFD（Start-of-Frame Delimiter、プリアンブルの終わりを示す区切り。その終端が RMARKER）、
+UUS（UWB マイクロ秒、1 UUS = 1.02564 µs）、tick（FreeRTOS の 1 ms 刻みの時計。ホスト側の待ち時間はこの刻みで
+量子化される）、W4R（Wait-for-Response。送信完了後にチップが自動で受信に入るモード）、DX_TIME（遅延送信の予約
+時刻レジスタ）、HPDWARN（Half-Period Delay Warning。予約時刻が半周期 8.6 s 以上先＝過去に回り込んだときに立つ
+警告ビット）、PMSC_STATE（チップの電源・状態管理ステートマシンの現在状態。IDLE_RC = PLL 未ロックの待機、
+IDLE = PLL ロック済み待機、TX、RX）、RX_FWTO（受信フレーム待ちタイムアウト。受信機を有効にしてからのハード側
+タイマ）。「構造体のフィールド」はログ行の `key=value` の key と同じ名前なので、ログを読むときはそちらを見ればよい。
+
+### 何が分かったか（要約）
+
+SS-TWR が 99.95%（再試行込み）で通る同じ電波条件で DS-TWR が 0〜23% だった原因は、電波でも
+チップでもなく、**DS 経路だけに入っていた構築上の欠陥 2 つ**である。
+
+| # | 欠陥 | 生ログでの現れ方 | 根拠 |
+|---|---|---|---|
+| 1 | **タグの測距周期とアンカーの Poll 待ち窓が両方ちょうど 200 ms** で、窓の切り替わりの盲時間に Poll が落ち続ける「位相ロック」 | アンカーの Poll 待ち中の `RX_ERROR`（`elapsed_ms=194`）を境に、以後 `RX_TIMEOUT seq=0 elapsed_ms=200` が **200.0 ms 周期**で続き、タグは全サイクル `RX_TIMEOUT elapsed_ms=6` | `firmware/twr/main/main.cpp` の DS タグだけ `RANGE_INTERVAL_MS = 200` の即値（SS タグは Kconfig の 137 ms）。DS アンカーは `pollHostTimeoutMs` 既定 200 ms。e22 の時刻がミリ秒単位で一致 |
+| 2 | **Final の遅延送信の締切余裕が 850 kbps / 256 のポーリングでは足りず、DW3000 系エラッタ（§9.4.1）で「無警告で送信されない」** | アンカー `DS_RESP_STAT stage=final_wait ... tx_margin_us=1568〜2231`（Response の予約は余裕あり、Final が来ない）が、アンカー側で完了した交換のうち e21 1/61、e22 4/26、e23 1/20（1.6〜15%） | DS プリセット `finalTxDelayUus=1800`（Response は 3000）。UM: 予約時刻は「現在 + プリアンブル + SFD + 20 µs」以上でないと HPDWARN も立たず送信もされない。DW3720 用ドライバ `ull_starttx()` には dw3000 用にある `SYS_STATE_LO==0x000D0000` の検査が無い |
+
+欠陥 1 が「起動直後は成功し、あるとき以後まとめて死ぬ」「最初から全滅」「たまに復活」のすべてを、
+欠陥 2 が「Final 待ちタイムアウト」を説明する。§0-B の「150 ms 周期でも起きるので位相ロックではない」
+という反証は、**DS タグが Kconfig の周期を無視して常に 200 ms だった**（e21 の `DS_CYCLE_STAT` も
+10 サイクル/2000 ms）ため無効。§0-B の「DS タグ + SS アンカーでフレームが 1 枚も見えない」（e19）も、
+**SS アンカーの `respondRange()` は不一致フレームを数えず記録もしない**（`ResponderResult` に
+`rxRejected` が無く、ホストタイムアウト時は常に `RxTimeout` を返す）ため、何の証拠にもならない。
+
+### 証拠 1: 位相ロック（e22、`DS_RESP_RET` を全呼び出しで記録したビルド）
+
+生ログ: `/private/tmp/claude-501/-Users-kouhei-tmp-github-m5stamp-uwb-localizer/ecc50a4f-dd97-4381-937d-de776909a5b8/scratchpad/e22_ds_dbg_{anc,tag}.log`
+（前セッションの作業領域。セッションが消えれば失われるので要点をここに写す）。
+構成: DS-TWR / 850 kbps / preamble 256 / PollingBoth / IRQ 無効 / タグ周期 200 ms /
+アンカー Poll 待ち 200 ms / 両機 PLL 粗調整 0x23 固定 / 距離 1.03 m。
+
+アンカー時系列（`I/W (ms)` はアンカーの起動からの時刻）:
+
+```
+2416 final_wait seq=10 elapsed=201 tx_margin=1996   ← Poll は窓の 194 ms に到着、Final 来ず (欠陥 2)
+2816 final_wait seq=12 elapsed=201 tx_margin=2171
+3609 RX_ERROR  seq=0  elapsed=194                   ← Poll が壊れて届いた。窓がここで終わる
+3809 RX_TIMEOUT seq=0 elapsed=200 ┐
+4009 RX_TIMEOUT seq=0 elapsed=200 │ 14 窓 = 2.8 s（不成立区間 3609→6511 は 2.9 s）、200.0 ms ちょうどの周期
+ ...                              │ （201 は 1 つも混ざらない）。受信エラーすら無い
+6409 RX_TIMEOUT seq=0 elapsed=200 ┘ ＝ Poll は毎回「窓の境界」に落ちている
+6511 RX_ERROR  seq=0  elapsed=102                   ← 何かを拾って窓が再位相 → 復活
+6816 final_wait seq=32 / 7416 final_wait seq=35 / 8415 ok=20
+10609 RX_ERROR seq=0 elapsed=194                    ← 再びロック。ログ終了（19.6 s 後）まで復活せず、以降は未計測
+```
+
+タグの CSEQ64（サイクルごとの成否、左が古い）: `0111111110101110000000000000001011011111111111111000000000000000` →
+サイクル 10・12 = Final 待ち失敗、**16〜30 = 3609〜6409 の不成立期間（15 サイクル）**、31〜49 成功（32・35 は
+Final 待ち失敗）、**50〜64 = 2 回目の不成立**。時刻の対応（タグの N サイクル目の Poll ≈ タグ時刻 615 + 200·(N−1) ms、
+アンカー時刻 ≈ タグ時刻 − 6 ms）: 1 回目は **RX_ERROR 3609 = サイクル 16 の Poll** で、不成立の開始と一致。
+2 回目は **RX_ERROR 10609 = サイクル 51 の Poll**（直前のサイクル 50 はアンカーに何の記録も無い＝プリアンブル
+検出にも至らない普通の欠測。850 kbps の素の Poll 欠測率 3〜7% の範囲）で、51 以降が全滅。いずれも
+「Poll 待ち中に RX_ERROR で窓が抜けた直後から、窓 200.0 ms 周期の空振りが続く」形になっている。
+
+機構（コードから）:
+- タグ: `if (nowMs() - lastRangeMs < 200) vTaskDelay(1); lastRangeMs = nowMs();` → 周期は 1 ms tick で
+  量子化された **200.000 ms**。
+- アンカー `respondDSRange()`: Poll 待ちは `dwt_setrxtimeout(0)`（ハード側タイムアウト無し）＋ホスト側
+  200 ms ループ。ループを抜けるたびに `stopRadioAndClearRxStatus()`（`CMD_TXRXOFF`）→ return →
+  次の呼び出しで `stopRadioAndClearIoStatus()` → PRETOC / rxaftertxdelay / rxtimeout の書き込み →
+  `dwt_rxenable()`。この間 SPI 10 回前後（+ e22 ビルドは毎回 `ESP_LOGW`）＝ **数百 µs の盲時間**（SPI 1 回
+  15〜30 µs からの見積り。オシロ等での実測はしていない）。
+  850 kbps / 256 の Poll はプリアンブル+SFD が 269 µs しかないので、盲時間に頭が落ちると
+  プリアンブル検出すらされない（RX_ERROR も出ない）。
+- 窓の境界は「Poll 待ちループを抜けた時刻」で決まる。**Poll 待ち中に RX_ERROR で抜けると、窓の境界が
+  Poll の到着時刻に再位相され、次の Poll は 200.000 ms 後 = 次の境界に落ちる。** 以後、両 MCU の
+  tick の相対ずれ（数 ppm × 200 ms = 1 µs 未満/サイクル）でしか抜け出せない → 数十秒〜永久。
+  成功交換や Final 待ちタイムアウトは Poll + 7 ms で抜けるので、次の Poll は窓の 193 ms に来て問題ない
+  （裏付け: 交換の直後の窓で起きた Final 待ちタイムアウトが例外なく `elapsed_ms=201` = Poll 194 ms + ハード側
+  RXFTO 7 ms。e21/e22/e23 の全 `stage=final_wait` 行がそう）。
+- e16 / e18 / e24（最初から全滅）は起動時の位相がたまたま境界だった場合、または最初の Poll
+  （アンカー起動中に届いて壊れる）で即ロックした場合。e17（22 サイクル後）/ e21（61 サイクル後）/
+  e23（37 サイクル後）は最初の Poll 待ち RX_ERROR でロック。SS 実験（周期 137 ms）は毎サイクル
+  位相が 63 ms ずれるのでロックが成立しない（e13: 20 交換ごとの記録に RX_ERROR は 0 件、99.95%）。
+
+対立仮説の扱い:
+- 「タグが送信していない」「アンカーの受信機が死んでいる」「PLL が外れた」は、**不成立期間が何も設定を変えずに
+  アンカー側の RX イベント 1 つ（6511）で即座に終わり、直後のサイクルから成功率 90% 台に戻る**ことと両立
+  しない（チップや RF の故障なら再位相で直らない）。PLL は両機とも粗調整 0x23 固定・`pll_lock=1` を起動時に
+  確認済みで、同じタグが数秒前まで正常に送信している。ただし「盲時間の長さ」と「相対クロック偏差が
+  1 µs/サイクル未満」は見積りであり、実測で確定させる（末尾の手順 3）。
+
+### 証拠 2: Final の締切（DW3000 UM §9.4.1 エラッタ）
+
+UM の原文（Version 1.1、Page 239）:
+> "Due to an errata in the DW3000, there is a case when neither the HPDWARN event gets set nor does the
+> packet get transmitted. ... the delayed send time must be set far enough in advance; it should be at least
+> equal or more than the current time + preamble length + SFD length + 20 µs ... When this bug occurs, the
+> PMSC_STATE will be "TX" but TX_STATE will be "IDLE", the TXFRS event will never be set. ... The host should
+> abort the transmission in this case. This check and recovery is implemented in the published DW3000
+> dwt_starttx() API."
+
+- dw3000 用ドライバはこれを実装している（`assets/DW3_QM33_SDK_1.1.1/Drivers/API/Shared/dwt_uwb_driver/
+  dw3000/dw3000_device.c:5253-5262`、`DW_SYS_STATE_TXERR 0xD0000`）。**本リポジトリが使う dw3720 用
+  ドライバ（`components/qm33120w_sdk/dw3720/dw3720_device.c` `ull_starttx()`）には無い**（HPDWARN のみ）。
+  QM33120W でこのエラッタが直っているかは一次資料に記載なし（未確認）。
+- 850 kbps / preamble 256 のフレーム長（RMARKER 以後）: PHR 21.3 µs + データ (8·バイト数 + 48)×1.0256 µs
+  → Poll(16 B) 0.20 ms / Response(24 B) 0.27 ms / Final(26 B) 0.28 ms / DWD(18 B) 0.22 ms。
+  プリアンブル+SFD = 264 シンボル × 1.0176 µs = 0.269 ms。
+- タグの Final 予約: Response の RMARKER を R として、フレーム終端 R+0.27 → ポーリング検出 0〜1 ms →
+  タイムスタンプ読み出し・フレーム作成・SPI ≈0.25 ms → 予約時刻は **R+0.52〜1.52 ms**。締切は
+  Final の DX_TIME (R+1800 UUS = R+1.846 ms) − (0.269 + 0.020) = **R+1.56 ms**。余裕 0.04〜1.04 ms。
+  ポーリング遅延が最大側に振れたサイクル（観測では完了交換の 1.6〜15%）でエラッタ条件に入り、タグは `dwt_starttx()` 成功
+  →（TXFRS も RX も来ない）→ ホストタイムアウト 10 ms → `forcetrxoff()`（PMSC=TX(0xD)>IDLE(3) なので
+  `CMD_TXRXOFF` が出て回復）。アンカーは Final 待ちのハード側 RXFTO（Poll+7 ms）で抜ける →
+  **`stage=final_wait` 行**。（比較: SS/DS の Response 予約は Poll の RMARKER + 3000 UUS で
+  余裕 1.3〜2.3 ms。実測 `tx_margin_us=1568〜2300` と整合。）
+- コードの `tx_margin_us` は「DX_TIME − 現在」であり、プリアンブル分（0.289 ms）を引いていない。
+  正の値でもエラッタに入りうる。
+
+### 一次資料で確定した SDK / チップの挙動（本節の前提。§0-B の記述を上書きする）
+
+- `dwt_forcetrxoff()`（`ull_forcetrxoff()` dw3720_device.c:5821-5840）は `SYS_STATE_LO` の PMSC バイトが
+  IDLE(3) 以下なら何もしない（IDLE_RC で `CMD_TXRXOFF` を出すと再起動が要る、と UM Page 238）。
+  エラッタ状態は PMSC=0xD なので `CMD_TXRXOFF` は出る。
+- 即時 TX（`CMD_TX`/`CMD_TX_W4R`）と即時 RX（`CMD_RX`）はチップ状態を見ず常に成功を返す。
+  先行コマンド未完了時のファストコマンドは無視され `CMD_ERR` が立つ（UM Page ~157）。
+- W4R の自動 RX は「送信完了」が条件。送信されなければ RX も RXFTO も起きない。
+- RX_FWTO（受信待ちタイムアウト）は受信機有効化から走り続け、**フレーム受信中でも満了すると受信を
+  打ち切る**（UM RX_FWTO の項）。受信窓はフレーム全体を覆う必要がある。
+- HPDWARN は DX_TIME が半周期（8.6 s）以上先＝過去に回り込んだときだけ立つ。「近すぎる未来」は
+  上記エラッタ。
+
+### 入れた修正（2026-08-29、すべてビルド・ホストテスト確認のみ、実機未検証）
+
+1. `firmware/twr` DS タグの周期を Kconfig（既定 137 ms）に統一（即値 200 を撤去）。DS アンカーの
+   `pollHostTimeoutMs` を SS と同じく `CONFIG_UWB_TWR_POLL_WAIT_MS` から設定。
+2. `respondRange()` / `respondDSRange()` の Poll 待ちで RX エラーが起きても **return せず、ステータスを
+   消して `dwt_rxenable()` で受信を続ける**（Qorvo ex_05b/06b の構造）。回数は `rxErrors` に記録。
+   旧挙動は `CONFIG_UWB_TWR_DIAG_POLL_WAIT_RETURN_ON_RX_ERROR=y`（`pollWaitReturnOnRxError`）で戻せる。
+3. DS PollingBoth プリセットを 850 kbps / 256 で再導出: `finalTxDelayUus` 1800 → **3000**、
+   `finalRxAfterResponseTxDelayUus` 500 → **1500**（Response 脚と対称にして同じ余裕を持たせる）。
+   `kTimingPresetVersion` 1 → 2。DS の `hostTimeoutMs` 10 → 20（アンカーの Final 待ちがハード側 RXFTO
+   で終わる約 7.5 ms より必ず後に来るように）。
+4. 遅延送信の予約成功直後に `SYS_STATE_LO == 0x000D0000` を検査し（`detail::abortIfDelayedTxWedged()`）、
+   エラッタ状態なら `forcetrxoff()` して `TxStartFailed` + `txWedged=true` で返す（dw3000 ドライバと
+   同じ回復）。Response（SS/DS アンカー）と Final（DS タグ）の 3 箇所。
+5. DS の結果構造体に SS と同じ受信診断（`rxStatus` / `rxSeen` / `rxRejected`）と `stage`（どの段で
+   終わったか）を追加。twr のログ行に `stage= rx_status= rx_seen= rx_rej= wedged=` を追加。DS タグは
+   Response 待ち以外の段の失敗を毎回ログする。
+6. `requestDSRange()` の結果待ち出口 2 箇所を `stopRadioAndClearIoStatus()` に（Final の TXFRS を消す）。
+7. 本番ファーム `firmware/anchor` の DS 定数（Final 3000 / RX 開始 1500 / hostTimeout 20）も同じ値に。
+   `firmware/tag` は `DSRangeConfig` の既定値を `applyTimingProfile()` 経由で使うので構造体の既定値変更で追従。
+8. `firmware/twr` DS タグの定期ログ条件 `(rangeCount % 10) == 10`（決して真にならない）を SS と同じ `== 0` に修正。
+   実機ログ e17（count=10,20,…）と e22（count=1,11,…）で条件が違っていたのは、当時のビルドが作業中の
+   未コミット状態だったため。
+9. 検収時の注記: `respondDSRange()` で ToF 計算の分母が 0 以下（`RangeTimestampInvalid`）になった失敗は
+   `stage=ResultTx` に分類してある（Final 受信は完了、DWD 送信前の処理中の失敗）。
+
+検証（2026-08-30、実機なし）: ホストテスト `make -C tests all` 全パス（loc 591,199 / math 10,781 /
+pipeline 200 / survey 561 件、失敗 0。pipeline の DS プリセット期待値を 1800/500 → 3000/1500 に更新）。
+ESP-IDF ビルド: `firmware/twr` の `tag_ds_dbg` / `anc_ds_dbg` / `tag_retry2` / `anc_850_p256`、
+`firmware/tag`、`firmware/anchor` の 6 構成すべて成功、新規警告なし。
+
+### 次回実機で最初にやること（反証の形）
+
+前提: 両機とも `tag_ds_dbg` / `anc_ds_dbg`（新ビルド。DS / 850 kbps / 256 / PollingBoth / IRQ 無効）、
+距離 1 m、95 秒 × 各 1 本。判定はタグの `DS_CYCLE_STAT` とアンカーの `DS_RESP_STAT stage=`。
+
+1. **欠陥 1 の反証**: 新ビルドそのまま（周期 137 ms、RX エラーで受信継続）。成功率が SS 並み
+   （素の試行で 93〜97%）に上がらなければ欠陥 1 の説明は不十分。次に `CONFIG_UWB_TWR_RANGE_INTERVAL_MS=200`
+   と `CONFIG_UWB_TWR_DIAG_POLL_WAIT_RETURN_ON_RX_ERROR=y` を**同時に**戻したビルドで不成立期間が再現すれば
+   確定（片方だけでは再現しない見込み: 200 ms だけなら RX エラーで窓が Poll 時刻に再位相されないので
+   ロックに入りにくく、旧挙動だけなら 137 ms なので位相が毎回ずれる）。
+2. **欠陥 2 の反証**: 新プリセット（Final 3000）で `stage=final_wait` がほぼ 0 になること。
+   `finalTxDelayUus` だけ 1800 に戻したビルドで `wedged=1` が数 % 出れば確定（今回の追加検査で初めて
+   見える）。出なければ QM33120W ではエラッタが直っている可能性 → その場合 Final 待ち失敗の別原因を追う。
+3. 位相ロックの持続時間の予測: 盲時間 ≈ 0.2〜0.5 ms ÷（200 ms × 両 MCU の相対クロック偏差）。
+   ロック中の `RX_TIMEOUT` 行の間隔が 200 ms ちょうど（201 が混ざらない）ことも確認。
+
+### 生ログの在処（2026-08-29 時点。作業領域なので消える）
+
+`/private/tmp/claude-501/-Users-kouhei-tmp-github-m5stamp-uwb-localizer/ecc50a4f-dd97-4381-937d-de776909a5b8/scratchpad/`
+の `e16_ds850_base` / `e17_ds850_diag` / `e18_ds850_diag` / `e19_dstag_ssanc` / `e20_sstag_dsanc` /
+`e21_ds_i150`（実際は 200 ms） / `e22_ds_dbg` / `e23_ds_v1` / `e24_ds_status` の `_tag.log` / `_anc.log`、
+同ディレクトリの `run.sh`（両機を esptool で焼いて 2 秒後に同時キャプチャ）。SS の対照は `e12_p256_base`
+/ `e13_retry2` / `e14_retry2_300s` / `e15_retry4_600s`。
 
 ---
 
@@ -909,6 +1098,8 @@ TX power 既定 / 両機 PLL 粗調整コード 0x23 固定 / `UWB_TWR_RETRY_MAX
 PLL 粗調整コードの固定（0x23）は起動時温度依存の暫定策のままで、恒久対策は未実装。
 
 #### 【未解決】DS-TWR は同じ PHY で 0〜23%（2026-08-29 午後〜夕方、ユーザー指示で一時中断）
+
+> **2026-08-29 追記: 原因は §0-C で特定した（タグ周期 200 ms とアンカー窓 200 ms の位相ロック、Final の締切不足によるエラッタ）。本小節の「否定した仮説」のうち位相ロックの否定と交差試験の解釈は誤り。以下は経緯の記録。**
 
 本番ファーム（`firmware/tag` / `anchor`）の既定は DS-TWR なので、850 kbps / 256 で DS-TWR を採った。
 **SS-TWR が 95% 通る同じ電波条件で、DS-TWR は 0〜23%**（再試行なし。試行: 0/470、22/220、0/220、
