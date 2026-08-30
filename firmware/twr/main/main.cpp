@@ -1227,7 +1227,21 @@ static void runRole(uwb::Qm33120& uwb)
  * TAG + DS-TWR : examples/DS_TWR_TAG/DS_TWR_TAG.ino 準拠
  * ========================================================================= */
 
-static constexpr uint32_t RANGE_INTERVAL_MS = 200;
+// Poll interval. Configurable for the same reason as the SS-TWR TAG block
+// above: makes the tag's period incommensurate with the anchor's poll-wait
+// window, which is what a beat between the two would need to show up as a
+// change in success rate (2026-08-29 DS-TWR原因特定, docs/HANDOFF.md §0-C(1)
+// - this hard-coded 200 was one half of the phase-lock: both this and
+// respondDSRange()'s pollHostTimeoutMs default to 200ms and are tick-
+// quantized at 1ms, so once a Poll landed in the anchor's window-boundary
+// gap it stayed there for the whole run).
+// Poll 周期。SS-TWR TAGブロックと同じ理由でKconfig化した:
+// アンカーの受信待ち窓と周期をずらせるように（2026-08-29 DS-TWR原因特定、
+// docs/HANDOFF.md §0-C(1) - この固定値200は位相ロックの半分だった。
+// respondDSRange()側のpollHostTimeoutMsも既定200msで両方とも1ms tickに
+// 量子化されており、一度Pollがアンカーの窓境界の空白に落ちると
+// そこに留まり続けていた）。
+static constexpr uint32_t RANGE_INTERVAL_MS = CONFIG_UWB_TWR_RANGE_INTERVAL_MS;
 static constexpr uint32_t TAG_LOG_INTERVAL   = 10;
 // Extra immediate retries after a failed exchange, within the same ranging
 // cycle (0 = off, identical to the behaviour before this option existed).
@@ -1240,11 +1254,18 @@ static constexpr uint32_t TAG_LOG_INTERVAL   = 10;
 static constexpr uint32_t RETRY_MAX          = CONFIG_UWB_TWR_RETRY_MAX;
 
 static constexpr uint32_t RX_TIMEOUT_UUS               = 3000;
-static constexpr uint32_t RANGE_HOST_TIMEOUT_MS         = 10;
+// 2026-08-29 DS-TWR原因特定 (docs/HANDOFF.md §0-C): 10->20。
+// DSRangeConfig::hostTimeoutMs のフィールドコメント参照。
+static constexpr uint32_t RANGE_HOST_TIMEOUT_MS         = 20;
 static constexpr uint32_t RESPONSE_RX_AFTER_TX_DLY_UUS  = 1500;
 static constexpr uint32_t RESPONSE_TX_DLY_UUS           = 3000;
-static constexpr uint32_t FINAL_TX_DLY_UUS                   = 1800;
-static constexpr uint32_t FINAL_RX_AFTER_RESPONSE_TX_DLY_UUS = 500;
+// 2026-08-29 DS-TWR原因特定 (docs/HANDOFF.md §0-C(2)): 1800->3000。
+// Response側と対称にし、850kbps/preamble256でのDW3000 UM §9.4.1エラッタ
+// を避ける。DSRangeConfig::finalTxDelayUus のフィールドコメント参照。
+static constexpr uint32_t FINAL_TX_DLY_UUS                   = 3000;
+// 2026-08-29 DS-TWR原因特定: 500->1500。上のfinalTxDelayUusと対称に
+// (DSRangeConfig::finalRxAfterResponseTxDelayUus のフィールドコメント参照)。
+static constexpr uint32_t FINAL_RX_AFTER_RESPONSE_TX_DLY_UUS = 1500;
 static constexpr uint32_t RESULT_RX_AFTER_FINAL_TX_DLY_UUS   = 200;
 static constexpr uint8_t RESULT_REPEAT_COUNT    = 1;
 static constexpr uint32_t RESULT_REPEAT_GAP_MS  = 3;
@@ -1353,7 +1374,19 @@ static void runRole(uwb::Qm33120& uwb)
                 rangeFailCount++;
             }
 
-            if ((rangeCount % TAG_LOG_INTERVAL) == 10) {
+            // 【2026-08-29 DS-TWR原因特定】ResponseWait以外の段階での失敗
+            // （Final/Result待ちでの失敗。docs/HANDOFF.md §0-C(2)のFinal
+            // 遅延送信の締切問題を含む）は稀なので、10回ごとの間引きを
+            // 待たず毎回ログに出す。ResponseWaitでの失敗（相手からの
+            // Response自体が来ない、電波環境等で最もありふれた失敗）は
+            // 従来通り10回ごとの間引きのまま。
+            // Additionally log every failure whose stage is not
+            // ResponseWait (rare Final/Result-stage failures) - keep the
+            // every-10th rule for the rest.
+            const bool logThisAttempt =
+                ((rangeCount % TAG_LOG_INTERVAL) == 0) ||
+                (!result.success && (result.stage != uwb::DSStage::ResponseWait));
+            if (logThisAttempt) {
                 const float rate = (rangeCount == 0) ? 0.0f
                                                       : (100.0f * static_cast<float>(rangeOkCount) /
                                                          static_cast<float>(rangeCount));
@@ -1369,10 +1402,17 @@ static void runRole(uwb::Qm33120& uwb)
                     // Result wait at ~9-10 ms); tx_margin_us != 0 means the Final was scheduled.
                     // elapsed_ms でどの待ちが切れたか（Response 待ち ≈5 ms、Result 待ち ≈9〜10 ms）、
                     // tx_margin_us が 0 でなければ Final の遅延送信まで進んだことが分かる。
-                    ESP_LOGW(TAG, "DS_RANGE_STAT count=%lu ok=%lu fail=%lu rate=%.1f%% last=FAIL seq=%u error=%s elapsed_ms=%lu tx_margin_us=%ld",
+                    // stage/rx_status/rx_seen/rx_rej/wedged は2026-08-29 DS-TWR原因特定で追加
+                    // (docs/HANDOFF.md §0-C、DSRangeResult のフィールドコメント参照)。
+                    ESP_LOGW(TAG,
+                             "DS_RANGE_STAT count=%lu ok=%lu fail=%lu rate=%.1f%% last=FAIL seq=%u error=%s "
+                             "elapsed_ms=%lu tx_margin_us=%ld stage=%s rx_status=0x%08lX rx_seen=%u rx_rej=%u "
+                             "wedged=%u",
                              (unsigned long)rangeCount, (unsigned long)rangeOkCount, (unsigned long)rangeFailCount,
                              rate, result.sequence, uwb.lastErrorName(), (unsigned long)result.elapsedMs,
-                             (long)result.txMarginUs);
+                             (long)result.txMarginUs, uwb::dsStageName(result.stage),
+                             (unsigned long)result.rxStatus, (unsigned)result.rxSeen, (unsigned)result.rxRejected,
+                             (unsigned)result.txWedged);
                 }
             }
 
@@ -1522,6 +1562,21 @@ static uwb::RangeConfig makeRangeConfig()
 #if CONFIG_UWB_TWR_POLL_WAIT_MS > 0
     range.pollHostTimeoutMs = CONFIG_UWB_TWR_POLL_WAIT_MS;
 #endif
+    // 診断用: 既定(false)は、Poll待ちがタイムアウトではないRXエラーを見ても
+    // 受信を継続する（2026-08-29 DS-TWR原因特定、docs/HANDOFF.md §0-C(1)、
+    // RangeConfig::pollWaitReturnOnRxError のコメント参照）。trueにすると
+    // 2026-08-29より前の挙動（RXエラーの最初の1回で打ち切る）に戻る。
+    // Diagnostic: default (false) absorbs non-timeout RX errors during the
+    // Poll wait instead of returning on the first one (see
+    // RangeConfig::pollWaitReturnOnRxError).
+    // CONFIG_UWB_TWR_DIAG_POLL_WAIT_RETURN_ON_RX_ERROR は bool Kconfig で、
+    // n のときESP-IDFのKconfigはマクロ自体を定義しない(0にはならない)ため
+    // #if defined(...) && ... で判定する(cfg.use_irq と同じ作法。本ファイル
+    // 冒頭のCONFIG_UWB_ENABLE_IRQコメント参照)。構造体既定は既にfalseなので
+    // yのときだけtrueへ上書きする。
+#if defined(CONFIG_UWB_TWR_DIAG_POLL_WAIT_RETURN_ON_RX_ERROR) && CONFIG_UWB_TWR_DIAG_POLL_WAIT_RETURN_ON_RX_ERROR
+    range.pollWaitReturnOnRxError = true;
+#endif
     return range;
 }
 
@@ -1580,13 +1635,16 @@ static void runRole(uwb::Qm33120& uwb)
                 // Negative tx_margin_us with error=TxStartFailed is direct
                 // evidence that the poll WAS heard but the response was
                 // cancelled because the turnaround missed the deadline.
+                // rx_errors/wedged は2026-08-29 DS-TWR原因特定で追加
+                // (docs/HANDOFF.md §0-C、ResponderResult のフィールドコメント参照)。
                 ESP_LOGW(TAG,
                          "SS_RESP_STAT ok=%lu fail=%lu last=FAIL error=%s rx_status=0x%08lX [%s] tx_margin_us=%ld "
-                         "rsl_dbm=%s fp_dbm=%s accum=%u",
+                         "rsl_dbm=%s fp_dbm=%s accum=%u rx_errors=%u wedged=%u",
                          (unsigned long)respCount, (unsigned long)failCount, uwb.lastErrorName(),
                          (unsigned long)result.rxStatus, rxStatusBits(result.rxStatus, statusBuf, sizeof(statusBuf)),
                          (long)result.txMarginUs, fmtDbmQ8(result.rslDbmQ8, rslBuf, sizeof(rslBuf)),
-                         fmtDbmQ8(result.fpDbmQ8, fpBuf, sizeof(fpBuf)), (unsigned)result.rxAccumCount);
+                         fmtDbmQ8(result.fpDbmQ8, fpBuf, sizeof(fpBuf)), (unsigned)result.rxAccumCount,
+                         (unsigned)result.rxErrors, (unsigned)result.txWedged);
             }
             continue;
         }
@@ -1621,11 +1679,20 @@ static void runRole(uwb::Qm33120& uwb)
 
 static constexpr uint32_t ANCHOR_LOG_INTERVAL          = 20;
 static constexpr uint32_t RX_TIMEOUT_UUS               = 3000;
-static constexpr uint32_t RANGE_HOST_TIMEOUT_MS         = 10;
+// 2026-08-29 DS-TWR原因特定 (docs/HANDOFF.md §0-C): 10->20。
+// DSRangeConfig::hostTimeoutMs のフィールドコメント参照
+// (respondDSRange()のFinal待ちがハードウェアRXFTOより先に切れないための余裕)。
+static constexpr uint32_t RANGE_HOST_TIMEOUT_MS         = 20;
 static constexpr uint32_t RESPONSE_RX_AFTER_TX_DLY_UUS  = 1500;
 static constexpr uint32_t RESPONSE_TX_DLY_UUS           = 3000;
-static constexpr uint32_t FINAL_TX_DLY_UUS                   = 1800;
-static constexpr uint32_t FINAL_RX_AFTER_RESPONSE_TX_DLY_UUS = 500;
+// 2026-08-29 DS-TWR原因特定 (docs/HANDOFF.md §0-C(2)): 1800->3000。
+// Response側と対称にし、850kbps/preamble256でのDW3000 UM §9.4.1エラッタ
+// （締切に対しリード時間が足りず無警告で未送信）を避ける。
+// DSRangeConfig::finalTxDelayUus のフィールドコメント参照。
+static constexpr uint32_t FINAL_TX_DLY_UUS                   = 3000;
+// 2026-08-29 DS-TWR原因特定: 500->1500。上のfinalTxDelayUusと対称に
+// (DSRangeConfig::finalRxAfterResponseTxDelayUus のフィールドコメント参照)。
+static constexpr uint32_t FINAL_RX_AFTER_RESPONSE_TX_DLY_UUS = 1500;
 static constexpr uint32_t RESULT_RX_AFTER_FINAL_TX_DLY_UUS   = 200;
 static constexpr uint8_t RESULT_REPEAT_COUNT    = 1;
 static constexpr uint32_t RESULT_REPEAT_GAP_MS  = 3;
@@ -1654,6 +1721,25 @@ static uwb::DSRangeConfig makeRangeConfig()
     // downgraded at runtime because the IRQ line is dead) - the Kconfig
     // default is BothIrq, for which it does change the values.
     uwb::applyTimingProfile(range, g_effectiveTimingProfile);
+    // 【修正2】SS-TWR ANCHORブロック(makeRangeConfig()冒頭コメント参照)と
+    // 同じ理由・同じ扱いでPoll待ちのホストタイムアウトを上書きできるように
+    // する(respondDSRange()のPoll待ちループが使う。Final待ちは
+    // hostTimeoutMsのまま変わらない)。
+#if CONFIG_UWB_TWR_POLL_WAIT_MS > 0
+    range.pollHostTimeoutMs = CONFIG_UWB_TWR_POLL_WAIT_MS;
+#endif
+    // 診断用: 既定(false)は、Poll待ちがタイムアウトではないRXエラーを見ても
+    // 受信を継続する（2026-08-29 DS-TWR原因特定、docs/HANDOFF.md §0-C(1)、
+    // DSRangeConfig::pollWaitReturnOnRxError のコメント参照）。SS-TWR
+    // ANCHORブロックと同じ扱い。
+    // CONFIG_UWB_TWR_DIAG_POLL_WAIT_RETURN_ON_RX_ERROR は bool Kconfig で、
+    // n のときESP-IDFのKconfigはマクロ自体を定義しない(0にはならない)ため
+    // #if defined(...) && ... で判定する(cfg.use_irq と同じ作法。本ファイル
+    // 冒頭のCONFIG_UWB_ENABLE_IRQコメント参照)。構造体既定は既にfalseなので
+    // yのときだけtrueへ上書きする。
+#if defined(CONFIG_UWB_TWR_DIAG_POLL_WAIT_RETURN_ON_RX_ERROR) && CONFIG_UWB_TWR_DIAG_POLL_WAIT_RETURN_ON_RX_ERROR
+    range.pollWaitReturnOnRxError = true;
+#endif
     return range;
 }
 
@@ -1678,13 +1764,24 @@ static void runRole(uwb::Qm33120& uwb)
                 // Poll was received and answered, but the Final never arrived: a real failure
                 // of the exchange (previously swallowed silently). Log every one.
                 // Poll は受けて応答したのに Final が届かなかった＝交換の実失敗（以前は黙って捨てていた）。
-                ESP_LOGW(TAG, "DS_RESP_STAT stage=final_wait seq=%u requester=0x%04X elapsed_ms=%lu tx_margin_us=%ld",
-                         result.sequence, result.requester, (unsigned long)result.elapsedMs, (long)result.txMarginUs);
+                // stage/rx_status/rx_errors/wedged は2026-08-29 DS-TWR原因特定で追加
+                // (docs/HANDOFF.md §0-C)。stageは以前は"final_wait"の固定文字列
+                // だったが、結果の実際の段階名(DSResponderStage)に置き換えた。
+                ESP_LOGW(TAG,
+                         "DS_RESP_STAT stage=%s seq=%u requester=0x%04X elapsed_ms=%lu tx_margin_us=%ld "
+                         "rx_status=0x%08lX rx_errors=%u wedged=%u",
+                         uwb::dsResponderStageName(result.stage), result.sequence, result.requester,
+                         (unsigned long)result.elapsedMs, (long)result.txMarginUs, (unsigned long)result.rxStatus,
+                         (unsigned)result.rxErrors, (unsigned)result.txWedged);
             }
             failCount++;
             if ((failCount % ANCHOR_LOG_INTERVAL) == 0) {
-                ESP_LOGW(TAG, "DS_RESP_STAT ok=%lu fail=%lu last=FAIL error=%s", (unsigned long)respCount,
-                         (unsigned long)failCount, uwb.lastErrorName());
+                ESP_LOGW(TAG,
+                         "DS_RESP_STAT ok=%lu fail=%lu last=FAIL error=%s stage=%s rx_status=0x%08lX rx_errors=%u "
+                         "wedged=%u",
+                         (unsigned long)respCount, (unsigned long)failCount, uwb.lastErrorName(),
+                         uwb::dsResponderStageName(result.stage), (unsigned long)result.rxStatus,
+                         (unsigned)result.rxErrors, (unsigned)result.txWedged);
             }
             continue;
         }

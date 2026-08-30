@@ -483,6 +483,47 @@ struct RangeResult {
 };
 
 /**
+ * @brief requestDSRange()/respondDSRange() が呼び出しの中でどこまで進んだか
+ * （2026-08-29 DS-TWR原因特定、docs/HANDOFF.md §0-C）。失敗ログから「どの
+ * 交換段階で落ちたか」を一目で分かるようにするための診断用の列挙で、測距の
+ * ロジックには一切影響しない。DSRangeResult（タグ側）専用。DSResponderResult
+ * （アンカー側）は同じ考え方の別の列挙 DSResponderStage を使う（そちらの
+ * 定義を参照）。
+ *
+ * Where a requestDSRange() call ended, for diagnostics only (no effect on
+ * ranging logic). See DSResponderStage for the responder-side counterpart.
+ */
+enum class DSStage : uint8_t {
+    None         = 0, //!< 未到達（呼び出し前に失敗、または成功でDoneまで進んだ場合はDoneが優先）。
+    PollTx       = 1, //!< Poll の送信中（TxDataFailed/TxStartFailed）。
+    ResponseWait = 2, //!< Response 受信待ち中に失敗。
+    FinalTx      = 3, //!< Final の遅延送信中（TxDataFailed/TxStartFailed/txWedged）。
+    ResultWait   = 4, //!< 結果("DWD")受信待ち中に失敗。
+    Done         = 5, //!< 成功。
+};
+
+/** DSStage の表示名（ログ出力用）。 */
+constexpr const char* dsStageName(DSStage stage)
+{
+    switch (stage) {
+    case DSStage::None:
+        return "none";
+    case DSStage::PollTx:
+        return "poll_tx";
+    case DSStage::ResponseWait:
+        return "response_wait";
+    case DSStage::FinalTx:
+        return "final_tx";
+    case DSStage::ResultWait:
+        return "result_wait";
+    case DSStage::Done:
+        return "done";
+    default:
+        return "?";
+    }
+}
+
+/**
  * @brief Result returned by Qm33120::requestDSRange() (DS-TWR initiator).
  * 1:1 with M5Stamp_UWBDSRangeResult (M5Stamp_UWB_Types.h:227-234). Note: the
  * distance is computed by the responder (see DSResponderResult) and merely
@@ -506,6 +547,49 @@ struct DSRangeResult {
      * 意味は ResponderResult::txMarginUs と同じ（そちらのコメント参照）。
      */
     int32_t txMarginUs = 0;
+    /**
+     * 【2026-08-29 DS-TWR原因特定、docs/HANDOFF.md §0-C】受信待ち
+     * （Response待ち/結果待ち）を打ち切った瞬間の生の SYS_STATUS（下位
+     * ワード）を、消される前にそのまま持ち出す。RangeResult::rxStatus と
+     * 同じ目的（PHR/CRC/同期ロストの区別）。成功時、またはホスト側
+     * タイムアウトのみで抜けた場合（チップ側ステータスに何も立っていない）
+     * は 0 のまま。
+     * Raw SYS_STATUS (low word) captured before it is cleared, when a
+     * receive wait (Response or Result) gave up. Same purpose as
+     * RangeResult::rxStatus.
+     */
+    uint32_t rxStatus = 0;
+    /**
+     * この呼び出し中にCRCを通って(RXFCG)引き渡されたフレーム数
+     * （Response受信ループ+結果受信ループの合計）。
+     * Number of CRC-good frames handed over during this call (Response wait
+     * + Result wait combined).
+     */
+    uint8_t rxSeen = 0;
+    /**
+     * そのうちframeMatchesExpectation()が「待っていたフレームではない」と
+     * 判定して捨てた数。RangeResult::rxRejectedと同じ意味。
+     * Of those, how many frameMatchesExpectation() rejected as not the
+     * expected frame. Same meaning as RangeResult::rxRejected.
+     */
+    uint8_t rxRejected = 0;
+    /** この呼び出しがどこで終わったか（診断用）。DSStage 参照。 */
+    DSStage stage = DSStage::None;
+    /**
+     * 【2026-08-29 DS-TWR原因特定、docs/HANDOFF.md §0-C(2)】true なら、
+     * Final の dwt_starttx(DWT_START_TX_DELAYED) 自体はDWT_SUCCESSを
+     * 返したが、直後の detail::abortIfDelayedTxWedged() がチップを
+     * UM §9.4.1 エラッタの「無警告で送信されない」状態（SYS_STATE_LO ==
+     * 0x000D0000、PMSC_STATE=TX/TX_STATE=IDLE）で検出し、送信を中断した
+     * ことを示す。DW3720 用ドライバの ull_starttx() は HPDWARN しか見ない
+     * ため（dw3000 用ドライバには DW_SYS_STATE_TXERR チェックがある）、
+     * この検出をラッパ側に追加した（uwb_qm33120_internal.hpp 参照）。
+     * True when dwt_starttx(DWT_START_TX_DELAYED) for the Final returned
+     * DWT_SUCCESS, but the chip was then found wedged in the UM §9.4.1
+     * errata state and the call aborted it (see
+     * detail::abortIfDelayedTxWedged()).
+     */
+    bool txWedged = false;
 };
 
 /**
@@ -580,7 +664,67 @@ struct ResponderResult {
      * INT16_MIN でなくても信用してはならない。
      */
     uint16_t rxAccumCount = 0;
+    /**
+     * 【2026-08-29 DS-TWR原因特定、docs/HANDOFF.md §0-C(1)】Poll待ちの中で
+     * 「タイムアウト(RXFTO/RXPTO)ではないRXエラー」を見て、
+     * RangeConfig::pollWaitReturnOnRxError==false（既定）により受信を
+     * 継続（吸収）した回数。旧実装（pollWaitReturnOnRxError==true）は
+     * これが1になった時点で必ず呼び出しごと打ち切っていた。この値が
+     * 大きいまま呼び出しが最終的に成功しているなら、吸収が効いている
+     * ことの直接の証拠。
+     * How many non-timeout RX errors the Poll wait absorbed (continued
+     * receiving instead of returning) because pollWaitReturnOnRxError is
+     * false (default). See RangeConfig::pollWaitReturnOnRxError.
+     */
+    uint8_t rxErrors = 0;
+    /**
+     * 【2026-08-29 DS-TWR原因特定、docs/HANDOFF.md §0-C(2)】true なら、
+     * Response の dwt_starttx(DWT_START_TX_DELAYED) 自体はDWT_SUCCESSを
+     * 返したが、直後の detail::abortIfDelayedTxWedged() がチップを
+     * UM §9.4.1 エラッタの状態で検出し、送信を中断したことを示す。
+     * 詳細は DSRangeResult::txWedged のコメント参照（同じ仕組み）。
+     * See DSRangeResult::txWedged - same mechanism, for the Response leg.
+     */
+    bool txWedged = false;
 };
+
+/**
+ * @brief respondDSRange() が呼び出しの中でどこまで進んだか（2026-08-29
+ * DS-TWR原因特定、docs/HANDOFF.md §0-C）。DSStage（タグ側）のアンカー版。
+ * 診断専用で測距ロジックには影響しない。
+ *
+ * Where a respondDSRange() call ended, for diagnostics only. See DSStage
+ * for the initiator-side counterpart.
+ */
+enum class DSResponderStage : uint8_t {
+    None        = 0, //!< 未到達。
+    PollWait    = 1, //!< Poll 受信待ち中に失敗（ホストタイムアウト、または吸収しないRXエラー）。
+    ResponseTx  = 2, //!< Response の遅延送信中（TxDataFailed/TxStartFailed/txWedged）。
+    FinalWait   = 3, //!< Final 受信待ち中に失敗。
+    ResultTx    = 4, //!< 距離計算〜結果("DWD")送信中の失敗。
+    Done        = 5, //!< 成功。
+};
+
+/** DSResponderStage の表示名（ログ出力用）。 */
+constexpr const char* dsResponderStageName(DSResponderStage stage)
+{
+    switch (stage) {
+    case DSResponderStage::None:
+        return "none";
+    case DSResponderStage::PollWait:
+        return "poll_wait";
+    case DSResponderStage::ResponseTx:
+        return "response_tx";
+    case DSResponderStage::FinalWait:
+        return "final_wait";
+    case DSResponderStage::ResultTx:
+        return "result_tx";
+    case DSResponderStage::Done:
+        return "done";
+    default:
+        return "?";
+    }
+}
 
 /**
  * @brief Result returned by Qm33120::respondDSRange() (DS-TWR responder).
@@ -606,6 +750,33 @@ struct DSResponderResult {
      * 意味は ResponderResult::txMarginUs と同じ（そちらのコメント参照）。
      */
     int32_t txMarginUs = 0;
+    /**
+     * 【2026-08-29 DS-TWR原因特定、docs/HANDOFF.md §0-C】受信待ち（Poll待ち/
+     * Final待ち）を打ち切った瞬間の生の SYS_STATUS（下位ワード）を、消される
+     * 前にそのまま持ち出す。ResponderResult::rxStatus と同じ目的。
+     * Raw SYS_STATUS (low word) captured before it is cleared, when a
+     * receive wait (Poll or Final) gave up.
+     */
+    uint32_t rxStatus = 0;
+    /** CRCを通って(RXFCG)引き渡されたフレーム数（Poll待ち+Final待ちの合計）。 */
+    uint8_t rxSeen = 0;
+    /** そのうちframeMatchesExpectation()が捨てた数。 */
+    uint8_t rxRejected = 0;
+    /**
+     * Poll待ちの中で吸収した非タイムアウトRXエラーの回数。
+     * ResponderResult::rxErrors と同じ意味（DSRangeConfig::pollWaitReturnOnRxError
+     * 参照）。
+     */
+    uint8_t rxErrors = 0;
+    /** この呼び出しがどこで終わったか（診断用）。DSResponderStage 参照。 */
+    DSResponderStage stage = DSResponderStage::None;
+    /**
+     * true なら、Response の dwt_starttx(DWT_START_TX_DELAYED) 自体は
+     * DWT_SUCCESSを返したが、直後の detail::abortIfDelayedTxWedged() が
+     * チップを UM §9.4.1 エラッタの状態で検出し、送信を中断したことを示す。
+     * 詳細は DSRangeResult::txWedged のコメント参照。
+     */
+    bool txWedged = false;
 };
 
 } // namespace uwb

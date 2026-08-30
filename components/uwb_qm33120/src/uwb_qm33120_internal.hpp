@@ -33,6 +33,8 @@
 #include "esp_timer.h"
 
 #include "deca_device_api.h"
+#include "deca_private.h"     // dwt_readfromdevice() - raw register read, same pattern as firmware/twr, firmware/probe.
+#include "dw3720_deca_regs.h" // SYS_STATE_LO_ID/LEN - both qm33120w_sdk's public INCLUDE_DIRS ("." / "dw3720").
 
 #include "uwb_qm33120_frame_match.hpp"
 #include "uwb_qm33120_types.hpp"
@@ -278,5 +280,81 @@ static inline RxPower readRxPower()
  * ここに集約する（Step 1 では未使用）。値は原本のまま。 */
 static constexpr double kSpeedOfLightMPerS = 299702547.0; //!< 実効値（真空中の光速ではない）。cpp:787,1012,1165。
 static constexpr uint64_t kUusToDwtTime    = 65536ULL;
+
+/**
+ * @brief DW3000 UM §9.4.1 の「遅延送信が無警告で送信されない」エラッタを
+ * チップの生レジスタから検出する（2026-08-29 DS-TWR原因特定、
+ * docs/HANDOFF.md §0-C(2)）。
+ *
+ * 背景: DS PollingBoth プリセットの旧 `finalTxDelayUus`（1800 UUS）は、
+ * 850 kbps / preamble 256（本番機の実運用値）では、タグが Final の
+ * dwt_starttx(DWT_START_TX_DELAYED) を呼ぶ時点で予約締切まで
+ * 0.03〜1.0 ms しか残っていないケースがあった。DW3000 UM §9.4.1 は、
+ * 予約時刻が「現在時刻 + プリアンブル長 + SFD 長 + 20 µs」より前だと
+ * **HPDWARN すら立たず、dwt_starttx() は DWT_SUCCESS を返すのに実際には
+ * 送信されない**と規定している。この状態でチップの SYS_STATE_LO
+ * （0xF0030、下記 dw3720_deca_regs.h 参照）を読むと 0x000D0000
+ * （PMSC_STATE=0xD=TX、TX_STATE=0=IDLE）に固まったままになる
+ * （DW3000 User Manual Version 1.1 §9.4.1、Page 239。原文は docs/HANDOFF.md §0-C「証拠 2」に引用）。
+ *
+ * dwt_starttx() の DW3720 用実装 `ull_starttx()`
+ * （components/qm33120w_sdk/dw3720/dw3720_device.c）は HPDWARN のみを
+ * 見て判定するため、このエラッタのケースを検出できない（HPDWARNが立たない
+ * のがこのエラッタの症状そのものなので）。dw3000用ドライバの同名関数には
+ * `DW_SYS_STATE_TXERR`(=0xD0000、SYS_STATE_LOのビット位置に一致)を見る
+ * 追加チェックがあるが、dw3720用にはこれが移植されていない
+ * （`assets/DW3_QM33_SDK_1.1.1/Drivers/API/Shared/dwt_uwb_driver/dw3000/
+ * dw3000_device.c:5253-5262`）。本関数はそのチェックをラッパ側で補う。
+ *
+ * The DW3000 UM §9.4.1 errata: if a delayed-TX deadline is less than
+ * (now + preamble + SFD + 20 us) in the future, dwt_starttx() returns
+ * DWT_SUCCESS but neither HPDWARN is set nor is the frame transmitted;
+ * SYS_STATE_LO then reads 0x000D0000 (PMSC_STATE=TX, TX_STATE=IDLE). The
+ * DW3720 driver we compile only checks HPDWARN (unlike the dw3000 driver,
+ * which also checks DW_SYS_STATE_TXERR), so it misses this case - this
+ * helper detects it directly from the raw register.
+ *
+ * @return true なら上記のエラッタ状態（無警告で未送信）にある。
+ */
+static inline bool delayedTxWedged()
+{
+    uint8_t buf[SYS_STATE_LO_LEN] = {0, 0, 0, 0};
+    dwt_readfromdevice(SYS_STATE_LO_ID, 0, sizeof(buf), buf);
+    const uint32_t sysStateLo = (static_cast<uint32_t>(buf[3]) << 24) | (static_cast<uint32_t>(buf[2]) << 16) |
+                                (static_cast<uint32_t>(buf[1]) << 8) | static_cast<uint32_t>(buf[0]);
+    return sysStateLo == 0x000D0000UL;
+}
+
+/**
+ * @brief delayedTxWedged() が true のとき、送信を中断してステータスを
+ * クリアする（2026-08-29 DS-TWR原因特定）。
+ *
+ * dwt_forcetrxoff() は「TSE が IDLE より上の状態にあるときだけ
+ * CMD_TXRXOFF を発行する」（`ull_forcetrxoff()`,
+ * components/qm33120w_sdk/dw3720/dw3720_device.c: `if (!(dwt_read8bitoffsetreg(
+ * dw, SYS_STATE_LO_ID, 2U) <= DW_SYS_STATE_IDLE))`）。このエラッタの
+ * 状態はチップが PMSC_STATE=0xD（> DW_SYS_STATE_IDLE=3）を報告している
+ * ので、dwt_forcetrxoff() は実際に CMD_TXRXOFF を発行して送信を止める。
+ * その後 dwt_writesysstatuslo() で TXFRS・RX系ビットをまとめてクリアし、
+ * 呼び出し側の後続コード（次のRX起動等）が古いステータスを誤読しないよう
+ * にする。
+ *
+ * delayedTxWedged() returning true means the chip reports PMSC_STATE=0xD,
+ * which is > DW_SYS_STATE_IDLE(3), so dwt_forcetrxoff()'s internal state
+ * check does issue CMD_TXRXOFF (see ull_forcetrxoff() cited above).
+ *
+ * @return true なら中断した（=呼び出し元は送信が行われなかったものとして
+ * 扱うこと）。false なら delayedTxWedged() が false だったので何もしていない。
+ */
+static inline bool abortIfDelayedTxWedged()
+{
+    if (!delayedTxWedged()) {
+        return false;
+    }
+    dwt_forcetrxoff();
+    dwt_writesysstatuslo(DWT_INT_TXFRS_BIT_MASK | SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR |
+                          SYS_STATUS_ALL_RX_GOOD);
+    return true;
+}
 
 } // namespace uwb::detail

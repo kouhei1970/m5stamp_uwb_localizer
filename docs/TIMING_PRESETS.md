@@ -158,9 +158,12 @@ DWD はアンカーが Final を受信した直後に `DWT_START_TX_IMMEDIATE` �
 
 ---
 
-## 2. プリセット表（確定値）
+## 2. プリセット表（確定値、版2）
 
-単位はすべて **UUS**。`hostTimeoutMs` は全プリセットで 10（`docs/archive/REIMPL_PLAN.md` R9）。
+単位はすべて **UUS**。`hostTimeoutMs` は SS-TWR (`RangeConfig`) で全プリセット 10
+（`docs/archive/REIMPL_PLAN.md` R9）、DS-TWR (`DSRangeConfig`) で全プリセット **20**
+（2026-08-29 DS-TWR原因特定で10→20、下記§2.4参照。`DSRangeConfig::hostTimeoutMs`
+のフィールドコメント参照）。
 
 ### 2.1 `RangeConfig`（SS-TWR）
 
@@ -176,14 +179,19 @@ DWD はアンカーが Final を受信した直後に `DWT_START_TX_IMMEDIATE` �
 |---|---:|---:|---:|
 | `responseTxDelayUus` | 3000 | **878** | **878** |
 | `responseRxAfterTxDelayUus` | 1500 | **400** | **400** |
-| `finalTxDelayUus` | 1800 | **1365** | **683** |
-| `finalRxAfterResponseTxDelayUus` | 500 | 500 | **200** |
+| `finalTxDelayUus` | **3000** | **1365** | **683** |
+| `finalRxAfterResponseTxDelayUus` | **1500** | 500 | **200** |
 | `resultRxAfterFinalTxDelayUus` | 200 | **0** | **0** |
 | `rxTimeoutUus` | 3000 | **1200** | **1200** |
 | `resultRepeatCount` | 1 | 1 | 1 |
 
-**`PollingBoth` の列は現在の既定値と完全に一致する**（`uwb_qm33120_types.hpp` の
+**`PollingBoth` の列は現在の既定値と完全に一致する**（`uwb_qm33120_twr_config.hpp` の
 メンバ初期化子）。したがってこのプリセットを既定にする限り**挙動は一切変わらない**。
+
+`finalTxDelayUus`（1800→**3000**）・`finalRxAfterResponseTxDelayUus`
+（500→**1500**）は2026-08-29に変更した（`kTimingPresetVersion` 1→2）。**`AnchorIrq`・
+`BothIrq` の DS 列は未検証のまま**（6.8 Mbps・preamble 128 前提で導出されたもので、
+850 kbps・preamble 256 での再検証は行っていない。§2.4 参照）。
 
 ### 2.3 導出の検算
 
@@ -213,6 +221,82 @@ PRETOC は無効（0）にしてある（`uwb_qm33120_twr.cpp:531, 841`。
 1周（5アンカー、DS-TWR）の概算: poll 0.18 + R 0.9 + resp 0.18 + F 1.4 + final 0.18
 + 折返し 0.3 + DWD 0.18 ≈ **3.3 ms/台 → 5台で 16.6 ms ≈ 60 Hz**。
 `docs/IRQ_POLICY.md` の「アンカーのみ IRQ = 16.8 ms / 59.4 Hz」と一致する。
+
+### 2.4 【2026-08-29 追記】850 kbps / preamble 256 での再導出（`finalTxDelayUus` 1800→3000）
+
+本番機の実運用 PHY（850 kbps・preamble 256、`firmware/twr` の `anc_850_p256` 等）
+は §1〜§2.3 の導出が前提にしていた 6.8 Mbps・preamble 128 とはフレーム長が
+大きく異なる。DS-TWR 実測 0〜23%（SS-TWR は同条件で 99.95%）の机上解析
+（`docs/HANDOFF.md` §0-C(2)）で、DS PollingBoth の `finalTxDelayUus`（旧 1800
+UUS）だけが 850 kbps/256 向けに再検算されていなかったことが分かったので、
+Response 側（`responseTxDelayUus`=3000 UUS、実証済み）と同じ手順で導き直す。
+
+**フレーム長（850 kbps / preamble 256）**:
+
+- SHR = preamble 256 + SFD 8 = 264 シンボル × 1.0176 µs/シンボル ≈ **269 µs**
+  （シンボル長は §1.1 の preamble 128 の場合と同じ 1017.63 ns/シンボルを使用。
+  preamble 長だけが変わる）。
+- PHR ≈ **21.3 µs**（850 kbps の PHY ヘッダ長）。
+- データ部（850 kbps） = (8×バイト数 + 48) × 1.0256 µs。
+- RMARKER から見た「フレーム末尾までの時間」= PHR + データ部
+  （RMARKER は SHR の終端＝PHR の先頭に立つ。§1.1 参照）:
+
+  | フレーム | 総バイト数（ヘッダ+ペイロード+FCS） | RMARKER 後 |
+  |---|---:|---:|
+  | Poll ("DWP") | 16 B | ≈ **0.20 ms** |
+  | Response ("DWR") | 24 B | ≈ **0.27 ms** |
+  | Final ("DWF") | 26 B | ≈ **0.28 ms** |
+  | DWD ("DWD") | 18 B | ≈ **0.22 ms** |
+
+**折返しに要る時間（ポーリング、§1.3 と同じ内訳）**: 気づくまでの遅れ ≤ 1 ms
+（`vTaskDelay(pdMS_TO_TICKS(1))` 粒度）+ SPI/計算 ≈ 0.25 ms。
+
+**DW3000 UM §9.4.1 のリード時間規則**: 遅延送信の予約時刻（DX_TIME）は
+「現在時刻 + プリアンブル長 + SFD 長 + 20 µs」以上先でなければならない。
+すなわち最低リード時間 ≈ SHR（269 µs）+ 20 µs ≈ **289 µs**。これを下回ると
+HPDWARN すら立たず、`dwt_starttx()` は DWT_SUCCESS を返すのに実際には
+送信されない（`uwb_qm33120_internal.hpp` の `detail::delayedTxWedged()`
+コメント参照）。
+
+**旧 `finalTxDelayUus`=1800 UUS（≈1846.2 µs 実 µs）の余裕**: DX_TIME は
+Response の RMARKER（タグが受信した `respRxTs`）から 1846.2 µs 後。タグが
+実際に `dwt_starttx()` を呼ぶまでの折返し時間は上記の内訳から最大 ≈1.25 ms
+程度まで伸びうるため、リード時間の余裕（DX_TIME − 289 µs − 実際の折返し
+時間）は数十 µs 〜 1 ms 程度まで薄くなる（詳細な実測ベースの区間は
+`docs/HANDOFF.md` §0-C(2) 参照）。850 kbps/256 では Final フレーム自体も
+preamble 128/6.8 Mbps 時より長くなっている分、この薄い余裕がジッタで
+容易に負へ振れうる。
+
+**新 `finalTxDelayUus`=3000 UUS（≈3076.9 µs 実 µs）**: Response 側と同じ値
+にすることで、Response 側で既に実証済みの余裕（1.3〜2.3 ms）をそのまま
+Final 側にも与える。
+
+**アンカーの Final 受信窓（`finalRxAfterResponseTxDelayUus`=1500 UUS ≈1538.5 µs、
+`rxTimeoutUus`=3000 UUS ≈3076.9 µs）が Final フレーム全体を覆うことの確認**
+（Response 送信終了時刻を基準 T0 とする。Response の RMARKER 後の残り
+0.27 ms は上表より）:
+
+| | 時刻（T0基準） |
+|---|---:|
+| 窓が開く | T0 + 1538.5 µs ≈ **T0+1.54 ms** |
+| Final のプリアンブル先頭到達（タグ視点のDX_TIMEはR+3076.9µs、Rからここまでの折返し・伝搬を無視した近似） | ≈ T0+2.5〜2.8 ms 程度（タグ側の折返し時間に依存） |
+| Final フレーム終端（プリアンブル先頭 + SHR269 + RMARKER後0.28ms） | 上記 + ≈0.55 ms |
+| 窓が閉じる（RXFTO） | T0 + 1538.5 + 3076.9 ≈ **T0+4.62 ms** |
+
+窓は Final のプリアンブル到達より確実に早く開き、フレーム終端よりも
+確実に遅く閉じる（RX_FWTO はフレーム受信中も数え続け、途中で打ち切り
+うる - UM 記載 - ので、窓はフレーム全体を覆わなければならない。§2.3の
+「注意（PRETOC）」と同じ理由）。
+
+**`AnchorIrq`・`BothIrq` の DS 列（`finalTxDelayUus`=1365/683 等）はこの
+再検証の対象外**で、6.8 Mbps・preamble 128 前提の値のまま未検証（本項の
+850 kbps/256 では使わない組み合わせのため）。IRQ 運用でこの PHY を使う
+場合は本項と同じ手順で再導出すること。
+
+`kTimingPresetVersion` を 1→2 に、`DSRangeConfig::hostTimeoutMs` を
+10→20 に変更した（`respondDSRange()` の Final 待ちが上表のハードウェア
+RXFTO（T0+4.62 ms、Poll 受信からは概算で+7.5 ms 程度）より先にホスト側
+タイムアウトで打ち切られないための余裕。フィールドコメント参照）。
 
 ---
 

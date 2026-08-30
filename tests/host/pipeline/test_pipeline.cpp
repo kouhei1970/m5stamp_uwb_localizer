@@ -811,9 +811,12 @@ static void scenario13_timing_preset_table()
 
     // §2.2 DSRangeConfig(DS-TWR)。
     {
+        // 2026-08-29 DS-TWR原因特定 (docs/HANDOFF.md §0-C(2)):
+        // finalTxDelayUus 1800->3000, finalRxAfterResponseTxDelayUus
+        // 500->1500 (版1->2)。
         const uwb::TimingPresetDs p = uwb::timingPresetDs(TimingProfile::PollingBoth);
-        CHECK(p.responseTxDelayUus == 3000 && p.responseRxAfterTxDelayUus == 1500 && p.finalTxDelayUus == 1800 &&
-                  p.finalRxAfterResponseTxDelayUus == 500 && p.resultRxAfterFinalTxDelayUus == 200 &&
+        CHECK(p.responseTxDelayUus == 3000 && p.responseRxAfterTxDelayUus == 1500 && p.finalTxDelayUus == 3000 &&
+                  p.finalRxAfterResponseTxDelayUus == 1500 && p.resultRxAfterFinalTxDelayUus == 200 &&
                   p.rxTimeoutUus == 3000,
               "DS PollingBothが表と違う (tx=%u rx=%u ftx=%u frx=%u rrx=%u to=%u)", p.responseTxDelayUus,
               p.responseRxAfterTxDelayUus, p.finalTxDelayUus, p.finalRxAfterResponseTxDelayUus,

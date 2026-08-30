@@ -115,6 +115,39 @@ struct RangeConfig {
      * コメント参照）。responseTxDelayUus等のUUS値は不変。
      */
     uint32_t pollHostTimeoutMs          = 200;
+
+    /**
+     * 【2026-08-29 DS-TWR原因特定、docs/HANDOFF.md §0-C(1)】true にすると、
+     * respondRange()/respondDSRange() の Poll 待ちループが「タイムアウト
+     * (RXFTO/RXPTO) ではない RX エラー」を見た**最初の1回**で
+     * forcetrxoff() して即 return する旧挙動に戻る（2026-08-29 より前は
+     * これが唯一の挙動だった）。既定 false は、RXエラーを
+     * dwt_writesysstatuslo()でクリアして dwt_rxenable(DWT_START_RX_IMMEDIATE)
+     * するだけで受信を継続し、pollHostTimeoutMs を使い切るまで Poll を
+     * 待ち続ける（Qorvo公式 ex_05b_ds_twr_resp / ex_06b_ss_twr_resp の
+     * 受信ループと同じ構造。両者ともRXエラーで抜けず、ステータスを
+     * クリアして即座に受信を再開する）。
+     *
+     * 【なぜ既定を変えたか】旧挙動（true相当）は、Poll待ちの
+     * 200msの窓と、タグ側の測距周期（既定200ms、tick=1ms）が両方とも
+     * 1msティックに量子化されているため、一度 Poll がこの「窓の境界での
+     * forcetrxoff→再オープンの数百µsの空白」に落ちると、以後ずっと
+     * そこに留まり続ける（周期が完全に一致している限り位相がずれない）。
+     * RXエラーで即座に打ち切って再オープンする挙動そのものが、この
+     * 空白を毎回作り出していた。窓の再位相合わせは「Poll待ちがRXエラー
+     * で戻ったとき」にしか起きなかったため、この2つが組み合わさって
+     * DS-TWRだけが位相ロックしていた（SS-TWRのrespondRange()も同じ
+     * ループ構造だが、タグ側の周期が異なりRXエラー自体の発生頻度も
+     * 違うため、実測ではSS-TWRは99.95%・DS-TWRは0〜23%という非対称な
+     * 結果になっていた。docs/HANDOFF.md §0-C(1)参照）。
+     *
+     * If true, restores the pre-2026-08-29 behaviour: the Poll wait
+     * returns Error::RxError on the first non-timeout RX error instead of
+     * absorbing it and continuing to listen. Default false matches Qorvo's
+     * own ex_05b/ex_06b responder examples, which never abort the receive
+     * loop on an RX error.
+     */
+    bool pollWaitReturnOnRxError         = false;
 };
 
 /**
@@ -146,11 +179,36 @@ struct DSRangeConfig {
     //!< UUS。× kUusToDwtTime してDTU化し dwt_setdelayedtrxtime() に渡る。
     //!< Initiator側がResponse受信時刻を基準に自分のFinal遅延送信時刻を計算
     //!< するのに使う（uwb_qm33120_twr.cpp: requestDSRange:359,371）。
-    uint32_t finalTxDelayUus                = 1800;
+    //!<
+    //!< 【2026-08-29 DS-TWR原因特定、docs/HANDOFF.md §0-C(2)、1800→3000】
+    //!< 旧値1800 UUS(≈1846µs実us)は、850kbps/preamble256（本番機の実運用値。
+    //!< 旧値は6.8Mbps/preamble128前提のまま流用されていた）では、タグが
+    //!< Finalを起動する時点で締切まで0.03〜1.0msしか残っておらず、
+    //!< DW3000 UM §9.4.1エラッタ（予約時刻が「現在+プリアンブル長+SFD長+
+    //!< 20µs」未満だとHPDWARNすら立たず無警告で送信されない。SYS_STATE_LO
+    //!< が0x000D0000＝PMSC_STATE=TX/TX_STATE=IDLEのまま固まる）を頻繁に
+    //!< 踏んでいた（DS-TWR実測0〜23%、SS-TWRは同条件で99.95%）。
+    //!< Response側（responseTxDelayUus=3000、上のフィールド）は同じ
+    //!< 850kbps/256で1.3〜2.3msの余裕があり実証済みなので、Final側も
+    //!< 同じ3000 UUSに揃えて対称にした。詳細な再導出（フレーム長・
+    //!< エラッタの締切式）は docs/TIMING_PRESETS.md の2026-08-29追記を参照。
+    uint32_t finalTxDelayUus                = 3000;
     //!< UUS。dwt_setrxaftertxdelay() に直接渡る。Responder側が自分の
     //!< 遅延Response送信後、Final受信を開始するまでの待ち
     //!< （uwb_qm33120_twr.cpp: respondDSRange:512）。
-    uint32_t finalRxAfterResponseTxDelayUus = 500;
+    //!<
+    //!< 【2026-08-29 DS-TWR原因特定、500→1500】finalTxDelayUusを3000へ
+    //!< 揃えたのに合わせ、アンカーのFinal受信窓もresponseRxAfterTxDelayUus
+    //!< （上、1500）と同じ1500 UUSにして対称にした。窓が開くのは
+    //!< Response送信終了+1500 UUS(≈1.54ms)後、Finalのプリアンブル到達は
+    //!< Response送信終了+3000 UUS−179µs実us(≈2.90ms)後なので、窓は
+    //!< プリアンブル到達より先に開く（§1.2の締切不等式を満たす）。
+    //!< 窓の終わり（RXFTOまで、rxTimeoutUus=3000UUS）はFinal末尾
+    //!< （Response送信終了+3000+SHR+PHR+データ、約3.36ms後）を覆う必要が
+    //!< あり、実際に覆っている（docs/TIMING_PRESETS.md参照。UMはRX_FWTOが
+    //!< フレーム受信中も数え続け、フレームの途中で打ち切りうると明記して
+    //!< いるため、窓はフレーム全体を覆わなければならない）。
+    uint32_t finalRxAfterResponseTxDelayUus = 1500;
     /**
      * UUS。dwt_setrxaftertxdelay() に直接渡る。Initiator側がFinal送信後、
      * 結果("DWD")受信を開始するまでの待ち
@@ -184,8 +242,26 @@ struct DSRangeConfig {
      * 【docs/archive/REIMPL_PLAN.md R9】RangeConfig::hostTimeoutMs と同じ理由・
      * 同じ根拠で100→10に変更（コメント参照）。DS-TWRのrxTimeoutUus=3000
      * (≈3.077ms)に対しても10msは1回分丸ごと待っても打ち切らない値。
+     *
+     * 【2026-08-29 DS-TWR原因特定、10→20】respondDSRange()のFinal待ち
+     * ループはこのフィールドを使う（本構造体コメント冒頭参照）。Final受信
+     * 窓はfinalRxAfterResponseTxDelayUus(=1500 UUS)後に開き、
+     * rxTimeoutUus(=3000 UUS)後にハードウェアRXFTOで自動的に閉じるので、
+     * Response送信終了を基準にすると窓が閉じるのは1500+3000=4500 UUS
+     * (≈4.6ms)後——さらにResponseの遅延送信自体がPoll受信から3000 UUS
+     * (≈3.1ms)後なので、Final待ちループが開始する（Response遅延送信を
+     * 予約した直後の）ホスト時刻を基準にすると、ハードウェアRXFTOは
+     * 合計で約7.5ms後に立つ。旧値10msはこのハード側タイムアウトの前に
+     * ホスト側タイムアウトが先に切れることは無かった（7.5ms<10ms）が、
+     * 余裕が2.5msしか無く、ログ出力等でホスト側のタイミングにジッタが
+     * 乗ると逆転しうる。ホスト
+     * タイムアウトが先に切れると forcetrxoff() が測距シーケンスの途中
+     * （Finalがまだ空中を飛んでいる最中かもしれない時刻）で発火し、
+     * 受信機を無用に止めてしまう。20msへ伸ばして余裕を確保する
+     * （SS-TWR側のhostTimeoutMsは変更しない。理由は同フィールドの
+     * コメント参照）。
      */
-    uint32_t hostTimeoutMs                  = 10;
+    uint32_t hostTimeoutMs                  = 20;
     /**
      * 単位なし（回数）。SDK APIには渡らない。Responder が計算した距離
      * ("DWD"結果フレーム)を送る回数（uwb_qm33120_twr.cpp: respondDSRange:603）。
@@ -228,6 +304,14 @@ struct DSRangeConfig {
      * SDK APIには渡らない（hostTimeoutMs と同じ性質）。
      */
     uint32_t pollHostTimeoutMs              = 200;
+
+    /**
+     * 【2026-08-29 DS-TWR原因特定、docs/HANDOFF.md §0-C(1)】
+     * RangeConfig::pollWaitReturnOnRxError と同じフィールド・同じ既定値
+     * (false)・同じ理由。respondDSRange() の Poll 待ちループに適用される
+     * （こちらのフィールドコメント参照）。
+     */
+    bool pollWaitReturnOnRxError            = false;
 };
 
 /**
@@ -235,7 +319,7 @@ struct DSRangeConfig {
  * タスクB）。responseTxDelayUus/responseRxAfterTxDelayUus/rxTimeoutUus の
  * 3フィールドだけを書き換える。panId/initiatorAddress/responderAddress/
  * hostTimeoutMs/enableClockOffsetCorrection/pollHostTimeoutMs（修正2で追加）
- * には一切触れない
+ * /pollWaitReturnOnRxError（2026-08-29追加）には一切触れない
  * （呼び出し側がこれらを設定した後に呼ぶこと。RangeConfig単体にはプリセット
  * 適用の有無を記録するフィールドは無いため、呼び出す順序は呼び出し側の責務）。
  */
@@ -253,7 +337,7 @@ inline void applyTimingProfile(RangeConfig& cfg, TimingProfile p)
  * finalRxAfterResponseTxDelayUus/resultRxAfterFinalTxDelayUus/rxTimeoutUus の
  * 6フィールドだけを書き換える。panId/initiatorAddress/responderAddress/
  * hostTimeoutMs/resultRepeatCount/resultRepeatGapMs/pollHostTimeoutMs
- * （修正2で追加）には一切触れない。
+ * （修正2で追加）/pollWaitReturnOnRxError（2026-08-29追加）には一切触れない。
  */
 inline void applyTimingProfile(DSRangeConfig& cfg, TimingProfile p)
 {

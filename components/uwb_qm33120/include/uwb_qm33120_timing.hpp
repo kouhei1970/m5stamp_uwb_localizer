@@ -37,8 +37,15 @@ enum class TimingProfile : uint8_t {
  * フレーム（Poll/Response）に kTimingPresetVersion と実際に適用した
  * TimingProfile を載せ、受信側が「相手と自分のプリセットが本当に一致して
  * いるか」を検出できるようにする（docs/TIMING_PRESETS.md §0, §3.3）。
+ *
+ * 【2026-08-29 DS-TWR原因特定、1→2】timingPresetDs() の PollingBoth 列
+ * (finalTxDelayUus 1800→3000, finalRxAfterResponseTxDelayUus 500→1500) を
+ * 変更したため上げた（docs/HANDOFF.md §0-C(2)、docs/TIMING_PRESETS.md の
+ * 2026-08-29追記参照）。旧ファーム（版1のまま）と新ファーム（版2）が混在
+ * すると、フレームに載った版番号の不一致として checkTimingTag() が検出し
+ * 警告する（測距自体は続行する。§3.3）。
  */
-inline constexpr uint8_t kTimingPresetVersion = 1;
+inline constexpr uint8_t kTimingPresetVersion = 2;
 
 /** SS-TWR（RangeConfig）用の遅延プリセット3フィールド。単位は UUS。 */
 struct TimingPresetSs {
@@ -84,12 +91,29 @@ constexpr TimingPresetSs timingPresetSs(TimingProfile p)
 
 /**
  * @brief DS-TWR（DSRangeConfig）用プリセット値（docs/TIMING_PRESETS.md §2.2、
- * 確定値・1つも変えないこと）。
+ * 版2の確定値）。
  *
- * PollingBoth の列は DSRangeConfig のメンバ初期化子（uwb_qm33120_types.hpp:
- * responseRxAfterTxDelayUus=1500, responseTxDelayUus=3000, finalTxDelayUus=1800,
- * finalRxAfterResponseTxDelayUus=500, resultRxAfterFinalTxDelayUus=200,
+ * PollingBoth の列は DSRangeConfig のメンバ初期化子（uwb_qm33120_twr_config.hpp:
+ * responseRxAfterTxDelayUus=1500, responseTxDelayUus=3000, finalTxDelayUus=3000,
+ * finalRxAfterResponseTxDelayUus=1500, resultRxAfterFinalTxDelayUus=200,
  * rxTimeoutUus=3000）と完全に一致する。
+ *
+ * 【2026-08-29 DS-TWR原因特定、finalTxDelayUus 1800→3000・
+ * finalRxAfterResponseTxDelayUus 500→1500（版1→2）】850 kbps / preamble 256
+ * （本番機の実運用値）での実測でDS-TWRだけが0〜23%（SS-TWRは同条件で
+ * 99.95%）という結果になった原因の1つ。旧値1800 UUSでは、タグがFinalを
+ * 起動する時点でDW3000 UM §9.4.1エラッタの締切（現在+プリアンブル長+
+ * SFD長+20µs）まで0.03〜1.0msしか無く、無警告で送信されないことが
+ * あった。Response側（responseTxDelayUus=3000）は同じ850kbps/256で
+ * 1.3〜2.3msの余裕があり実証済みなので、Final側もそれと対称な3000/1500
+ * に揃えた。再導出の詳細（フレーム air time・エラッタの締切式）は
+ * docs/TIMING_PRESETS.md の2026-08-29追記、docs/HANDOFF.md §0-C(2)参照。
+ *
+ * 【AnchorIrq/BothIrq のDS列は未検証のまま】この2列（finalTxDelayUus=1365/683
+ * 等）は6.8 Mbps・preamble 128 前提で導出されたもので、上記の
+ * 850kbps/preamble256での再検証は行っていない。IRQ運用（本番機のKconfig
+ * 既定はBothIrq）で850kbps/256相当のPHYを使う場合は、このプリセットを
+ * そのまま信用せず本節と同じ手順で再導出すること。
  *
  * 【resultRxAfterFinalTxDelayUus が IRQ プリセットで 0 になっている理由】
  * （docs/TIMING_PRESETS.md §1.4）: DWD（結果フレーム）はアンカーが Final を
@@ -121,10 +145,12 @@ constexpr TimingPresetDs timingPresetDs(TimingProfile p)
                                /*rxTimeoutUus=*/1200};
     case TimingProfile::PollingBoth:
     default:
+        // 2026-08-29 DS-TWR原因特定 (版1→2): finalTxDelayUus 1800→3000,
+        // finalRxAfterResponseTxDelayUus 500→1500 (docs/HANDOFF.md §0-C(2))。
         return TimingPresetDs{/*responseTxDelayUus=*/3000,
                                /*responseRxAfterTxDelayUus=*/1500,
-                               /*finalTxDelayUus=*/1800,
-                               /*finalRxAfterResponseTxDelayUus=*/500,
+                               /*finalTxDelayUus=*/3000,
+                               /*finalRxAfterResponseTxDelayUus=*/1500,
                                /*resultRxAfterFinalTxDelayUus=*/200,
                                /*rxTimeoutUus=*/3000};
     }

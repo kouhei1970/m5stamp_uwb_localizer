@@ -166,6 +166,40 @@ menu "UWB TWR Configuration"
             success rate, while the same window with a 137 ms interval let
             the anchor see 429 of 430 polls.
 
+    config UWB_TWR_DIAG_POLL_WAIT_RETURN_ON_RX_ERROR
+        bool "Diagnostic: ANCHOR poll wait returns on the first RX error (pre-2026-08-29 behaviour)"
+        default n
+        help
+            Sets RangeConfig::pollWaitReturnOnRxError / DSRangeConfig::
+            pollWaitReturnOnRxError = true. Before 2026-08-29 this was the
+            only behaviour: the ANCHOR's Poll-wait loop (respondRange() /
+            respondDSRange()) called dwt_forcetrxoff() and returned
+            Error::RxError the first time it saw a non-timeout RX error
+            (RXPHE/RXFCE/RXFSL, as opposed to RXFTO/RXPTO).
+
+            This mattered because the Poll-wait window
+            (UWB_TWR_POLL_WAIT_MS, default 200 ms) and the tag's poll
+            period (UWB_TWR_RANGE_INTERVAL_MS, also default 200 ms) are
+            both quantized to the 1 ms FreeRTOS tick. A window that
+            returns on every RX error re-phases itself onto whichever
+            frame it was looking at when it returned; once a Poll landed
+            in the blind gap between "window closes" and "window reopens"
+            it stayed there for the rest of the run - this was the DS-TWR-
+            specific root cause behind DS-TWR measuring 0-23% while SS-TWR
+            measured 99.95% under otherwise identical conditions
+            (docs/HANDOFF.md §0-C(1)).
+
+            The default (n, pollWaitReturnOnRxError = false) instead
+            clears the RX-error status bits and re-arms the receiver
+            immediately, letting the Poll wait keep listening until
+            UWB_TWR_POLL_WAIT_MS itself elapses - the same structure as
+            Qorvo's own ex_05b_ds_twr_resp / ex_06b_ss_twr_resp responder
+            examples, neither of which returns on an RX error.
+
+            Enable this (y) only to reproduce the pre-2026-08-29 behaviour
+            for A/B comparison; it is not expected to help on real
+            hardware.
+
     config UWB_TWR_RANGE_INTERVAL_MS
         int "TAG poll interval [ms]"
         range 20 5000

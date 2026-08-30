@@ -117,6 +117,43 @@
  *    dwt_setinterrupt()で有効化しているのはRXFCG/RX_TO/RX_ERRのみで
  *    TXFRSは含まれないため、これらのTX待ちループをIRQ待ちに置き換えると
  *    IRQが来ずに毎回タイムアウトしてしまう。
+ *
+ * --- 2026-08-29 DS-TWR 原因特定 (docs/HANDOFF.md §0-C) ---
+ * 実機ログの机上解析で、DS-TWR だけに固有の構造上の欠陥が2つ見つかった
+ * （SS-TWR は同条件で99.95%成功する一方、DS-TWRは0〜23%）。
+ *  (1) 【窓と周期の位相ロック】respondDSRange() の Poll 待ちは
+ *      pollHostTimeoutMs（既定200ms）のホスト側窓で、タグの測距周期も
+ *      既定200ms・両方とも1ms tick量子化。窓境界での
+ *      forcetrxoff()→再オープンの空白にPollが一度落ちると、周期が
+ *      一致している限りそこに留まり続けていた。窓はRXエラーで即座に
+ *      打ち切って再オープンしていたが、Qorvo公式 ex_05b/ex_06b の
+ *      responderはRXエラーで抜けず受信を継続する構造。→ 本節Poll待ち
+ *      ループをその構造に合わせた（RangeConfig/DSRangeConfig::
+ *      pollWaitReturnOnRxError、既定false=継続）。
+ *  (2) 【Finalの遅延送信締切余裕不足→無警告で未送信、DW3000 UM §9.4.1
+ *      エラッタ】DS PollingBothの旧finalTxDelayUus=1800では、850kbps/
+ *      preamble256でタグがFinalを起動する時点で締切まで0.03〜1.0msしか
+ *      無かった。UMのエラッタ: 予約時刻が「現在+プリアンブル長+SFD長+
+ *      20µs」未満だとHPDWARNすら立たずdwt_starttx()はDWT_SUCCESSを
+ *      返すのに送信されず、SYS_STATE_LOが0x000D0000
+ *      （PMSC_STATE=TX/TX_STATE=IDLE）に固まる。コンパイル対象の
+ *      dw3720用ドライバのull_starttx()はHPDWARNしか見ない
+ *      （dw3000用ドライバにはこのSYS_STATE_LOチェックがある）。→
+ *      finalTxDelayUus 1800→3000・finalRxAfterResponseTxDelayUus
+ *      500→1500（Response側と対称に）、かつ delayedTxWedged()/
+ *      abortIfDelayedTxWedged()（uwb_qm33120_internal.hpp）で
+ *      このエラッタ状態をラッパ側から直接検出するようにした。
+ *
+ * Desk analysis of raw logs found two DS-TWR-specific construction
+ * defects: (1) the Poll-wait window and the tag's poll period were both
+ * tick-quantized at the same nominal period, so once a Poll landed in the
+ * window-boundary gap it stayed there (fixed by no longer returning on a
+ * non-timeout RX error, matching Qorvo's own ex_05b/ex_06b responders);
+ * (2) the Final's delayed-TX lead time was too short at 850 kbps/preamble
+ * 256, silently hitting the DW3000 UM §9.4.1 "no warning, no transmission"
+ * errata that the DW3720 driver's HPDWARN-only check cannot see (fixed by
+ * widening finalTxDelayUus/finalRxAfterResponseTxDelayUus and adding a
+ * direct SYS_STATE_LO check, detail::abortIfDelayedTxWedged()).
  */
 #include "uwb_qm33120.hpp"
 
@@ -609,6 +646,22 @@ ResponderResult Qm33120::respondRange(const RangeConfig& range)
                     return result;
                 }
 
+                // 【2026-08-29 DS-TWR原因特定、docs/HANDOFF.md §0-C(2)】
+                // dwt_starttx()はDWT_SUCCESSを返したが、DW3000 UM §9.4.1
+                // エラッタ（予約締切に対しリード時間が足りず無警告で未送信）
+                // にチップが陥っていないかを直接検査する。detail::
+                // abortIfDelayedTxWedged() のコメント参照。
+                // dwt_starttx() succeeded, but check for the UM §9.4.1
+                // errata (accepted, yet silently not transmitted).
+                if (detail::abortIfDelayedTxWedged()) {
+                    result.txWedged  = true;
+                    result.requester = parsed.src;
+                    result.sequence  = parsed.sequence;
+                    result.error     = Error::TxStartFailed;
+                    setError(result.error);
+                    return result;
+                }
+
                 // 【修正1】遅延送信の予約（dwt_setdelayedtrxtime()〜
                 // dwt_starttx(DELAYED)成功）が完全に終わった後なので、ここで
                 // 初めてタイミング不一致のログを出す。数百バイトの日本語
@@ -651,6 +704,10 @@ ResponderResult Qm33120::respondRange(const RangeConfig& range)
         }
 
         if ((status & (SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR)) != 0) {
+            // タイムアウト(RXFTO/RXPTO)かどうかで扱いを分ける。
+            // Distinguish an actual timeout from a decode error.
+            const bool isTimeout =
+                (status & ((uint32_t)DWT_INT_RXFTO_BIT_MASK | (uint32_t)DWT_INT_RXPTO_BIT_MASK)) != 0;
             // 消される前に生の status を持ち出す / carry the raw status out
             result.rxStatus = status;
             // 受信電力も同じ理由で、ステータスをクリアする(=診断レジスタが
@@ -663,11 +720,29 @@ ResponderResult Qm33120::respondRange(const RangeConfig& range)
                 result.fpDbmQ8      = power.fpQ8;
                 result.rxAccumCount = power.accumCount;
             }
-            detail::stopRadioAndClearRxStatus();
-            result.elapsedMs = detail::nowMs() - startMs;
-            result.error     = detail::rxStatusToError(status);
-            setError(result.error);
-            return result;
+            if (!isTimeout && !range.pollWaitReturnOnRxError) {
+                // 【2026-08-29 DS-TWR原因特定、docs/HANDOFF.md §0-C(1)】
+                // タイムアウトではないRXエラー（RXPHE/RXFCE/RXFSL等）を
+                // forcetrxoff()して即returnしていた旧実装は、この窓
+                // (pollHostTimeoutMs)がタグの測距周期と同じ長さに量子化
+                // されていると、一度Pollがこの「打ち切り→再オープンの
+                // 空白」に落ちると位相が固定されてしまう。Qorvo公式
+                // ex_06b_ss_twr_resp の受信ループはRXエラーで抜けず、
+                // ステータスをクリアして即座に受信を再開する
+                // （`docs/refs/qorvo_api/DW3XXX_API_rev9p3/API/Src/examples/
+                // ex_06b_ss_twr_resp/ss_twr_responder.c`）。ここでも同じ
+                // 構造にする（既定 RangeConfig::pollWaitReturnOnRxError=
+                // false）。
+                result.rxErrors++;
+                dwt_writesysstatuslo(SYS_STATUS_ALL_RX_ERR | SYS_STATUS_ALL_RX_GOOD);
+                dwt_rxenable(DWT_START_RX_IMMEDIATE);
+            } else {
+                detail::stopRadioAndClearRxStatus();
+                result.elapsedMs = detail::nowMs() - startMs;
+                result.error     = detail::rxStatusToError(status);
+                setError(result.error);
+                return result;
+            }
         }
         // IRQが来るか1ms経つまで待つ。IRQ無効時はvTaskDelay(pdMS_TO_TICKS(1))
         // と完全に等価（本ファイル冒頭コメント参照）。
@@ -723,6 +798,7 @@ DSRangeResult Qm33120::requestDSRange(const DSRangeConfig& range)
     if (dwt_writetxdata(sizeof(pollFrame), pollFrame, 0) != DWT_SUCCESS) {
         detail::stopRadioAndClearIoStatus();
         result.error = Error::TxDataFailed;
+        result.stage = DSStage::PollTx;
         setError(result.error);
         return result;
     }
@@ -730,6 +806,7 @@ DSRangeResult Qm33120::requestDSRange(const DSRangeConfig& range)
     if (dwt_starttx(DWT_START_TX_IMMEDIATE | DWT_RESPONSE_EXPECTED) != DWT_SUCCESS) {
         detail::stopRadioAndClearIoStatus();
         result.error = Error::TxStartFailed;
+        result.stage = DSStage::PollTx;
         setError(result.error);
         return result;
     }
@@ -762,6 +839,10 @@ DSRangeResult Qm33120::requestDSRange(const DSRangeConfig& range)
             dwt_readrxdata(respFrame, respLen, 0);
             dwt_writesysstatuslo(SYS_STATUS_ALL_RX_GOOD | DWT_INT_TXFRS_BIT_MASK);
 
+            // CRCを通って引き渡されたフレームを数える（requestRange()と同じ）。
+            // Count every frame the radio handed us (RXFCG), same as requestRange().
+            result.rxSeen++;
+
             const bool headerOk = detail::parseShortAddressFrame(respFrame, respLen, parsed);
             // 【タスクC-2】"DWR" ペイロードは 11(旧) または 13(版/種別付き)
             // バイトのどちらでも受理する (docs/TIMING_PRESETS.md §3.3)。
@@ -786,12 +867,16 @@ DSRangeResult Qm33120::requestDSRange(const DSRangeConfig& range)
             } else {
                 // 【R2】不一致 -> エラーにせず受信継続（本ファイル冒頭コメント参照）。
                 respMismatchSeen = true;
+                result.rxRejected++;
                 dwt_rxenable(DWT_START_RX_IMMEDIATE);
             }
         } else if ((status & (SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR)) != 0) {
+            // 消される前に生の status を持ち出す（DSRangeResult::rxStatus）。
+            result.rxStatus = status;
             detail::stopRadioAndClearRxStatus();
             result.elapsedMs = detail::nowMs() - startMs;
             result.error     = detail::rxStatusToError(status);
+            result.stage     = DSStage::ResponseWait;
             setError(result.error);
             return result;
         }
@@ -811,6 +896,7 @@ DSRangeResult Qm33120::requestDSRange(const DSRangeConfig& range)
         result.sequence  = parsed.sequence;
         result.elapsedMs = detail::nowMs() - startMs;
         result.error     = respMismatchSeen ? Error::RangeFrameMismatch : Error::RxTimeout;
+        result.stage     = DSStage::ResponseWait;
         setError(result.error);
         return result;
     }
@@ -836,6 +922,7 @@ DSRangeResult Qm33120::requestDSRange(const DSRangeConfig& range)
     if (dwt_writetxdata(sizeof(finalFrame), finalFrame, 0) != DWT_SUCCESS) {
         detail::stopRadioAndClearIoStatus();
         result.error = Error::TxDataFailed;
+        result.stage = DSStage::FinalTx;
         setError(result.error);
         return result;
     }
@@ -848,6 +935,22 @@ DSRangeResult Qm33120::requestDSRange(const DSRangeConfig& range)
     if (dwt_starttx(DWT_START_TX_DELAYED | DWT_RESPONSE_EXPECTED) != DWT_SUCCESS) {
         detail::stopRadioAndClearIoStatus();
         result.error = Error::TxStartFailed;
+        result.stage = DSStage::FinalTx;
+        setError(result.error);
+        return result;
+    }
+
+    // 【2026-08-29 DS-TWR原因特定、docs/HANDOFF.md §0-C(2)】ここがまさに
+    // 本件の震源。txMarginUs が小さい（数百µs以下）ときに dwt_starttx() が
+    // DWT_SUCCESS を返しつつ実際には送信していない、というのが問題の症状
+    // だったので、成功後に必ずこの検査を通す。詳細は
+    // detail::abortIfDelayedTxWedged() のコメント参照。
+    // This is the root-cause site: dwt_starttx() returning DWT_SUCCESS
+    // while the chip silently does not transmit (UM §9.4.1 errata).
+    if (detail::abortIfDelayedTxWedged()) {
+        result.txWedged = true;
+        result.error    = Error::TxStartFailed;
+        result.stage    = DSStage::FinalTx;
         setError(result.error);
         return result;
     }
@@ -879,6 +982,9 @@ DSRangeResult Qm33120::requestDSRange(const DSRangeConfig& range)
             dwt_readrxdata(distFrame, distLen, 0);
             dwt_writesysstatuslo(SYS_STATUS_ALL_RX_GOOD | DWT_INT_TXFRS_BIT_MASK);
 
+            // CRCを通って引き渡されたフレームを数える（Response待ちと同じ）。
+            result.rxSeen++;
+
             const bool headerOk  = detail::parseShortAddressFrame(distFrame, distLen, parsed);
             const bool payloadOk = detail::payloadMatches(distFrame, distLen, "DWD", 3, 7);
             const detail::ParsedFrameSummary summary{headerOk,      payloadOk,  parsed.sequence,
@@ -890,13 +996,22 @@ DSRangeResult Qm33120::requestDSRange(const DSRangeConfig& range)
             } else {
                 // 【R2】不一致 -> エラーにせず受信継続。
                 distMismatchSeen = true;
+                result.rxRejected++;
                 dwt_rxenable(DWT_START_RX_IMMEDIATE);
             }
         } else if ((status & (SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR)) != 0) {
-            detail::stopRadioAndClearRxStatus();
+            // 消される前に生の status を持ち出す。
+            result.rxStatus = status;
+            // 【2026-08-29】Final は既に武装(dwt_starttx(DWT_START_TX_DELAYED))
+            // 済みなので、そのTXFRSも合わせてクリアする
+            // (stopRadioAndClearRxStatus() ではRX系ビットしか消えない)。
+            // The Final was already armed at this point, so also clear its
+            // TXFRS bit (stopRadioAndClearRxStatus() only clears RX bits).
+            detail::stopRadioAndClearIoStatus();
             result.sequence  = pollSeq;
             result.elapsedMs = detail::nowMs() - startMs;
             result.error     = detail::rxStatusToError(status);
+            result.stage     = DSStage::ResultWait;
             setError(result.error);
             return result;
         }
@@ -909,10 +1024,12 @@ DSRangeResult Qm33120::requestDSRange(const DSRangeConfig& range)
     }
 
     if (!distMatched) {
-        detail::stopRadioAndClearRxStatus();
+        // 同上、Final の TXFRS も合わせてクリアする。
+        detail::stopRadioAndClearIoStatus();
         result.sequence  = parsed.sequence;
         result.elapsedMs = detail::nowMs() - startMs;
         result.error     = distMismatchSeen ? Error::RangeFrameMismatch : Error::RxTimeout;
+        result.stage     = DSStage::ResultWait;
         setError(result.error);
         return result;
     }
@@ -923,6 +1040,7 @@ DSRangeResult Qm33120::requestDSRange(const DSRangeConfig& range)
     result.elapsedMs  = detail::nowMs() - startMs;
     result.success    = true;
     result.error      = Error::Ok;
+    result.stage      = DSStage::Done;
     setError(Error::Ok);
     return result;
 }
@@ -984,6 +1102,9 @@ DSResponderResult Qm33120::respondDSRange(const DSRangeConfig& range)
             dwt_readrxdata(pollFrame, pollLen, 0);
             dwt_writesysstatuslo(SYS_STATUS_ALL_RX_GOOD);
 
+            // CRCを通って引き渡されたフレームを数える（requestRange()と同じ）。
+            result.rxSeen++;
+
             const bool headerOk = detail::parseShortAddressFrame(pollFrame, pollLen, parsed);
             // 【タスクC-2】"DWP" ペイロードは 3(旧) または 5(版/種別付き)
             // バイトのどちらでも受理する (docs/TIMING_PRESETS.md §3.3)。
@@ -1010,14 +1131,31 @@ DSResponderResult Qm33120::respondDSRange(const DSRangeConfig& range)
             } else {
                 // 【R2】不一致 -> 受信継続（本ファイル冒頭コメント参照）。
                 pollMismatchSeen = true;
+                result.rxRejected++;
                 dwt_rxenable(DWT_START_RX_IMMEDIATE);
             }
         } else if ((status & (SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR)) != 0) {
-            detail::stopRadioAndClearRxStatus();
-            result.elapsedMs = detail::nowMs() - startMs;
-            result.error     = detail::rxStatusToError(status);
-            setError(result.error);
-            return result;
+            // タイムアウト(RXFTO/RXPTO)かどうかで扱いを分ける
+            // （respondRange()と同じ。本ファイル冒頭コメント参照）。
+            const bool isTimeout =
+                (status & ((uint32_t)DWT_INT_RXFTO_BIT_MASK | (uint32_t)DWT_INT_RXPTO_BIT_MASK)) != 0;
+            // 消される前に生の status を持ち出す。
+            result.rxStatus = status;
+            if (!isTimeout && !range.pollWaitReturnOnRxError) {
+                // 【2026-08-29 DS-TWR原因特定、docs/HANDOFF.md §0-C(1)】
+                // respondRange()のPoll待ちと全く同じ理由・同じ変更
+                // （そちらのコメント参照）。
+                result.rxErrors++;
+                dwt_writesysstatuslo(SYS_STATUS_ALL_RX_ERR | SYS_STATUS_ALL_RX_GOOD);
+                dwt_rxenable(DWT_START_RX_IMMEDIATE);
+            } else {
+                detail::stopRadioAndClearRxStatus();
+                result.elapsedMs = detail::nowMs() - startMs;
+                result.error     = detail::rxStatusToError(status);
+                result.stage     = DSResponderStage::PollWait;
+                setError(result.error);
+                return result;
+            }
         }
         if (pollMatched) {
             break;
@@ -1033,6 +1171,7 @@ DSResponderResult Qm33120::respondDSRange(const DSRangeConfig& range)
         result.requester = parsed.src;
         result.elapsedMs = detail::nowMs() - startMs;
         result.error     = pollMismatchSeen ? Error::RangeFrameMismatch : Error::RxTimeout;
+        result.stage     = DSResponderStage::PollWait;
         setError(result.error);
         return result;
     }
@@ -1069,6 +1208,7 @@ DSResponderResult Qm33120::respondDSRange(const DSRangeConfig& range)
     if (dwt_writetxdata(sizeof(respFrame), respFrame, 0) != DWT_SUCCESS) {
         detail::stopRadioAndClearIoStatus();
         result.error = Error::TxDataFailed;
+        result.stage = DSResponderStage::ResponseTx;
         setError(result.error);
         return result;
     }
@@ -1081,6 +1221,18 @@ DSResponderResult Qm33120::respondDSRange(const DSRangeConfig& range)
     if (dwt_starttx(DWT_START_TX_DELAYED | DWT_RESPONSE_EXPECTED) != DWT_SUCCESS) {
         detail::stopRadioAndClearIoStatus();
         result.error = Error::TxStartFailed;
+        result.stage = DSResponderStage::ResponseTx;
+        setError(result.error);
+        return result;
+    }
+
+    // 【2026-08-29 DS-TWR原因特定、docs/HANDOFF.md §0-C(2)】dwt_starttx()
+    // 成功後、UM §9.4.1 エラッタで実際には送信されていないケースを検出する
+    // （detail::abortIfDelayedTxWedged() のコメント参照）。
+    if (detail::abortIfDelayedTxWedged()) {
+        result.txWedged = true;
+        result.error    = Error::TxStartFailed;
+        result.stage    = DSResponderStage::ResponseTx;
         setError(result.error);
         return result;
     }
@@ -1113,6 +1265,9 @@ DSResponderResult Qm33120::respondDSRange(const DSRangeConfig& range)
             dwt_readrxdata(finalFrame, finalLen, 0);
             dwt_writesysstatuslo(SYS_STATUS_ALL_RX_GOOD | DWT_INT_TXFRS_BIT_MASK);
 
+            // CRCを通って引き渡されたフレームを数える（Poll待ちと同じ）。
+            result.rxSeen++;
+
             const bool headerOk  = detail::parseShortAddressFrame(finalFrame, finalLen, finalParsed);
             const bool payloadOk = detail::payloadMatches(finalFrame, finalLen, "DWF", 3, 15);
             const detail::ParsedFrameSummary summary{
@@ -1127,14 +1282,19 @@ DSResponderResult Qm33120::respondDSRange(const DSRangeConfig& range)
             } else {
                 // 【R2】不一致 -> 受信継続。
                 finalMismatchSeen = true;
+                result.rxRejected++;
                 dwt_rxenable(DWT_START_RX_IMMEDIATE);
             }
         } else if ((status & (SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR)) != 0) {
+            // 消される前に生の status を持ち出す（respondDSRange()::rxStatus）。
+            // Carry the raw status out before it is cleared.
+            result.rxStatus = status;
             detail::stopRadioAndClearRxStatus();
             result.sequence  = parsed.sequence;
             result.requester = parsed.src;
             result.elapsedMs = detail::nowMs() - startMs;
             result.error     = detail::rxStatusToError(status);
+            result.stage     = DSResponderStage::FinalWait;
             setError(result.error);
             return result;
         }
@@ -1152,6 +1312,7 @@ DSResponderResult Qm33120::respondDSRange(const DSRangeConfig& range)
         result.requester = parsed.src;
         result.elapsedMs = detail::nowMs() - startMs;
         result.error     = finalMismatchSeen ? Error::RangeFrameMismatch : Error::RxTimeout;
+        result.stage     = DSResponderStage::FinalWait;
         setError(result.error);
         return result;
     }
@@ -1174,6 +1335,10 @@ DSResponderResult Qm33120::respondDSRange(const DSRangeConfig& range)
         result.requester = parsed.src;
         result.elapsedMs = detail::nowMs() - startMs;
         result.error     = Error::RangeTimestampInvalid;
+        // Finalは既に受信できているので、この失敗はFinal待ち自体ではなく
+        // 距離計算〜DWD送信の局面で起きている。DSResponderStage::ResultTx
+        // として扱う（診断用の分類。測距ロジックには影響しない）。
+        result.stage     = DSResponderStage::ResultTx;
         setError(result.error);
         return result;
     }
@@ -1226,6 +1391,7 @@ DSResponderResult Qm33120::respondDSRange(const DSRangeConfig& range)
     result.requester = parsed.src;
     result.elapsedMs = detail::nowMs() - startMs;
     result.error     = result.success ? Error::Ok : Error::TxTimeout;
+    result.stage     = result.success ? DSResponderStage::Done : DSResponderStage::ResultTx;
     setError(result.error);
     return result;
 }

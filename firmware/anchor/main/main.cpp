@@ -229,11 +229,20 @@ static uwb::Config makeConfigFromBoard()
 
 static constexpr uint32_t ANCHOR_LOG_INTERVAL                = 20;
 static constexpr uint32_t RX_TIMEOUT_UUS                     = 3000;
-static constexpr uint32_t RANGE_HOST_TIMEOUT_MS               = 10;
+// 2026-08-29 DS-TWR原因特定 (docs/HANDOFF.md §0-C): 10->20。
+// components/uwb_qm33120 の DSRangeConfig::hostTimeoutMs フィールド
+// コメント参照（respondDSRange()のFinal待ちがハードウェアRXFTOより先に
+// 切れないための余裕）。firmware/twr の ANCHOR+DS-TWR ブロックと同じ変更。
+static constexpr uint32_t RANGE_HOST_TIMEOUT_MS               = 20;
 static constexpr uint32_t RESPONSE_RX_AFTER_TX_DLY_UUS        = 1500;
 static constexpr uint32_t RESPONSE_TX_DLY_UUS                 = 3000;
-static constexpr uint32_t FINAL_TX_DLY_UUS                    = 1800;
-static constexpr uint32_t FINAL_RX_AFTER_RESPONSE_TX_DLY_UUS  = 500;
+// 2026-08-29 DS-TWR原因特定 (docs/HANDOFF.md §0-C(2)): 1800->3000。
+// Response側と対称にし、850kbps/preamble256でのDW3000 UM §9.4.1エラッタ
+// を避ける。DSRangeConfig::finalTxDelayUus のフィールドコメント参照。
+static constexpr uint32_t FINAL_TX_DLY_UUS                    = 3000;
+// 2026-08-29 DS-TWR原因特定: 500->1500。上のfinalTxDelayUusと対称に
+// (DSRangeConfig::finalRxAfterResponseTxDelayUus のフィールドコメント参照)。
+static constexpr uint32_t FINAL_RX_AFTER_RESPONSE_TX_DLY_UUS  = 1500;
 static constexpr uint32_t RESULT_RX_AFTER_FINAL_TX_DLY_UUS    = 200;
 static constexpr uint8_t RESULT_REPEAT_COUNT                  = 1;
 static constexpr uint32_t RESULT_REPEAT_GAP_MS                = 3;
