@@ -17,7 +17,7 @@ DS-TWR が動かない件の原因特定（旧アーキテクチャでの机上�
 いたため、Qorvo 例題直系の「1 本道のブロッキング関数」（`respondRange()` / `respondDSRange()`）
 をやめ、**受信を常時 ON にしたステートマシン**へ作り直した。アンカーは新クラス
 `uwb::Responder`（`components/uwb_qm33120/include/uwb_qm33120_responder.hpp`）が担い、
-電波を扱う `uwb_radio` タスク（core 1・優先度 20）と、統計出力・コンソールなどの「家事」を
+電波を扱う `uwb_radio` タスク（core 1・優先度 20）と、統計出力・コンソールなどの補助処理を
 行う `main` タスク（core 0）を分離した。タグ側も同様に、測距・測位を独立タスク化した
 `uwb::RangingService`（電波を扱う。core 1）と、ログ出力だけを行うロガータスク（core 0）に
 分離した。PHY（データ速度・プリアンブル長・PLL 粗調整など）は新しい共通 Kconfig `UWB_PHY_*`
