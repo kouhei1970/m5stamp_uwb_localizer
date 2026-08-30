@@ -56,6 +56,7 @@
 #include "uwb_port.h"
 #include "uwb_status_led.h"
 #include "uwb_qm33120.hpp"
+#include "uwb_qm33120_phy_kconfig.hpp" // docs/ARCHITECTURE_V2.md §4: phyConfigFromKconfig()
 #include "uwb_ranging_anchor_table.hpp"
 #include "uwb_ranging_pipeline.hpp"
 #include "uwb_ranging_scheduler.hpp"
@@ -700,7 +701,9 @@ extern "C" void app_main(void)
     // once app_main's stack frame goes away.
     static uwb::Qm33120 uwbDevice;
     const uwb::Config cfg = makeConfigFromBoard();
-    const uwb::PhyConfig phy; // TODO(v2): phyConfigFromKconfig()（他エージェント担当。ARCHITECTURE_V2.md §4）
+    // docs/ARCHITECTURE_V2.md §4: PHY を共通 Kconfig (UWB_PHY_*,
+    // components/uwb_qm33120/Kconfig) から選ぶ。firmware/anchor と同じ関数。
+    const uwb::PhyConfig phy = uwb::phyConfigFromKconfig();
 
     if (!uwbDevice.begin(cfg, phy)) {
         ESP_LOGE(TAG, "begin() failed: error=%s", uwbDevice.lastErrorName());
@@ -713,6 +716,26 @@ extern "C" void app_main(void)
         ESP_LOGE(TAG, "UWB device not ready, aborting");
         return;
     }
+
+    // docs/ARCHITECTURE_V2.md §4: 実際に適用された PHY 設定を起動ログへ出す
+    // （firmware/anchor / firmware/twr と同じ書式。スクリプトが grep する）。
+    uwbDevice.logPhy(TAG);
+
+#if defined(CONFIG_UWB_PHY_PLL_COARSE_CH9) && (CONFIG_UWB_PHY_PLL_COARSE_CH9 != 0)
+    // docs/ARCHITECTURE_V2.md §4: firmware/twr の DIAG_PLL_COARSE_CH9 の
+    // 本番機版。非ゼロなら begin() 直後に ch9 の PLL 粗調整コードを強制する。
+    // firmware/anchor/main/main.cpp と同一のブロック（コピー、共有関数化は
+    // していない - 両ファームともこの数行だけの単純な呼び出しであるため）。
+    {
+        const bool pllOk = uwbDevice.forcePllCoarse(static_cast<uint8_t>(CONFIG_UWB_PHY_PLL_COARSE_CH9));
+        if (!pllOk) {
+            ESP_LOGW(TAG,
+                     "forcePllCoarse(0x%02X) could not lock the forced code; radio fell back to its normal "
+                     "calibration path (see the DIAG_PLL_COARSE(*) lines above)",
+                     (unsigned)CONFIG_UWB_PHY_PLL_COARSE_CH9);
+        }
+    }
+#endif
 
     // init() may have downgraded the requested TIMING_PROFILE to PollingBoth
     // if the IRQ line turned out to be dead (Qm33120::verifyIrqLine()). Carry

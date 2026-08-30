@@ -156,4 +156,114 @@ menu "UWB Anchor Configuration"
             ポーリング経路は常に第一級の実装として残っており、劣化版では
             ない。
 
+    # --- docs/ARCHITECTURE_V2.md §2.1/§2.4: v2 event-driven Responder ---
+    # `uwb_radio` タスク（uwb::Responder::service() を無限に回すだけの専用
+    # タスク。電波の唯一の所有者）と、統計行・イベント行を出す main タスク
+    # （コア0）の設定。2026-08-30 の再設計で測った事実: 旧
+    # respondRange()/respondDSRange() ループにあった「Poll 待ち 200ms の
+    # ホスト側窓」はこの Responder には存在しない（RXは無期限に有効のまま
+    # - §1）。UWB_ANCHOR_IDLE_TICK_MS はその窓の代わりではなく、生存確認と
+    # IRQ エッジ取りこぼしに対する保険としてだけ働く短い目覚まし間隔。
+
+    config UWB_ANCHOR_RADIO_TASK_CORE
+        int "Core the uwb_radio task (Responder::service() loop) is pinned to"
+        range 0 1
+        default 1
+        help
+            docs/ARCHITECTURE_V2.md §2.1: uwb_radio is the only task that
+            ever touches the radio chip (owns it exclusively). Passed to
+            xTaskCreatePinnedToCore(). Default 1 so the main task (stats
+            line, console, LED - core 0) never shares a core with the
+            radio's tight service() loop.
+
+    config UWB_ANCHOR_RADIO_TASK_PRIO
+        int "Priority of the uwb_radio task"
+        range 1 24
+        default 20
+        help
+            docs/ARCHITECTURE_V2.md §2.1. Kept high (above the console REPL
+            and the main task) so RX handling and delayed-TX arming are
+            never delayed by other duties sharing the same core.
+
+    config UWB_ANCHOR_RADIO_TASK_STACK
+        int "Stack size of the uwb_radio task [bytes]"
+        range 4096 32768
+        default 8192
+        help
+            Passed to xTaskCreatePinnedToCore(). The same call chain the old
+            respondRange()/respondDSRange() loop used (frame build,
+            delayed-TX arming, DS-TWR distance computation) now runs inside
+            uwb::Responder::service() on this task instead. Unmeasured on
+            real hardware yet - check the "uwb_radio task stack high-water
+            mark" log line printed 5s after boot and raise this value if the
+            free margin it reports is under roughly 2KB.
+
+    config UWB_ANCHOR_RESTART_ON_FOREIGN_POLL
+        bool "Restart the in-flight exchange when a DIFFERENT tag's Poll arrives during WaitFinal"
+        default y
+        help
+            uwb::ResponderConfig::restartOnForeignPoll
+            (docs/ARCHITECTURE_V2.md §2.2's "複数タグ" note). When y
+            (default), a Poll from a tag other than the one this anchor is
+            currently waiting on a Final from abandons the in-flight
+            exchange and answers the new Poll instead (last-Poll-wins,
+            matching the pre-v2 respondDSRange() behaviour of always
+            restarting on any Poll). Set n to make WaitFinal ignore foreign
+            Polls (absorbed and counted as "other") until the current
+            exchange's own Final arrives or its deadline passes instead, if
+            fairness between multiple simultaneous tags turns out to be a
+            problem in practice.
+
+            A Poll from the SAME tag this anchor is already exchanging with
+            always restarts the exchange regardless of this setting (that is
+            a retry, not contention between two different tags).
+
+    config UWB_ANCHOR_IDLE_TICK_MS
+        int "Idle wakeup interval while listening [ms]"
+        range 1 1000
+        default 20
+        help
+            uwb::ResponderConfig::idleTickMs. This is NOT a replacement for
+            the old per-loop 200ms Poll-wait window that this v2 Responder
+            removes entirely (RX now stays enabled indefinitely -
+            docs/ARCHITECTURE_V2.md §1's "受信は無期限"). Its only two jobs
+            are (1) a liveness check - re-enable RX if the chip is ever
+            found not receiving when nothing else woke the task - and (2) a
+            safety net against a missed IRQ edge: the IRQ line is
+            level-driven while a status bit is set, but edge-triggered on
+            the GPIO side, so an event landing between "read status" and
+            "clear status" can lose its edge and never wake the task on its
+            own. One extra SPI status read every 20ms while idle is
+            negligible cost for that margin (see
+            uwb_qm33120_responder_fsm.hpp's ResponderConfig::idleTickMs
+            comment for the same reasoning in code).
+
+    config UWB_ANCHOR_STATS_INTERVAL_MS
+        int "Interval between \"type\":\"anchor_stats\" JSON lines [ms]"
+        range 100 60000
+        default 1000
+        help
+            docs/ARCHITECTURE_V2.md §2.5. The main task (core 0) prints
+            uwb::Responder::snapshot() as one JSON line at this interval.
+            This line REPLACES the old periodic "DS_RESP_STAT"/"SS_RESP_STAT"
+            text log lines that firmware/anchor's pre-v2 main.cpp used to
+            print every UWB_ANCHOR_METHOD success count (removed in v2 -
+            see docs/GETTING_STARTED.md's anchor sections for the new
+            format).
+
+    config UWB_ANCHOR_LOG_EVENTS
+        bool "Print a \"type\":\"range\" JSON line for every completed DS-TWR exchange"
+        default n
+        help
+            docs/ARCHITECTURE_V2.md §2.1/§2.5. When y, the main task drains
+            uwb::Responder::popEvent() and prints one JSON line per
+            RangeEvent (peer address / sequence / distance / elapsed time),
+            in addition to the periodic anchor_stats line. Off by default
+            because a busy anchor can complete many exchanges per second and
+            this is a per-event (not per-second) log volume; turn it on for
+            close-in debugging of a specific run. SS-TWR never produces a
+            RangeEvent (the anchor side does not compute the distance for
+            SS-TWR), so this option has no visible effect when
+            UWB_ANCHOR_METHOD_SS is selected.
+
 endmenu

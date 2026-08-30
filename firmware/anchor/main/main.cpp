@@ -1,33 +1,37 @@
 /**
  * @file main.cpp
- * @brief Phase 4 Step 2 production anchor (responder) firmware for
- * components/uwb_qm33120 (uwb::Qm33120::respondRange() / respondDSRange())。
+ * @brief v2 production anchor (responder) firmware for components/uwb_qm33120
+ * (docs/ARCHITECTURE_V2.md §2.1/§2.4/§2.5)。
  *
- * firmware/twr はロール(TAG/ANCHOR)・方式(SS/DS)を両方Kconfigで切り替えられる
- * 評価用ファームだが、本ファームは常にANCHOR(レスポンダ)としてのみ動作する
- * 複数アンカー運用向けの正式版で、firmware/twr と以下の点が異なる。
+ * v2 の再設計（背景は docs/ARCHITECTURE_V2.md §0/§1）:
+ *   - 旧版は毎ループ `respondRange()`/`respondDSRange()` をブロッキング呼び
+ *     出しする 1 本道の構造で、Poll 待ちに 200ms のホスト側窓があった
+ *     （窓の切り替わりごとに受信機を切って入れ直す空白ができ、タグの周期と
+ *     一致すると位相ロックして DS-TWR が 0% になった。docs/HANDOFF.md §0-C）。
+ *   - v2 は電波を受信し続けたまま来たフレームの種類で分岐するイベント駆動の
+ *     ステートマシン `uwb::Responder`（components/uwb_qm33120/include/
+ *     uwb_qm33120_responder.hpp、判断ロジックの純粋関数は
+ *     uwb_qm33120_responder_fsm.hpp の `uwb::decide()`）に置き換える。
+ *   - This file (main.cpp) now only *drives* two tasks (§2.1's table):
+ *       - `uwb_radio`（新設、コア UWB_ANCHOR_RADIO_TASK_CORE、優先度
+ *         UWB_ANCHOR_RADIO_TASK_PRIO）: `responder.begin()` してから
+ *         `responder.service()` を無限に呼ぶだけ。電波（チップ）を触る
+ *         唯一のタスク（§1「電波を触るタスクは1つ」）。ループ中は
+ *         begin() 失敗時以外ログを一切出さない。
+ *       - `app_main` 自身がそのまま main タスク（コア0）になる（return
+ *         せず、統計行・イベント行・LED・スタック監視のループへ入る）。
+ *   - 旧 `runRole()`（respondRange()/respondDSRange() をブロッキング呼び
+ *     出しするループ）はこのファームからは削除した。関数自体
+ *     （respondRange()/respondDSRange()）は components/uwb_qm33120 の
+ *     ドライバ層に残っており、firmware/twr は引き続きそれを使う
+ *     （docs/ARCHITECTURE_V2.md §1「実験ファーム firmware/twr は当面旧構造
+ *     のまま残し、A/B の基準として使う」）。
+ *
+ * firmware/twr との違い（変わらない部分）:
  *   - ロール選択自体が無い(常にANCHOR)。
  *   - 自分のショートアドレスをKconfig(UWB_ANCHOR_SHORT_ADDR)で個体ごとに
- *     設定できる(firmware/twr は ANCHOR_SHORT_ADDR がソース上の固定値
- *     0x0002 だった)。手持ちのM5Stamp UWB Module 5台それぞれに異なる値を書き込んで
+ *     設定できる。手持ちのM5Stamp UWB Module 5台それぞれに異なる値を書き込んで
  *     区別する運用を想定している。
- *
- * Kconfig で選ぶ2軸 (main/Kconfig.projbuild):
- *   - ボード: M5StampS3A / M5 AtomS3        (boards ディレクトリ配下の
- *     stamps3.h / atoms3.h でピン定義切替。firmware/twr と同じ作法)
- *     既定は M5StampS3A。標準構成は M5StampS3A + StampS3 BreakOut に
- *     UWB モジュールを 0.5mm 12P FPC→DIP 変換基板で接続するもので、
- *     AtomS3 は「手元にあるなら使える代替」の位置づけ (docs/WIRING.md)。
- *   - 方式  : SS-TWR / DS-TWR (既定はDS-TWR。本プロジェクトの本番運用は
- *     DS-TWRを優先する判断のため)
- *
- * 動作ロジックは firmware/twr/main/main.cpp の ANCHOR+SS-TWR /
- * ANCHOR+DS-TWR ブロックをそのまま踏襲する: 毎ループ
- * respond{Range,DSRange}() をブロッキング呼び出しし、RxTimeout(まだPollが
- * 来ていないだけ)は無視、ANCHOR_LOG_INTERVAL 回成功するごとに統計をログに
- * 出す。DS-TWR は自分で距離を計算する(respondDSRange()の戻り値)ので、
- * こちらでも平均/標準偏差を出す。firmware/twr のANCHOR側ログには無かった
- * 成功率(%)は本ファームで追加した。
  *
  * ショートアドレスは **NVS に保存された値を優先し、無ければ Kconfig の
  * UWB_ANCHOR_SHORT_ADDR を既定値として使う**(components/uwb_cfgstore)。
@@ -35,7 +39,19 @@
  * 購入者が何も設定しなければ従来どおり Kconfig の値でそのまま動く。
  * 実行時の変更は USB-Serial/JTAG 上のシリアルコンソール(anchor_console.cpp、
  * CONFIG_UWB_ANCHOR_CONSOLE で無効化可)から addr set / save で行う。
- * これにより「5台に別アドレスを焼くために5回ビルドし直す」必要が無くなる。
+ *
+ * 【v2 での変更点】`uwb::Responder` は begin() 時に渡された `ResponderConfig`
+ * （panId/shortAddr を含む）のコピーを、end() されるまでずっと保持する
+ * (uwb_qm33120_responder.hpp begin() のコメント)。旧版は
+ * `currentShortAddr()` を respondDSRange() 呼び出しのたびに読み直していた
+ * ため `addr set` が「次の応答から」反映されたが、v2 の Responder は
+ * begin() を呼ぶ app_main の起動シーケンス中に一度だけ ResponderConfig を
+ * 組み立てるので、実行時の `addr set` は radio タスクには伝わらない。
+ * このファームでは意図的に **`save` の後に `reboot` を要求する** 単純な
+ * 方式を選んだ（anchor_console.cpp の cmdAddr() 側のメッセージを参照。
+ * 複数タスクにまたがるミューテックス保護付きのホットスワップより、
+ * 「アンカーは給電前提で常時稼働、設定変更は稀」という運用（§0-C）には
+ * この方が単純で事故りにくいという判断）。
  *
  * 【docs/archive/REIMPL_PLAN.md R3-1/R9】以下の各 static constexpr は、旧
  * third_party/M5Stamp-UWB/examples の .ino 値をそのまま踏襲していたが、
@@ -56,8 +72,8 @@
 #include "uwb_port.h"
 #include "uwb_status_led.h"
 #include "uwb_qm33120.hpp"
-#include "uwb_qm33120_distance_stats.hpp" // uwb::DistanceStats (docs/ARCHITECTURE_V2.md §2.3, moved here from a local copy - see below)
-#include "uwb_qm33120_phy_kconfig.hpp" // docs/ARCHITECTURE_V2.md §4: phyConfigFromKconfig()
+#include "uwb_qm33120_phy_kconfig.hpp"  // docs/ARCHITECTURE_V2.md §4: phyConfigFromKconfig()
+#include "uwb_qm33120_responder.hpp"    // docs/ARCHITECTURE_V2.md §2.3: uwb::Responder / ResponderConfig / ResponderStats / RangeEvent
 
 #if CONFIG_UWB_ANCHOR_CONSOLE
 #include "anchor_console.hpp"
@@ -105,8 +121,7 @@ static uwb::TimingProfile g_effectiveTimingProfile = TIMING_PROFILE;
 
 /* --- ネットワーク共通パラメータ --- */
 static constexpr uint16_t PAN_ID = 0xDECA;
-// タグ側(initiator)のショートアドレス。firmware/tag(別タスクで作成予定)の
-// 実装が固まるまでは、firmware/twr と同じくここでは固定値として扱う。
+// タグ側(initiator)のショートアドレス。firmware/tag の実装は固定値として扱う。
 static constexpr uint16_t TAG_SHORT_ADDR = 0x0001;
 // このアンカー自身のショートアドレスの **既定値**。Kconfigの
 // UWB_ANCHOR_SHORT_ADDR (main/Kconfig.projbuild) は
@@ -115,60 +130,43 @@ static constexpr uint16_t TAG_SHORT_ADDR = 0x0001;
 static constexpr uint16_t ANCHOR_SHORT_ADDR_DEFAULT = CONFIG_UWB_ANCHOR_SHORT_ADDR;
 
 // 起動時に確定するショートアドレス。NVSに保存があればその値、無ければ
-// ANCHOR_SHORT_ADDR_DEFAULT。コンソール無効時はこの値が最後まで使われる。
+// ANCHOR_SHORT_ADDR_DEFAULT。この値は起動シーケンス中に一度だけ
+// ResponderConfig::shortAddr へコピーされ、radio タスク開始後は変わらない
+// （このファイル冒頭のコメント「v2 での変更点」参照）。
 static uint16_t g_shortAddr = ANCHOR_SHORT_ADDR_DEFAULT;
 
 /**
- * @brief いま有効なショートアドレスを返す。測距ループが1回ごとに呼ぶ。
- *
- * コンソール有効時は共有状態(ミューテックス保護)から読むので、addr set の
- * 結果が次の応答から反映される。無効時は起動時に確定した値を返すだけで、
- * 従来と同じく分岐も同期も入らない。
- */
-static inline uint16_t currentShortAddr()
-{
-#if CONFIG_UWB_ANCHOR_CONSOLE
-    return anchorapp::currentShortAddr();
-#else
-    return g_shortAddr;
-#endif
-}
-
-/**
- * @brief 距離サンプル(mm)の平均・標準偏差をオンライン計算する
- * (Welfordのアルゴリズム)。全サンプルを保持せずに済むので長時間の実機運用に使える。
- *
- * 【docs/ARCHITECTURE_V2.md §2.3】以前はここにローカル定義（firmware/twr/main/
- * main.cpp の DistanceStats と同一実装）を持っていたが、新設の
- * uwb::Responder（components/uwb_qm33120/include/uwb_qm33120_responder_fsm.hpp
- * の ResponderStats::distance）も同じ実装を必要としたため、
- * components/uwb_qm33120/include/uwb_qm33120_distance_stats.hpp（ESP-IDF非依存）
- * へ移し、ここではそちらの型を使う（呼び出し側のコード
- * DistanceStats stats; stats.add(...); stats.mean; stats.stddev(); は無改造）。
- * firmware/twr は引き続き自前のローカル定義を持つ（未変更、単独ビルド可能）。
- */
-using DistanceStats = uwb::DistanceStats;
-
-/**
  * @brief 測距統計をコンソール(info コマンド)へ公開する。
+ * uwb::ResponderStats -> anchorapp::Stats の変換。
+ *
+ * 【v2 での意味変化】旧版の ok/fail は respondRange()/respondDSRange() の
+ * 1呼び出しごとの成否だった。Responder は事象駆動なので同じ粒度が無く、
+ * このファームでは次の対応で近似する:
+ *   - DS-TWR: ok = 完了した交換の数 (results。Result送信まで成功した回数)。
+ *     fail = ホスト側から見える失敗の合計 (rxErrors + txFailures +
+ *     finalTimeouts)。restarts（他タグのPollで進行中の交換を打ち切った回数）
+ *     はそれ自体は失敗ではない（新しい交換として応答している）ため含めない。
+ *   - SS-TWR: ok = 送信できたResponseの数 (responses)。SS-TWRのAnchor側は
+ *     距離を計算しないため、Result相当の「完了」概念が無い。
  *
  * コンソール無効時は空関数になり、呼び出しは最適化で消える(従来と同じ挙動)。
- * SS-TWR ではAnchor側で距離を計算しないので、距離統計は空のまま渡す。
  */
-static inline void publishStats(uint32_t okCount, uint32_t failCount, const DistanceStats& dist)
+static inline void publishConsoleStats(const uwb::ResponderStats& s)
 {
 #if CONFIG_UWB_ANCHOR_CONSOLE
-    anchorapp::Stats s;
-    s.ok      = okCount;
-    s.fail    = failCount;
-    s.samples = dist.count;
-    s.meanMm  = dist.mean;
-    s.stdMm   = dist.stddev();
-    anchorapp::publishStats(s);
+    anchorapp::Stats out;
+#if CONFIG_UWB_ANCHOR_METHOD_DS
+    out.ok = s.results;
 #else
-    (void)okCount;
-    (void)failCount;
-    (void)dist;
+    out.ok = s.responses;
+#endif
+    out.fail    = s.rxErrors + s.txFailures + s.finalTimeouts;
+    out.samples = s.distance.count;
+    out.meanMm  = s.distance.mean;
+    out.stdMm   = s.distance.stddev();
+    anchorapp::publishStats(out);
+#else
+    (void)s;
 #endif
 }
 
@@ -210,36 +208,39 @@ static uwb::Config makeConfigFromBoard()
     return cfg;
 }
 
-/* runRole() は選択された方式(SS/DS)だけをビルドする。両方を常に定義すると、
- * 選択されなかった側が -Wunused-function の対象になる(firmware/twr と同じ理由)。 */
+/* ResponderConfig 組み立ては選択された方式(SS/DS)だけをビルドする。両方を
+ * 常に定義すると、選択されなかった側の makeXxRangeConfig() が
+ * -Wunused-function の対象になる(firmware/twr と同じ理由)。 */
 
 #if CONFIG_UWB_ANCHOR_METHOD_DS
 /* =========================================================================
- * DS-TWR ANCHOR : firmware/twr の ANCHOR+DS-TWR ブロック
- * (examples/DS_TWR_ANCHOR/DS_TWR_ANCHOR.ino 準拠)を踏襲。
+ * DS-TWR: cfg.ds (uwb::DSRangeConfig) の組み立て。値そのものは旧runRole()の
+ * makeRangeConfig()と同一（examples/DS_TWR_ANCHOR/DS_TWR_ANCHOR.ino 準拠、
+ * その後のDS-TWR原因特定 docs/HANDOFF.md §0-C での修正込み）。
  * ========================================================================= */
 
-static constexpr uint32_t ANCHOR_LOG_INTERVAL                = 20;
-static constexpr uint32_t RX_TIMEOUT_UUS                     = 3000;
+static constexpr uint32_t RX_TIMEOUT_UUS = 3000;
 // 2026-08-29 DS-TWR原因特定 (docs/HANDOFF.md §0-C): 10->20。
 // components/uwb_qm33120 の DSRangeConfig::hostTimeoutMs フィールド
 // コメント参照（respondDSRange()のFinal待ちがハードウェアRXFTOより先に
 // 切れないための余裕）。firmware/twr の ANCHOR+DS-TWR ブロックと同じ変更。
-static constexpr uint32_t RANGE_HOST_TIMEOUT_MS               = 20;
-static constexpr uint32_t RESPONSE_RX_AFTER_TX_DLY_UUS        = 1500;
-static constexpr uint32_t RESPONSE_TX_DLY_UUS                 = 3000;
+// v2 の Responder::service() も同じ hostTimeoutMs をホスト側デッドラインの
+// 計算に使う（uwb_qm33120_responder.cpp の onRespond() コメント参照）。
+static constexpr uint32_t RANGE_HOST_TIMEOUT_MS = 20;
+static constexpr uint32_t RESPONSE_RX_AFTER_TX_DLY_UUS = 1500;
+static constexpr uint32_t RESPONSE_TX_DLY_UUS = 3000;
 // 2026-08-29 DS-TWR原因特定 (docs/HANDOFF.md §0-C(2)): 1800->3000。
 // Response側と対称にし、850kbps/preamble256でのDW3000 UM §9.4.1エラッタ
 // を避ける。DSRangeConfig::finalTxDelayUus のフィールドコメント参照。
-static constexpr uint32_t FINAL_TX_DLY_UUS                    = 3000;
+static constexpr uint32_t FINAL_TX_DLY_UUS = 3000;
 // 2026-08-29 DS-TWR原因特定: 500->1500。上のfinalTxDelayUusと対称に
 // (DSRangeConfig::finalRxAfterResponseTxDelayUus のフィールドコメント参照)。
-static constexpr uint32_t FINAL_RX_AFTER_RESPONSE_TX_DLY_UUS  = 1500;
-static constexpr uint32_t RESULT_RX_AFTER_FINAL_TX_DLY_UUS    = 200;
-static constexpr uint8_t RESULT_REPEAT_COUNT                  = 1;
+static constexpr uint32_t FINAL_RX_AFTER_RESPONSE_TX_DLY_UUS = 1500;
+static constexpr uint32_t RESULT_RX_AFTER_FINAL_TX_DLY_UUS   = 200;
+static constexpr uint8_t RESULT_REPEAT_COUNT                 = 1;
 static constexpr uint32_t RESULT_REPEAT_GAP_MS                = 3;
 
-static uwb::DSRangeConfig makeRangeConfig(uint16_t selfAddr)
+static uwb::DSRangeConfig makeDsRangeConfig(uint16_t selfAddr)
 {
     uwb::DSRangeConfig range;
     range.panId                          = PAN_ID;
@@ -258,73 +259,22 @@ static uwb::DSRangeConfig makeRangeConfig(uint16_t selfAddr)
     // (RESPONSE_RX_AFTER_TX_DLY_UUS等)より必ず後に呼び、プリセットの値が
     // 確実に効くようにする(*Uusフィールドのみ上書き。panId/アドレス/
     // hostTimeoutMs/resultRepeatCount/resultRepeatGapMsは触らない)。
-    // このDS-TWRブロックの個別値はPollingBothの表(docs/TIMING_PRESETS.md §2.2)
-    // と完全に一致しているため、実効プリセットがPollingBoth(明示選択時、
-    // またはIRQ線が死んでいてinit()が実行時に降格した場合)のときはこの1行は
-    // 実質no-op。Kconfigの既定はBothIrqであり、その場合は値が変わる。
     uwb::applyTimingProfile(range, g_effectiveTimingProfile);
     return range;
 }
 
-static void runRole(uwb::Qm33120& uwb)
-{
-    uint32_t respCount = 0, failCount = 0;
-    // DS-TWR は Anchor 側が距離を計算する側 (respondDSRange()) なので、
-    // 運用中の平均/標準偏差はこちら側でも取れる。
-    DistanceStats stats;
-
-    while (1) {
-        // ショートアドレスは1回ごとに読み直す。コンソールから addr set された
-        // 場合、進行中の1回のTWRには影響させず、次の応答から新しい値になる。
-        const uwb::DSResponderResult result = uwb.respondDSRange(makeRangeConfig(currentShortAddr()));
-        if (!result.success) {
-            if (result.error == uwb::Error::RxTimeout) {
-                // まだPollが来ていないだけ。原本のANCHOR例と同じく無視して再ループ。
-                continue;
-            }
-            failCount++;
-            publishStats(respCount, failCount, stats);
-            if ((failCount % ANCHOR_LOG_INTERVAL) == 0) {
-                const uint32_t total = respCount + failCount;
-                const float rate =
-                    (total == 0) ? 0.0f : (100.0f * static_cast<float>(respCount) / static_cast<float>(total));
-                ESP_LOGW(TAG, "DS_RESP_STAT ok=%lu fail=%lu rate=%.1f%% last=FAIL error=%s",
-                         (unsigned long)respCount, (unsigned long)failCount, rate, uwb.lastErrorName());
-            }
-            continue;
-        }
-
-        respCount++;
-        stats.add(result.distanceM * 1000.0f);
-        publishStats(respCount, failCount, stats);
-        if ((respCount % ANCHOR_LOG_INTERVAL) != 0) {
-            continue;
-        }
-        const uint32_t total = respCount + failCount;
-        const float rate =
-            (total == 0) ? 0.0f : (100.0f * static_cast<float>(respCount) / static_cast<float>(total));
-        ESP_LOGI(TAG,
-                 "DS_RESP_STAT ok=%lu fail=%lu rate=%.1f%% last=OK seq=%u requester=0x%04X distance_mm=%ld "
-                 "distance_m=%.3f mean_mm=%.1f std_mm=%.1f n=%lu elapsed_ms=%lu",
-                 (unsigned long)respCount, (unsigned long)failCount, rate, result.sequence, result.requester,
-                 (long)result.distanceMm, result.distanceM, stats.mean, stats.stddev(), (unsigned long)stats.count,
-                 (unsigned long)result.elapsedMs);
-    }
-}
-
 #else
 /* =========================================================================
- * SS-TWR ANCHOR : firmware/twr の ANCHOR+SS-TWR ブロック
- * (examples/SS_TWR_ANCHOR/SS_TWR_ANCHOR.ino 準拠)を踏襲。
+ * SS-TWR: cfg.ss (uwb::RangeConfig) の組み立て。値そのものは旧runRole()の
+ * makeRangeConfig()と同一（examples/SS_TWR_ANCHOR/SS_TWR_ANCHOR.ino 準拠）。
  * ========================================================================= */
 
-static constexpr uint32_t ANCHOR_LOG_INTERVAL          = 20;
 static constexpr uint32_t RX_TIMEOUT_UUS               = 3000;
 static constexpr uint32_t RANGE_HOST_TIMEOUT_MS         = 10;
 static constexpr uint32_t RESPONSE_RX_AFTER_TX_DLY_UUS  = 1500;
 static constexpr uint32_t RESPONSE_TX_DLY_UUS           = 3000;
 
-static uwb::RangeConfig makeRangeConfig(uint16_t selfAddr)
+static uwb::RangeConfig makeSsRangeConfig(uint16_t selfAddr)
 {
     uwb::RangeConfig range;
     range.panId                     = PAN_ID;
@@ -337,59 +287,147 @@ static uwb::RangeConfig makeRangeConfig(uint16_t selfAddr)
     // タイミングプリセットを適用する(docs/TIMING_PRESETS.md)。上の個別代入
     // より必ず後に呼び、プリセットの値が確実に効くようにする(*Uusフィールド
     // のみ上書き。panId/アドレス/hostTimeoutMsは触らない)。
-    // **上の RESPONSE_* / RX_TIMEOUT_UUS はプリセットに上書きされるので
-    // 実効値ではない。** 遅延値の唯一の出所は docs/TIMING_PRESETS.md §2。
     //
-    // 【この経路では挙動は変わらない】RESPONSE_RX_AFTER_TX_DLY_UUS(1500) と
-    // RX_TIMEOUT_UUS(3000) は RangeConfig の既定値(500 / 4500 = PollingBoth)
-    // と食い違っている(DS-TWR側の値を誤って流用したとみられる既存の不整合)
-    // が、**本ファームが呼ぶ respondRange() はこの2つを読まず
-    // dwt_setrxaftertxdelay(0) / dwt_setrxtimeout(0) を直書きしている**
-    // (components/uwb_qm33120/src/uwb_qm33120_twr.cpp の respondRange())。
-    // したがってアンカー役ではもともと無効な値であり、上書きしても電波の
-    // 振る舞いは変わらない。値の出所を1本化するためにこの呼び出しを置く。
+    // 【この経路では uwb::Responder は個別のUus値を読まない】
+    // uwb_qm33120_responder.cpp の onRespond() は
+    // im.cfg.ss.responseTxDelayUus だけを読み、
+    // responseRxAfterTxDelayUus/rxTimeoutUus はSS(即時応答)では使わない
+    // （そもそも上書きしても電波の振る舞いは変わらない、旧makeRangeConfig()
+    // 時代からの既知の不整合。値の出所を1本化するためにこの呼び出しは残す）。
     uwb::applyTimingProfile(range, g_effectiveTimingProfile);
     return range;
 }
+#endif
 
-static void runRole(uwb::Qm33120& uwb)
+/**
+ * @brief docs/ARCHITECTURE_V2.md §2.3 の uwb::ResponderConfig を組み立てる。
+ * method・panId・shortAddr・ss/ds のタイミング・idleTickMs・
+ * restartOnForeignPoll をすべてここで決める。app_main が起動シーケンス中に
+ * 一度だけ呼ぶ（このファイル冒頭コメント「v2 での変更点」参照:
+ * 実行時の addr set はこの呼び出しには影響しない）。
+ */
+static uwb::ResponderConfig makeResponderConfig(uint16_t selfAddr)
 {
-    uint32_t respCount = 0, failCount = 0;
+    uwb::ResponderConfig cfg;
+    cfg.panId     = PAN_ID;
+    cfg.shortAddr = selfAddr;
+#if CONFIG_UWB_ANCHOR_METHOD_DS
+    cfg.method = uwb::TwrMethod::DS;
+    cfg.ds     = makeDsRangeConfig(selfAddr);
+#else
+    cfg.method = uwb::TwrMethod::SS;
+    cfg.ss     = makeSsRangeConfig(selfAddr);
+#endif
+    cfg.idleTickMs = static_cast<uint32_t>(CONFIG_UWB_ANCHOR_IDLE_TICK_MS);
+    // bool Kconfig が n のとき、ESP-IDF の Kconfig はこのマクロ自体を定義
+    // しない（0として定義されるわけではない）ので、makeConfigFromBoard()の
+    // cfg.use_irq と同じ理由で #if defined(...) && ... で判定する
+    // （このファイルの makeConfigFromBoard() コメント参照。素の
+    // `CONFIG_UWB_ANCHOR_RESTART_ON_FOREIGN_POLL` を式の中で直接使うと、
+    // n が選ばれたビルドではマクロ未定義でコンパイルエラーになる）。
+#if defined(CONFIG_UWB_ANCHOR_RESTART_ON_FOREIGN_POLL) && CONFIG_UWB_ANCHOR_RESTART_ON_FOREIGN_POLL
+    cfg.restartOnForeignPoll = true;
+#else
+    cfg.restartOnForeignPoll = false;
+#endif
+    return cfg;
+}
 
-    while (1) {
-        // ショートアドレスは1回ごとに読み直す（DS-TWR側と同じ理由）。
-        const uwb::ResponderResult result = uwb.respondRange(makeRangeConfig(currentShortAddr()));
-        if (!result.success) {
-            if (result.error == uwb::Error::RxTimeout) {
-                // まだPollが来ていないだけ。原本のANCHOR例と同じく無視して再ループ。
-                continue;
-            }
-            failCount++;
-            publishStats(respCount, failCount, DistanceStats{});
-            if ((failCount % ANCHOR_LOG_INTERVAL) == 0) {
-                const uint32_t total = respCount + failCount;
-                const float rate =
-                    (total == 0) ? 0.0f : (100.0f * static_cast<float>(respCount) / static_cast<float>(total));
-                ESP_LOGW(TAG, "SS_RESP_STAT ok=%lu fail=%lu rate=%.1f%% last=FAIL error=%s",
-                         (unsigned long)respCount, (unsigned long)failCount, rate, uwb.lastErrorName());
-            }
-            continue;
-        }
+/* ==================================================================== *
+ * uwb_radio タスク（docs/ARCHITECTURE_V2.md §2.1）: 電波の唯一の所有者。
+ * responder.begin() してから責任を持って responder.service() を無限に
+ * 呼ぶだけ。begin() 失敗時以外は一切ログを出さない
+ * （§2.1「電波を扱うタスクは1つ」・§1「電波を触るタスクは統計・LED等の
+ * 家事から切り離す」の要請どおり、無線のホットループにログ出力の遅延を
+ * 持ち込まない）。
+ * ==================================================================== */
 
-        respCount++;
-        publishStats(respCount, failCount, DistanceStats{});
-        if ((respCount % ANCHOR_LOG_INTERVAL) != 0) {
-            continue;
-        }
-        const uint32_t total = respCount + failCount;
-        const float rate =
-            (total == 0) ? 0.0f : (100.0f * static_cast<float>(respCount) / static_cast<float>(total));
-        ESP_LOGI(TAG, "SS_RESP_STAT ok=%lu fail=%lu rate=%.1f%% last=OK seq=%u requester=0x%04X elapsed_ms=%lu",
-                 (unsigned long)respCount, (unsigned long)failCount, rate, result.sequence, result.requester,
-                 (unsigned long)result.elapsedMs);
+/** radioTask() に渡す引数。タスクが動き続ける間ずっと参照されるため static。 */
+struct RadioTaskArgs {
+    uwb::Qm33120* radio       = nullptr;
+    uwb::Responder* responder = nullptr;
+    uwb::ResponderConfig cfg;
+};
+static RadioTaskArgs g_radioTaskArgs;
+static TaskHandle_t g_radioTaskHandle = nullptr;
+
+static void radioTask(void* argRaw)
+{
+    RadioTaskArgs* args = static_cast<RadioTaskArgs*>(argRaw);
+
+    if (!args->responder->begin(*args->radio, args->cfg)) {
+        // begin()が失敗するのは radio 未初期化か、初回の dwt_rxenable() が
+        // 失敗した場合のみ（uwb_qm33120_responder.hpp begin()のコメント）。
+        // この1回だけがこのタスクの唯一のログ出力。
+        ESP_LOGE(TAG, "Responder::begin() failed: error=%s", args->radio->lastErrorName());
+        vTaskDelete(nullptr);
+        return;
+    }
+
+    while (true) {
+        args->responder->service();
     }
 }
 
+/* ==================================================================== *
+ * main タスク（コア0、docs/ARCHITECTURE_V2.md §2.1/§2.5）が出す JSON 行。
+ * タグ側(firmware/tag/main/main.cpp)と同じ流儀で、JSON行は printf 系で
+ * 標準出力へ直接書く(ESP_LOGxはタイムスタンプ等のプレフィックスが付き
+ * 先頭が'{'にならないため)。1行あたりの項目数が固定でループが要らないので、
+ * タグ側のようなバッファ+jsonAppend()は使わず素のprintf/snprintfで足りる。
+ * ==================================================================== */
+
+/** ショートアドレスを "A0002"/"T0001" のような短縮ID文字列にする。 */
+static void shortAddrToId(uint16_t addr, char prefix, char* out, size_t outSize)
+{
+    std::snprintf(out, outSize, "%c%04X", prefix, static_cast<unsigned>(addr));
+}
+
+/**
+ * @brief docs/ARCHITECTURE_V2.md §2.5 の "type":"anchor_stats" 行。
+ * UWB_ANCHOR_STATS_INTERVAL_MS ごとに main タスクが出す。旧版の
+ * DS_RESP_STAT/SS_RESP_STAT テキストログを置き換える
+ * （docs/GETTING_STARTED.md 参照。grepしていたスクリプトはこちらへ移行）。
+ * dist_mean_m/dist_std_m は ResponderStats::distance が mm 単位で持つ値を
+ * m へ変換する。
+ */
+static void printAnchorStatsLine(const uwb::ResponderStats& s, double tSec, const char* addrId)
+{
+    std::printf(
+        "{\"v\":1,\"type\":\"anchor_stats\",\"t\":%.3f,\"addr\":\"%s\",\"polls\":%lu,\"responses\":%lu,"
+        "\"finals\":%lu,\"results\":%lu,\"restarts\":%lu,\"final_timeouts\":%lu,\"rx_errors\":%lu,"
+        "\"tx_failures\":%lu,\"rearms\":%lu,\"other\":%lu,\"event_drops\":%lu,\"last_rx_status\":\"0x%08lX\","
+        "\"dist_n\":%lu,\"dist_mean_m\":%.4f,\"dist_std_m\":%.4f}\n",
+        tSec, addrId, static_cast<unsigned long>(s.polls), static_cast<unsigned long>(s.responses),
+        static_cast<unsigned long>(s.finals), static_cast<unsigned long>(s.results),
+        static_cast<unsigned long>(s.restarts), static_cast<unsigned long>(s.finalTimeouts),
+        static_cast<unsigned long>(s.rxErrors), static_cast<unsigned long>(s.txFailures),
+        static_cast<unsigned long>(s.rearms), static_cast<unsigned long>(s.other),
+        static_cast<unsigned long>(s.eventDrops), static_cast<unsigned long>(s.lastRxStatus),
+        static_cast<unsigned long>(s.distance.count), s.distance.mean / 1000.0, s.distance.stddev() / 1000.0);
+}
+
+#if CONFIG_UWB_ANCHOR_LOG_EVENTS
+/**
+ * @brief docs/ARCHITECTURE_V2.md §2.1/§2.5 の "type":"range" 行
+ * (CONFIG_UWB_ANCHOR_LOG_EVENTS=y のときだけ)。DS-TWRの完了した交換1件ごと
+ * に1行（SS-TWRはAnchor側で距離を計算しないため RangeEvent 自体が発生
+ * しない。uwb_qm33120_responder_fsm.hpp RangeEvent のコメント参照）。
+ *
+ * Kconfigが n（既定）のときはこの関数自体をビルド対象から外す
+ * （呼び出し側もこのKconfigで囲ってあるので、そうしないと
+ * -Wunused-functionの対象になる。firmware/anchor の他の箇所と同じ流儀）。
+ */
+static void printRangeEventLine(const uwb::RangeEvent& ev, int64_t bootUs, const char* addrId)
+{
+    char peerId[8];
+    shortAddrToId(ev.peer, 'T', peerId, sizeof(peerId));
+    const double t = static_cast<double>(ev.tUs - bootUs) / 1e6;
+    std::printf("{\"v\":1,\"type\":\"range\",\"t\":%.3f,\"addr\":\"%s\",\"peer\":\"%s\",\"seq\":%u,\"d\":%.4f,"
+                "\"elapsed_us\":%lu}\n",
+                t, addrId, peerId, static_cast<unsigned>(ev.seq), static_cast<double>(ev.distanceMm) / 1000.0,
+                static_cast<unsigned long>(ev.elapsedUs));
+}
 #endif
 
 extern "C" void app_main(void)
@@ -411,14 +449,25 @@ extern "C" void app_main(void)
     const uwb::ConfigSource addrSource =
         uwb::ConfigStore::loadAnchorAddr(ANCHOR_SHORT_ADDR_DEFAULT, &g_shortAddr);
 
-    ESP_LOGI(TAG, "Phase 4 Step 2 uwb_qm33120 production anchor firmware, board=%s method=%s short_addr=0x%04X (%s)",
-             BOARD_NAME, METHOD_NAME, g_shortAddr, uwb::configSourceName(addrSource));
+    ESP_LOGI(TAG, "uwb_anchor firmware (v2/Responder), board=%s method=%s short_addr=0x%04X (%s)", BOARD_NAME,
+             METHOD_NAME, g_shortAddr, uwb::configSourceName(addrSource));
 
-    uwb::Qm33120 uwbDevice;
+    // static にする理由: xTaskCreatePinnedToCore() が起こす uwb_radio タスクが
+    // このオブジェクトへの生ポインタを保持し、タスクが動き続ける間ずっと
+    // 参照する。app_main 自身は本関数末尾の while(1) から return しないので
+    // 非staticでも実際には安全だが、firmware/tag/main/main.cpp が同じ理由で
+    // static にしている（RangingService::start()向け）のに合わせ、制御フロー
+    // の変更（将来 app_main にreturnを足す等）に対して頑健にしておく。
+    // Must be static: the uwb_radio task (xTaskCreatePinnedToCore()) keeps a
+    // raw pointer to this object for as long as it runs. app_main itself
+    // never returns (its own while(1) below), so a plain local would in fact
+    // stay valid too, but static matches firmware/tag/main/main.cpp's own
+    // reasoning for the same pattern and is robust against a future change
+    // to app_main's control flow.
+    static uwb::Qm33120 uwbDevice;
     const uwb::Config cfg = makeConfigFromBoard();
     // docs/ARCHITECTURE_V2.md §4: PHY を共通 Kconfig (UWB_PHY_*,
-    // components/uwb_qm33120/Kconfig) から選ぶ。firmware/tag はまだこの関数を
-    // 使っておらず uwb::PhyConfig の構造体既定のまま（別エージェント作業中）。
+    // components/uwb_qm33120/Kconfig) から選ぶ。firmware/tag も同じ関数を使う。
     const uwb::PhyConfig phy = uwb::phyConfigFromKconfig();
 
     if (!uwbDevice.begin(cfg, phy)) {
@@ -463,9 +512,6 @@ extern "C" void app_main(void)
     // IRQ 線が死んでいると init() が要求プリセットを PollingBoth へ降格させて
     // いることがあるため、以降は「実際に適用されたプリセット」を使う。
     g_effectiveTimingProfile = uwbDevice.config().timing_profile;
-
-    ESP_LOGI(TAG, "begin() + PHY config OK, starting ANCHOR/%s loop (short_addr=0x%04X)", METHOD_NAME,
-             g_shortAddr);
 
     // --- IRQ（起床信号）の実際の有効状態をログに出す (docs/IRQ_POLICY.md) ---
     // Kconfigの設定値(CONFIG_UWB_ENABLE_IRQ)ではなく、Qm33120::irqActive()が
@@ -545,5 +591,83 @@ extern "C" void app_main(void)
     }
 #endif
 
-    runRole(uwbDevice);
+    /* --- docs/ARCHITECTURE_V2.md §2.1: uwb_radio タスクを起こす ---
+     * ResponderConfig はここで一度だけ組み立てる（実行時の addr set が
+     * radio タスクへ伝わらない理由はこのファイル冒頭のコメント参照）。
+     * static uwb::Responder も uwbDevice と同じ理由で static にする。 */
+    static uwb::Responder responder;
+    g_radioTaskArgs.radio     = &uwbDevice;
+    g_radioTaskArgs.responder = &responder;
+    g_radioTaskArgs.cfg       = makeResponderConfig(g_shortAddr);
+
+    const BaseType_t radioTaskOk = xTaskCreatePinnedToCore(
+        radioTask, "uwb_radio", CONFIG_UWB_ANCHOR_RADIO_TASK_STACK, &g_radioTaskArgs,
+        CONFIG_UWB_ANCHOR_RADIO_TASK_PRIO, &g_radioTaskHandle, CONFIG_UWB_ANCHOR_RADIO_TASK_CORE);
+    if (radioTaskOk != pdPASS) {
+        ESP_LOGE(TAG, "xTaskCreatePinnedToCore(uwb_radio) failed");
+        return;
+    }
+
+    ESP_LOGI(TAG,
+             "uwb_radio task started (core=%d prio=%d stack=%d), short_addr=0x%04X method=%s idle_tick_ms=%d "
+             "restart_on_foreign_poll=%d",
+             CONFIG_UWB_ANCHOR_RADIO_TASK_CORE, CONFIG_UWB_ANCHOR_RADIO_TASK_PRIO,
+             CONFIG_UWB_ANCHOR_RADIO_TASK_STACK, g_shortAddr, METHOD_NAME, CONFIG_UWB_ANCHOR_IDLE_TICK_MS,
+             // 素の CONFIG_UWB_ANCHOR_RESTART_ON_FOREIGN_POLL ではなく、既に
+             // 解決済みの g_radioTaskArgs.cfg.restartOnForeignPoll を使う
+             // （makeResponderConfig()のコメント参照:
+             // n選択時はマクロ自体が未定義になるため、式の中で直接使えない）。
+             (int)g_radioTaskArgs.cfg.restartOnForeignPoll);
+
+    /* ==================================================================== *
+     * main タスク（このタスク自身、コア0）のループ (docs/ARCHITECTURE_V2.md
+     * §2.1/§2.5): 統計行・イベント行・スタック監視。LEDは起動時に始めた
+     * ハートビートタスクが背景で回り続けるので、ここで追加の駆動は不要
+     * （uwb_status_led_start_role_heartbeat()のコメント参照）。
+     * ==================================================================== */
+    char addrId[8];
+    shortAddrToId(g_shortAddr, 'A', addrId, sizeof(addrId));
+
+    const int64_t bootUs   = esp_timer_get_time();
+    int64_t lastStatsUs     = bootUs;
+    bool stackLogged         = false;
+
+    // 8件キューを取りこぼさずに済む間隔（§2.2の実測上限90Hz≒11ms/交換に
+    // 対し8件分=88msの余裕がある）で events を排出する。stats行の間隔とは
+    // 独立（UWB_ANCHOR_STATS_INTERVAL_MSはJSON行の頻度、こちらはキュー溢れ
+    // 防止のための内部ポーリング周期で、Kconfig化するほどの調整対象では
+    // ない）。
+    constexpr TickType_t kMainLoopPeriod = pdMS_TO_TICKS(10);
+
+    while (true) {
+        vTaskDelay(kMainLoopPeriod);
+
+        uwb::RangeEvent ev;
+        while (responder.popEvent(ev)) {
+#if CONFIG_UWB_ANCHOR_LOG_EVENTS
+            printRangeEventLine(ev, bootUs, addrId);
+#else
+            (void)ev;
+#endif
+        }
+
+        const int64_t nowUs = esp_timer_get_time();
+        if ((nowUs - lastStatsUs) >= static_cast<int64_t>(CONFIG_UWB_ANCHOR_STATS_INTERVAL_MS) * 1000) {
+            const uwb::ResponderStats snap = responder.snapshot();
+            printAnchorStatsLine(snap, static_cast<double>(nowUs - bootUs) / 1e6, addrId);
+            publishConsoleStats(snap);
+            lastStatsUs = nowUs;
+        }
+
+        // 【スタック監視】起動5秒後に1回、uwb_radio タスクのスタック
+        // ハイウォーターマーク（未使用の最小残量）を出す。単位はバイト
+        // （ESP-IDF の uxTaskGetStackHighWaterMark() は vanilla FreeRTOS と
+        // 違いワードではなく**バイト**を返す）。
+        // UWB_ANCHOR_RADIO_TASK_STACK の既定値が妥当かをここで確認する。
+        if (!stackLogged && (nowUs - bootUs) >= 5 * 1000 * 1000) {
+            stackLogged = true;
+            ESP_LOGI(TAG, "uwb_radio task stack high-water mark: %u bytes free",
+                     (unsigned)uxTaskGetStackHighWaterMark(g_radioTaskHandle));
+        }
+    }
 }

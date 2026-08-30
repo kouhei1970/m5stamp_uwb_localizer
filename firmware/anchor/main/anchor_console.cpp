@@ -164,8 +164,16 @@ int cmdAddr(int argc, char** argv)
     g_addr = addr;
     unlock();
 
-    std::printf("short_addr = 0x%04X に変更しました（次の応答から反映）。"
-                "電源を切っても残すには save を実行してください\n",
+    // 【v2 (docs/ARCHITECTURE_V2.md §2.1)】uwb::Responder は begin() 時に
+    // 渡された ResponderConfig（shortAddr を含む）のコピーを保持し続け、
+    // radio タスクは以後それを読み直さない（旧 respondDSRange() ループの
+    // ように呼び出しごとに currentShortAddr() を読み直す構造ではなくなった。
+    // firmware/anchor/main/main.cpp 冒頭コメント「v2 での変更点」参照）。
+    // このため「次の応答から反映」はもう成立せず、save してから reboot する
+    // までは無線には反映されないことを明示する。
+    std::printf("short_addr = 0x%04X に変更しました（表示・info には即反映されますが、"
+                "無線の応答には反映されません）。save で NVS へ保存したうえで reboot する"
+                "まで、実際に測距に使われるアドレスは変わりません\n",
                 static_cast<unsigned>(addr));
     return 0;
 }
@@ -194,7 +202,9 @@ int cmdSave(int argc, char** argv)
         g_savedValid = true;
         unlock();
     }
-    std::printf("NVS へ保存しました: short_addr = 0x%04X\n", static_cast<unsigned>(addr));
+    std::printf("NVS へ保存しました: short_addr = 0x%04X（reboot すると次回起動時にこの値で"
+                "無線が立ち上がります）\n",
+                static_cast<unsigned>(addr));
     return 0;
 }
 

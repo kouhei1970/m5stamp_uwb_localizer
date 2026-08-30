@@ -115,15 +115,79 @@ struct ResponderConfig {
      */
     uint32_t idleTickMs        = 20;
     bool restartOnForeignPoll   = true; //!< Whether a WaitFinal-time Poll from a DIFFERENT peer restarts the exchange (§2.2's "複数タグ" note); a Poll from the SAME peer always restarts regardless of this flag.
+    /**
+     * 2026-08-30 実機結果（v2 anchor, 850kbps/256, PollingBoth, DS, タグ再試行2回・
+     * 待ち0ms, 95秒）: 周期成功率98.0%だが2回目試行の失敗率が60%と高い
+     * (restarts はポーリングで2、IRQで9しか計上されない=タグの即時再送Pollが
+     * ほとんどアンカーに届いていない)。原因はDS Responseの
+     * finalRxAfterResponseTxDelayUus（W4R、既定1500 UUS≈1538µs）が生む
+     * 「聞こえない窓」: Response送信終了（Poll+3344µs付近）から
+     * finalRxAfterResponseTxDelayUus後（+4882µs付近）まで受信機が開かない。
+     * TagがResponseをRXエラーで取りこぼすと+3.4ms付近で諦めて+3.6〜3.9ms付近に
+     * 再送Pollを送るため、ちょうどこの聞こえない窓に落ちて1回丸ごと無駄になる
+     * （アンカーはFinalが来ないままRXFTO=+8ms付近まで待ち、2回目の試行も失敗、
+     * 3回目でようやく成功）。これは docs/ARCHITECTURE_V2.md §1「受信は無期限。
+     * ホスト側で周期的に受信機を切って入れ直さない」に反する残存ウィンドウ。
+     *
+     * true（既定）にすると、DS Response送信後は
+     * dwt_setrxaftertxdelay(0) で送信完了直後にRX窓を開き、
+     * dwt_setrxtimeout(finalRxAfterResponseTxDelayUus + rxTimeoutUus) で
+     * 締切時刻（ハードウェアRXFTOが立つ絶対時刻）は変えずに窓の開始だけ
+     * 前倒しする（uwb_qm33120_responder.cpp の onRespond() 参照。
+     * DSRangeConfig/プリセット自体・requestDSRange()/respondDSRange()の
+     * 挙動は一切変更しない — Responder のこの1関数だけの振る舞い）。
+     * false にすると旧来どおり finalRxAfterResponseTxDelayUus ぶん窓の
+     * 開放を遅らせる（実機比較用）。
+     *
+     * Real-hardware finding (2026-08-30): the DS Response's W4R
+     * (finalRxAfterResponseTxDelayUus, default 1500 UUS) leaves a ~1.5ms
+     * "deaf gap" right after the Response TX ends, before RX opens. A tag
+     * that lost the Response to an RX error retries its Poll into exactly
+     * that gap, wasting an entire retry cycle. When true (default), the
+     * Responder opens RX immediately after the Response TX instead
+     * (dwt_setrxaftertxdelay(0)) and folds the skipped wait into the RX
+     * timeout (dwt_setrxtimeout(finalRxAfterResponseTxDelayUus +
+     * rxTimeoutUus)) so the hardware RXFTO still fires at the same absolute
+     * time as before - only the "not listening yet" window shrinks to zero,
+     * consistent with §1's "受信は無期限". Does not touch DSRangeConfig,
+     * the timing presets, or the legacy requestDSRange()/respondDSRange().
+     */
+    bool listenImmediatelyAfterTx = true;
 };
 
-/** @brief docs/ARCHITECTURE_V2.md §2.3 - all cumulative counters + distance stats. */
+/**
+ * @brief docs/ARCHITECTURE_V2.md §2.3 - all cumulative counters + distance
+ * stats.
+ *
+ * 【2026-08-30 修正】実機の anchor_stats で `responses` が `polls` を
+ * 上回る事例（例: polls=6041, responses=6043）が見つかった。原因は
+ * 「WaitFinal 中の Poll（restart）で応答を送ったとき、restarts は
+ * 増やすが polls は増やさない」旧実装に対し、response 成功時は
+ * fresh/restart の区別なく毎回 responses を増やしていたため（=
+ * restart 分だけ responses が polls を追い越せた）。
+ * uwb_qm33120_responder.cpp の onRespond() を「Poll を受理した時点で
+ * 無条件に polls++（restart のときは追加で restarts++）、Response の
+ * 送信結果が確定してから responses++/txFailures++」の順に直し、
+ * 以下の関係が常に成り立つようにした:
+ *   polls >= restarts        （restart は polls の部分集合）
+ *   polls >= responses        （応答できたのは受理した Poll の一部）
+ *   responses >= results（DSのみ。Result はResponse成功後にしか送れない）
+ *
+ * Fixed 2026-08-30: `responses` used to be incremented on every successful
+ * Response send regardless of whether the triggering Poll was a fresh one
+ * (counted in `polls`) or a WaitFinal-time restart (counted in `restarts`
+ * only, not `polls`), so `responses` could exceed `polls` whenever restarts
+ * occurred. onRespond() now increments `polls` (and, for a restart,
+ * `restarts` too) unconditionally as soon as a Poll is accepted, and only
+ * increments `responses`/`txFailures` once the Response TX outcome is
+ * known - so `responses <= polls` always holds.
+ */
 struct ResponderStats {
-    uint32_t polls         = 0; //!< Valid Polls accepted while in Listen (fresh exchanges started).
-    uint32_t responses     = 0; //!< Response frames successfully transmitted (SS or DS).
+    uint32_t polls         = 0; //!< Every Poll frame accepted (Listen: fresh exchange started; WaitFinal: a restart - see `restarts`). Upper bound for `responses`.
+    uint32_t responses     = 0; //!< Response frames (SS or DS) whose delayed TX was armed successfully (dwt_starttx() succeeded and the UM §9.4.1 wedged-errata check passed - same criterion respondRange()/respondDSRange() use). Always <= `polls`.
     uint32_t finals        = 0; //!< Matching Final frames received (DS only).
-    uint32_t results       = 0; //!< Result ("DWD") frames successfully transmitted (DS only).
-    uint32_t restarts      = 0; //!< WaitFinal exchanges abandoned because a Poll (same or, if restartOnForeignPoll, a different peer) arrived instead of the expected Final.
+    uint32_t results       = 0; //!< Result ("DWD") frames successfully transmitted (DS only). Always <= `finals` and <= `responses`.
+    uint32_t restarts      = 0; //!< Of `polls`, how many arrived while WaitFinal (same peer retry, or - if restartOnForeignPoll - a different peer) instead of the expected Final, abandoning that in-flight exchange. Subset of `polls`, not counted separately from it.
     uint32_t finalTimeouts = 0; //!< WaitFinal exchanges abandoned by RXFTO or the host deadline, with no Poll and no matching Final.
     uint32_t rxErrors      = 0; //!< Non-timeout RX errors absorbed (Listen: ignored and re-armed; WaitFinal: re-armed and kept waiting, within the deadline).
     uint32_t txFailures    = 0; //!< Delayed-TX failures (HPDWARN / the UM §9.4.1 "wedged" errata, detail::abortIfDelayedTxWedged()) while sending a Response or Result.
@@ -139,7 +203,24 @@ struct ResponderStats {
      * full, count drops)").
      */
     uint32_t eventDrops    = 0;
-    DistanceStats distance;      //!< n / mean / std of computed distances (DS only - SS's anchor side never learns the distance, respondRange() cpp comment).
+    /**
+     * 2026-08-30 実機結果: DS の距離計算 (detail::computeDsDistance()) が
+     * 有効(denominator>0)と判定したにもかかわらず、物理的にありえない値
+     * （負のToF由来の距離、または極端に大きい距離）を出したケースを数える。
+     * onComputeAndRespond() が Result("DWD")送信・RangeEvent発行の前に
+     * 距離を (-0.5m, 500m) の範囲でチェックし、範囲外ならここを増やして
+     * 両方とも送らない（詳細は onComputeAndRespond() のコメント参照 -
+     * 実機で -14.979m という異常値が見つかったことへの対策）。
+     *
+     * Counts DS distances that detail::computeDsDistance() marked valid
+     * (positive denominator) but which are physically implausible (negative
+     * or absurdly large - a real-hardware run found -14.979 m).
+     * onComputeAndRespond() checks the distance against (-0.5m, 500m) before
+     * sending the Result or emitting a RangeEvent; out-of-range samples are
+     * dropped and counted here instead.
+     */
+    uint32_t badDistance   = 0;
+    DistanceStats distance;      //!< n / mean / std of computed distances (DS only - SS's anchor side never learns the distance, respondRange() cpp comment). Only accumulates samples that passed the badDistance check above.
 };
 
 /** @brief One completed DS-TWR exchange's result (docs/ARCHITECTURE_V2.md §2.3). */

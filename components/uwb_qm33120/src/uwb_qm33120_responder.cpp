@@ -85,6 +85,16 @@ namespace {
 constexpr UBaseType_t kEventQueueLen = 8;
 
 /**
+ * @brief Bound for waitForCiaDone() below (2026-08-30 audit finding (c)).
+ * No datasheet figure for CIA processing latency is available in this
+ * working copy (未確認); chosen generously (1ms) relative to the
+ * microsecond-scale internal pipeline delay this is meant to bridge, while
+ * staying negligible next to the ~3-8ms DS-TWR exchange timings this
+ * Responder already works with.
+ */
+constexpr uint32_t kCiaDoneWaitBoundUs = 1000;
+
+/**
  * @brief Best-effort "is the chip currently receiving" check for the
  * Listen-state Tick handler (§2.2's "SYS_STATE を読み、受信状態でなければ
  * RX 再有効化"). See uwb_qm33120_internal.hpp's detail::delayedTxWedged()
@@ -288,6 +298,19 @@ void onRespond(Responder::Impl& im, bool ds)
 {
     const bool wasWaitFinal = (im.state == State::WaitFinal);
 
+    // 【2026-08-30 修正】この Poll は既に受理が確定している（decide() が
+    // RespondSs/RespondDs を返したのはこの時点）ので、Response の送信結果が
+    // 分かるより前に polls（と、restart なら restarts も）を確定させる。
+    // responses/txFailures は下で送信結果が判明してから別に増やす
+    // （ResponderStats のコメント参照 - こうしないと restart の分だけ
+    // responses が polls を追い越しうる、実機 anchor_stats で発見されたバグ）。
+    withStatsLock(im, [wasWaitFinal](ResponderStats& s) {
+        s.polls++;
+        if (wasWaitFinal) {
+            s.restarts++;
+        }
+    });
+
     // Clear the Poll's RXFCG (and, on a restart, the earlier Response's
     // TXFRS, which may still be pending - respondDSRange() clears both
     // together the same way at its own Final-wait entry).
@@ -297,8 +320,28 @@ void onRespond(Responder::Impl& im, bool ds)
     const uint32_t responseTxDelayUus = ds ? im.cfg.ds.responseTxDelayUus : im.cfg.ss.responseTxDelayUus;
     const char respPrefix[3]          = {ds ? 'D' : 'T', 'W', 'R'}; // 【タスクC-2】"TWR"/"DWR" (docs/TIMING_PRESETS.md §3.2)。
 
-    const uint32_t rxAfterTxDelayUus = ds ? im.cfg.ds.finalRxAfterResponseTxDelayUus : 0U;
-    const uint32_t rxTimeoutUus       = ds ? im.cfg.ds.rxTimeoutUus : 0U;
+    // 【2026-08-30 実機結果】DS の W4R（finalRxAfterResponseTxDelayUus）が
+    // Response 送信直後に作る「聞こえない窓」対策
+    // (ResponderConfig::listenImmediatelyAfterTx のコメント参照)。
+    // rxAfterTxDelayUus と rxTimeoutUus の配分を変えるだけで、両者の和
+    // （締切がハードウェアRXFTOとして立つ絶対時刻）は変えない - ホスト側の
+    // 締切計算（下の totalUus）が rxAfterTxDelayUus と rxTimeoutUus の
+    // 個別値ではなく和だけを使っているのはこのため。
+    // DSRangeConfig/プリセット/legacy respondDSRange() 自体は一切変更しない
+    // （detail::buildAndArmResponse() は共有ヘルパーだが、この2値は
+    // 呼び出し側=Responder がここで決めて渡すだけなので、legacy側の
+    // 呼び出し (uwb_qm33120_twr.cpp) は影響を受けない）。
+    uint32_t rxAfterTxDelayUus = 0U;
+    uint32_t rxTimeoutUus      = 0U;
+    if (ds) {
+        if (im.cfg.listenImmediatelyAfterTx) {
+            rxAfterTxDelayUus = 0U;
+            rxTimeoutUus      = im.cfg.ds.finalRxAfterResponseTxDelayUus + im.cfg.ds.rxTimeoutUus;
+        } else {
+            rxAfterTxDelayUus = im.cfg.ds.finalRxAfterResponseTxDelayUus;
+            rxTimeoutUus      = im.cfg.ds.rxTimeoutUus;
+        }
+    }
 
     uint64_t pollRxTs = 0;
     const detail::ResponseArmOutcome arm = detail::buildAndArmResponse(
@@ -307,7 +350,7 @@ void onRespond(Responder::Impl& im, bool ds)
         static_cast<uint8_t>(im.radio->config().timing_profile), pollRxTs);
 
     if (arm.dataFailed || arm.startFailed || arm.wedged) {
-        failResponseToListen(im);
+        failResponseToListen(im); // txFailures++ (polls/restarts はすでに上で確定済み)
         return;
     }
 
@@ -328,7 +371,11 @@ void onRespond(Responder::Impl& im, bool ds)
         // Final RX window opens) + rxTimeoutUus (Final RX window length),
         // UUS -> real ms via the same *1.02564 factor used elsewhere in this
         // codebase (e.g. firmware/anchor/main/main.cpp's boot log), + 2ms
-        // margin, measured from "now" (Response just armed).
+        // margin, measured from "now" (Response just armed). Unchanged by
+        // listenImmediatelyAfterTx: it only redistributes
+        // finalRxAfterResponseTxDelayUus/rxTimeoutUus between "wait before
+        // opening RX" and "RX timeout length" above - their SUM (used here)
+        // is the same either way, so the absolute deadline does not move.
         const double totalUus = static_cast<double>(im.cfg.ds.responseTxDelayUus) +
                                  static_cast<double>(im.cfg.ds.finalRxAfterResponseTxDelayUus) +
                                  static_cast<double>(im.cfg.ds.rxTimeoutUus);
@@ -337,14 +384,10 @@ void onRespond(Responder::Impl& im, bool ds)
         im.state                  = State::WaitFinal;
         uwb_port_irq_clear_pending();
 
-        withStatsLock(im, [wasWaitFinal](ResponderStats& s) {
-            if (wasWaitFinal) {
-                s.restarts++;
-            } else {
-                s.polls++;
-            }
-            s.responses++; // dwt_starttx() succeeded and the wedged-errata check passed - same success criterion respondDSRange() itself uses (it never re-confirms the Response's own TXFRS either).
-        });
+        // dwt_starttx() succeeded and the wedged-errata check passed - same
+        // success criterion respondDSRange() itself uses (it never
+        // re-confirms the Response's own TXFRS either).
+        withStatsLock(im, [](ResponderStats& s) { s.responses++; });
         return;
     }
 
@@ -358,12 +401,7 @@ void onRespond(Responder::Impl& im, bool ds)
     uwb_port_irq_clear_pending();
     im.state = State::Listen;
 
-    withStatsLock(im, [wasWaitFinal, txOk](ResponderStats& s) {
-        if (wasWaitFinal) {
-            s.restarts++;
-        } else {
-            s.polls++;
-        }
+    withStatsLock(im, [txOk](ResponderStats& s) {
         if (txOk) {
             s.responses++;
         } else {
@@ -371,6 +409,23 @@ void onRespond(Responder::Impl& im, bool ds)
         }
     });
 }
+
+/**
+ * 2026-08-30 実機結果の監査 (badDistance)。coordinator の指定通り
+ * (-0.5m, 500m) の範囲外を「ありえない値」として扱う。denominator<=0
+ * (dist.valid==false) は符号が完全に壊れたケースで別扱い（そちらは
+ * detail::computeDsDistance() 自体が RangeTimestampInvalid 相当として
+ * 検出済み）。ここはそれを通り抜けた「符号は壊れていないが値が
+ * 物理的にありえない」ケース（実機で見つかった -14.979m はこちら:
+ * denominator>0 だが tofDtu が負になった、または極端に大きくなった
+ * ケース）を拾う。
+ * Rejects a computed distance outside (-0.5m, 500m) even when
+ * detail::computeDsDistance() reports it as "valid" (denominator>0) -
+ * catches the case a real run found (-14.979 m), which was not itself
+ * denominator<=0.
+ */
+constexpr int32_t kMinPlausibleDistanceMm = -500;
+constexpr int32_t kMaxPlausibleDistanceMm = 500000;
 
 /**
  * @brief Action::ComputeAndRespond (WaitFinal + matching Final). Distance
@@ -392,6 +447,18 @@ void onComputeAndRespond(Responder::Impl& im)
         // RangeTimestampInvalid-equivalent: extremely rare (bad timestamps),
         // no Result sent, no RangeEvent.
         withStatsLock(im, [](ResponderStats& s) { s.other++; });
+        dwt_setrxtimeout(0);
+        dwt_rxenable(DWT_START_RX_IMMEDIATE);
+        uwb_port_irq_clear_pending();
+        im.state = State::Listen;
+        return;
+    }
+    if ((dist.distanceMm < kMinPlausibleDistanceMm) || (dist.distanceMm > kMaxPlausibleDistanceMm)) {
+        // ResponderStats::badDistance のコメント参照。この Final から得た
+        // ペア(peer,seq)は既に消費済みなので Result は送らず・RangeEvent も
+        // 出さない - タグ側はこの試行を失敗として扱い、通常のリトライで
+        // 回復する（他の失敗パス - finalTimeouts 等 - と同じ扱い）。
+        withStatsLock(im, [](ResponderStats& s) { s.badDistance++; });
         dwt_setrxtimeout(0);
         dwt_rxenable(DWT_START_RX_IMMEDIATE);
         uwb_port_irq_clear_pending();
@@ -507,6 +574,82 @@ void waitForWake(Responder::Impl& im, uint32_t waitMs)
     }
 }
 
+/**
+ * @brief 2026-08-30 実機結果の監査 (c): RXFCG（フレームCRC良好）が立って
+ * いても、CIA（Channel Impulse Response Analyzer、先頭パス=leading edge
+ * 検出アルゴリズム）が RX タイムスタンプの最終値を書き終えているとは
+ * 限らない可能性の検査。SDK は両者を別ビットとして持ち
+ * (deca_device_api.h:374 DWT_INT_CIADONE_BIT_MASK=0x400、
+ * dw3720_deca_vals.h:157 `SYS_STATUS_RXOK = (DWT_INT_RXFCG_BIT_MASK |
+ * DWT_INT_CIA_DONE_BIT_MASK)` という結合マスクを別途定義)、
+ * `SYS_STATUS_ALL_RX_GOOD`（deca_device_api.h:432、このファイルが
+ * clearに使っているマスク）自体もCIADONEを含む＝ベンダは両者を
+ * 「良好受信に伴う一体のイベント群」として扱っている。
+ * `ull_readrxtimestamp()`（dw3720_device.c:4069、RX_TIME_0_ID の生レジスタ
+ * 読み出しのみ）はCIA完了を自分では待たない。
+ *
+ * 【未確認・完全には立証できていない】Qorvo公式リファレンス
+ * (assets/DW3_QM33_SDK_1.1.1/.../ex_05b_ds_twr_resp/ds_twr_responder.c:164)
+ * の受信待ちループ自体もRXFCGのみを見ており、CIADONEを個別に待たない
+ * （shared_functions.c:588 waitforsysstatus()もタイトスピンで遅延を
+ * 入れない）。したがって「RXFCG直後は常にCIA未完了でありうる」という
+ * 主張は公式リファレンスの実装とは整合しない。それでも実機の症状
+ * （距離±0.5〜500mの範囲外を含む異常値がポーリング実行でのみ出現、
+ * IRQ実行・旧respondDSRange()のポーリング(1ms周期のvTaskDelay)実行では
+ * 未検出）は「本 Responder のポーリング待ち(waitForWake()、taskYIELD()に
+ * よるSPIレジスタのタイトスピン、旧コードのuwb_port_irq_wait(1)相当より
+ * 高頻度)でだけ観測される」という一致を示しており、SYS_STATUS_ALL_RX_GOOD
+ * がCIADONEを同列に扱っている事実と合わせて、無視できない仮説として
+ * この待ちを追加する。原因を完全に特定した、とは主張しない
+ * （文書化した上で導入する防御的な緩和策。距離レンジの健全性チェック
+ * (onComputeAndRespond()のbadDistance判定)が最終防衛線）。
+ *
+ * 挙動: 引数の status に既にCIADONEが立っていれば即座に返す(追加コスト0)。
+ * 立っていなければ、上限 boundUs [µs] まで dwt_readsysstatuslo() を
+ * 追加でタイトスピンし、CIADONEが立ち次第、その時点の status を返す
+ * （立たないまま上限に達しても、最後に読んだ status をそのまま返す -
+ * RXFCG自体は既に確定した「良好受信」の根拠なので、処理を進めることに
+ * 変わりはない。あくまで後続のタイムスタンプ読み出しに猶予を与えるだけ）。
+ *
+ * Audit finding (c): RXFCG alone does not guarantee the CIA (leading-edge
+ * timestamp estimator) has finished writing the final RX timestamp -
+ * ull_readrxtimestamp() (dw3720_device.c:4069) is a raw register read with
+ * no CIA-completion wait of its own, and CIADONE is a distinct SYS_STATUS
+ * bit (DWT_INT_CIADONE_BIT_MASK, deca_device_api.h:374) that
+ * SYS_STATUS_ALL_RX_GOOD (deca_device_api.h:432) and the vendor's own
+ * SYS_STATUS_RXOK combined mask (dw3720_deca_vals.h:157) both bundle
+ * alongside RXFCG. NOT fully proven: Qorvo's own reference responder
+ * (ex_05b_ds_twr_resp/ds_twr_responder.c:164) and its waitforsysstatus()
+ * helper (shared_functions.c:588) also check RXFCG alone, with no delay in
+ * their poll loop either - so "RXFCG can fire before CIADONE" is not
+ * confirmed by the vendor's own usage pattern. Added as a documented,
+ * low-cost defensive mitigation because it lines up with the observed
+ * symptom (bad distances only in this Responder's polling mode, which
+ * spins tighter than both this Responder's own IRQ path and the legacy
+ * respondDSRange()'s 1ms-cadence poll, neither of which showed the defect)
+ * - not a proven root cause. The distance-range sanity check in
+ * onComputeAndRespond() (ResponderStats::badDistance) is the actual last
+ * line of defense regardless of this mitigation's effect.
+ *
+ * @param status   直前に読んだ SYS_STATUS（RXFCG が立っている前提）。
+ * @param boundUs  追加で待つ上限 [µs]。
+ * @return CIADONE を確認できた（またはできなかった）時点の最新 status。
+ */
+uint32_t waitForCiaDone(uint32_t status, uint32_t boundUs)
+{
+    if ((status & DWT_INT_CIADONE_BIT_MASK) != 0) {
+        return status;
+    }
+    const int64_t startUs = esp_timer_get_time();
+    while ((esp_timer_get_time() - startUs) < static_cast<int64_t>(boundUs)) {
+        status = dwt_readsysstatuslo();
+        if ((status & DWT_INT_CIADONE_BIT_MASK) != 0) {
+            break;
+        }
+    }
+    return status;
+}
+
 } // namespace
 
 Responder::Responder() : _impl(new Impl())
@@ -599,7 +742,7 @@ void Responder::service()
 
     bool handledAny = false;
     for (;;) {
-        const uint32_t status = dwt_readsysstatuslo();
+        uint32_t status = dwt_readsysstatuslo();
         const bool nothingPending =
             (status & (DWT_INT_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR)) == 0;
         if (nothingPending) {
@@ -615,8 +758,13 @@ void Responder::service()
         Event ev;
         FrameSummary frame;
         if ((status & DWT_INT_RXFCG_BIT_MASK) != 0) {
-            ev    = Event::RxFrame;
-            frame = classifyFrame(im);
+            // 2026-08-30 実機結果の監査 (c) - waitForCiaDone() のコメント参照。
+            // RX タイムスタンプ（Poll は onRespond() 内、Final は
+            // computeAndRespond() 内で読む）が最終値になっているとより
+            // 確信できるよう、CIADONE にも短時間だけ猶予を与える。
+            status = waitForCiaDone(status, kCiaDoneWaitBoundUs);
+            ev     = Event::RxFrame;
+            frame  = classifyFrame(im);
         } else {
             withStatsLock(im, [status](ResponderStats& s) { s.lastRxStatus = status; });
             const bool isTimeout =

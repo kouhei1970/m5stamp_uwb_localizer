@@ -109,13 +109,22 @@ menu "UWB Tag Configuration"
     config UWB_TAG_RETRY_DELAY_MS
         int "再試行のPoll送信前に追加で待つ時間 [ms]"
         range 0 100
-        default 10 if UWB_TAG_METHOD_DS
         default 2
         help
             uwb::SchedulerConfig::retryDelayMs に渡す値。
             UWB_TAG_RETRY_MAX=0 のときは使われない。
 
-            DS-TWRでは**10ms以上が必須**: アンカーは自身のResponse送信後、
+            【2026-08-30 v2 アンカー（uwb::Responder、受信常時 ON）での実測】
+            850kbps/256・PollingBoth・DS・約1.2m・95秒: 待ち 0ms で周期成功率 99.0%
+            （2回目の試行の失敗率 28%）、2ms で 99.5%（15%、周期の p95 17ms）、
+            10ms で 99.6%（9%、p95 26ms）。v2 アンカーは Final 待ち中の Poll に
+            応じ、Response 送信直後から受信するので、SS/DS とも既定 2ms で足りる。
+            10ms は周期時間を延ばすだけで成功率は誤差の範囲。
+
+            以下は旧アンカー（firmware/twr の respondDSRange()、200ms 窓）で
+            測った記録で、旧アンカーと組む場合にだけ当てはまる:
+
+            旧アンカーの DS-TWR では**10ms以上が必須**だった: アンカーは自身のResponse送信後、
             次のFinalを待つ窓（850kbps/256・PollingBothプリセットで
             Response遅延3000UUS + W4R（Wait-for-Response）1500UUS +
             RXタイムアウト3000UUS、合わせてPoll受信からおよそ+8.2msまで）の
@@ -127,8 +136,7 @@ menu "UWB Tag Configuration"
 
             SS-TWRでは待ちは不要: Response待ち失敗の時点でアンカーは既に
             Poll待ちへ戻っているため、2msの短い間隔だけで2回目の失敗率
-            7.5%（独立試行相当。同節e34）。既定を2msにしてあるのはこの
-            実測に合わせたもの。
+            7.5%（独立試行相当。同節e34）。
 
     config UWB_TAG_STATS_INTERVAL_MS
         int "測距成功率(\"type\":\"stats\")行を出す間隔 [ms]（0で出力しない）"

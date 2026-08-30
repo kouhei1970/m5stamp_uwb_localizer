@@ -11,11 +11,19 @@
  * タスク構成と排他
  * ------------------------------------------------------------------
  * REPL は esp_console_start_repl() が専用の FreeRTOS タスクを作って回す。
- * 測距ループ（respondDSRange() をブロッキングで呼び続ける）は従来どおり
- * app_main のタスクのまま。共有するのは
  *
- *   - ショートアドレス（コンソールが書き、測距ループが毎回読む）
- *   - 測距統計（測距ループが書き、コンソールの info が読む）
+ * 【v2 (docs/ARCHITECTURE_V2.md §2.1)】測距（電波の送受信）は
+ * `uwb_radio` タスク（main.cpp の radioTask()、`uwb::Responder::service()`
+ * を無限に回すだけ）が専任で担い、REPL・統計行の出力は main タスク
+ * （app_main、コア0）が行う。3 タスク構成になったが、このヘッダが共有する
+ * 状態は変わらない:
+ *
+ *   - ショートアドレス（コンソールが書く。**radio タスクはもう読まない** -
+ *     uwb::Responder は begin() 時の ResponderConfig を保持し続けるため、
+ *     addr set は reboot するまで無線には反映されない。main.cpp 冒頭
+ *     コメント「v2 での変更点」参照。この値は addr/info コマンドの表示にだけ使う）
+ *   - 測距統計（main タスクが UWB_ANCHOR_STATS_INTERVAL_MS ごとに
+ *     publishConsoleStats() で書き、コンソールの info が読む）
  *
  * の 2 つだけで、いずれも小さいので 1 本のミューテックスで保護する。
  * ミューテックスを保持したままブロッキング API を呼ぶ箇所は無い。
@@ -63,14 +71,19 @@ struct StaticInfo {
 bool sharedInit(uint16_t addr, const StaticInfo& info);
 
 /**
- * @brief いま有効なショートアドレス。測距ループが 1 周ごとに呼ぶ。
+ * @brief いま有効なショートアドレス（addr / info コマンドの表示用）。
  *
- * コンソールで addr set した場合、**次の respond 呼び出しから**新しい値に
- * なる（進行中の 1 回の TWR には影響しない）。
+ * 【v2 (docs/ARCHITECTURE_V2.md §2.1)】以前は測距ループが1周ごとに読み直し、
+ * addr set が次の応答から反映されていたが、uwb::Responder は begin() 時の
+ * ResponderConfig を保持し続けるため、この関数はもう無線側からは読まれない
+ * （main.cpp 冒頭コメント「v2 での変更点」参照）。addr set 直後の表示用の値
+ * （まだ save/reboot していない「これから有効にしたい値」）を返すだけの
+ * ものになった。
  */
 uint16_t currentShortAddr();
 
-/** 統計を公開する。測距ループが応答のたびに呼ぶ。 */
+/** 統計を公開する。main タスクが UWB_ANCHOR_STATS_INTERVAL_MS ごとに呼ぶ
+ *  （publishConsoleStats()、main.cpp）。 */
 void publishStats(const Stats& stats);
 
 /**

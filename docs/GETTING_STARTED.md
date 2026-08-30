@@ -817,21 +817,42 @@ Kconfig の既定値と一致するので `addr set` は不要ですが、`save`
 uwb-anchor> addr
 short_addr = 0x0002  (Kconfig 既定値 = 0x0002, NVS = 未保存（save が必要）)
 uwb-anchor> addr set 0x0003
-short_addr = 0x0003 に変更しました（次の応答から反映）。電源を切っても残すには save を実行してください
+short_addr = 0x0003 に変更しました（表示・info には即反映されますが、無線の応答には反映されません）。save で NVS へ保存したうえで reboot するまで、実際に測距に使われるアドレスは変わりません
 uwb-anchor> save
-NVS へ保存しました: short_addr = 0x0003
+NVS へ保存しました: short_addr = 0x0003（reboot すると次回起動時にこの値で無線が立ち上がります）
 uwb-anchor> reboot
 再起動します
 ```
 
+> **v2 での変更**: `addr set` は表示（`addr`/`info`）にはすぐ反映されますが、
+> 無線側は起動時に一度だけ組み立てられる設定を保持し続けるため、実際に
+> 測距へ反映させるには **`save` の後に `reboot` が必須**です（旧ファームの
+> 「次の応答から反映」という即時反映は v2 では成立しません。理由は
+> `firmware/anchor/main/main.cpp` 冒頭コメント「v2 での変更点」参照）。
+
 再起動後の起動ログでアドレスと設定の出どころ（`nvs`）を確認します。
 
 ```
-I (xxx) uwb_anchor: Phase 4 Step 2 uwb_qm33120 production anchor firmware,
-  board=M5StampS3A method=DS-TWR short_addr=0x0003 (nvs)
+I (xxx) uwb_anchor: uwb_anchor firmware (v2/Responder), board=M5StampS3A method=DS-TWR
+  short_addr=0x0003 (nvs)
 I (xxx) uwb_anchor: deviceId=0xDECA0314 (expect 0xDECA0314) chipName=... isInitialized=1
-I (xxx) uwb_anchor: begin() + PHY config OK, starting ANCHOR/DS-TWR loop (short_addr=0x0003)
+I (xxx) uwb_anchor: uwb_radio task started (core=1 prio=20 stack=8192), short_addr=0x0003
+  method=DS-TWR idle_tick_ms=20 restart_on_foreign_poll=1
 ```
+
+> **v2 での変更（2026-08-30、docs/ARCHITECTURE_V2.md §2.1/§2.5）**: 起動後は
+> 1 秒ごと（`UWB_ANCHOR_STATS_INTERVAL_MS`、既定 1000ms）に
+> `{"v":1,"type":"anchor_stats", ...}` という JSON 1 行が流れ続けます。
+> 旧ファーム（`firmware/twr`）にあった `DS_RESP_STAT`/`SS_RESP_STAT` の
+> テキストログ（20 回成功ごと）はこのファーム（`firmware/anchor`）には
+> もう出ません。JSON 行は毎回 `polls`/`responses`/`finals`/`results`/
+> `restarts`/`rx_errors`/`tx_failures`/`dist_mean_m` 等の累積カウンタを
+> そのまま出す形になっています（詳細フィールドはソース
+> `firmware/anchor/main/main.cpp` の `printAnchorStatsLine()` を参照）。
+> 個々の DS-TWR 交換ごとの行（`{"v":1,"type":"range", ...}`）が欲しい場合は
+> `menuconfig` → `UWB Anchor Configuration` →
+> 「Print a "type":"range" JSON line for every completed DS-TWR exchange」
+> （`CONFIG_UWB_ANCHOR_LOG_EVENTS`、既定 n）を y にしてください。
 
 `info` コマンドでも Device ID と現在のアドレスをまとめて確認できます。
 
@@ -904,10 +925,11 @@ idf.py -B build/a0002 -p /dev/cu.usbmodemXXXX flash monitor
 起動ログでアドレスを確認します:
 
 ```
-I (xxx) uwb_anchor: Phase 4 Step 2 uwb_qm33120 production anchor firmware,
-  board=M5StampS3A method=DS-TWR short_addr=0x0002 (default)
+I (xxx) uwb_anchor: uwb_anchor firmware (v2/Responder), board=M5StampS3A method=DS-TWR
+  short_addr=0x0002 (default)
 I (xxx) uwb_anchor: deviceId=0xDECA0314 (expect 0xDECA0314) chipName=... isInitialized=1
-I (xxx) uwb_anchor: begin() + PHY config OK, starting ANCHOR/DS-TWR loop (short_addr=0x0002)
+I (xxx) uwb_anchor: uwb_radio task started (core=1 prio=20 stack=8192), short_addr=0x0002
+  method=DS-TWR idle_tick_ms=20 restart_on_foreign_poll=1
 ```
 
 これを `a0003` 〜 `a0006` について繰り返します。この方法で焼いた個体は
@@ -1174,9 +1196,16 @@ W (xxx) uwb_tag: dim=2 (z_fixed=1.200m) へフォールバックしました
 
 失敗したアンカーへの即時再試行は `menuconfig` → `UWB Tag Configuration` →
 `CONFIG_UWB_TAG_RETRY_MAX`（既定2回） / `CONFIG_UWB_TAG_RETRY_DELAY_MS`
-（DS-TWR既定10ms、SS-TWR既定2ms）で設定する。DS-TWRで10ms未満にすると、
-アンカーが自身のFinal待ち窓の中で再試行のPollを聞き逃し、2回目の試行の
-失敗率が跳ね上がる（実測根拠は `docs/HANDOFF.md` §0-C「再試行の待ち時間」）。
+（既定2ms、DS-TWR・SS-TWR共通）で設定する。
+
+【2026-08-30 v2】v2 のアンカー（`uwb::Responder`、受信常時 ON。`docs/ARCHITECTURE_V2.md`）は
+Response 送信直後から受信を開き、Final 待ち中に来た再試行の Poll にも応じるため、
+DS-TWR でも既定 2ms で周期成功率 99.5% まで上がる（10msでも99.6%だが周期時間が
+延びるだけで差は誤差の範囲。実測根拠は `docs/HANDOFF.md` §0-D）。旧アンカー
+（`firmware/twr` の `respondDSRange()`。Poll待ちに200msの窓がある旧構造）と組む
+場合はこの限りでない: DS-TWRで**10ms未満にすると**、アンカーが自身のFinal待ち窓の
+中で再試行のPollを聞き逃し、2回目の試行の失敗率が跳ね上がる（実測根拠は
+`docs/HANDOFF.md` §0-C「再試行の待ち時間」）。
 
 > Lv3（EKF、移動体向けの平滑化）は既定で無効です。有効にすると `solve_us_lv3` と
 > `"lv3":{...}` が増えます（`menuconfig` → `UWB Tag Configuration` → 毎周期 Lv3 EKF も呼ぶ）。
