@@ -283,11 +283,16 @@ function handleLine(raw){
   }catch(e){ /* 未知フィールド欠落等は無視 / never throw on malformed content */ }
 }
 
+// "0x0002" と "A0002" は同じアンカー（前者はコンソール表記、後者は JSON 行表記）。
+// 旧ファームの node 行が混ざってもカードが割れないよう、A 表記へ正規化して束ねる。
+// "0x0002" and "A0002" are the same anchor (console vs JSON-line notation);
+// canonicalise to the A-form so cards never split even with old firmware.
+function canonAddr(id){ const m=/^0x([0-9A-Fa-f]{4})$/.exec(id||''); return m ? ('A'+m[1].toUpperCase()) : id; }
 function onNode(o){
-  const id = o.addr; if(!id) return;
+  const id = canonAddr(o.addr); if(!id) return;
   const prevSelf = selfAddr ? nodes.get(selfAddr) : null;
   let n = nodes.get(id); if(!n){ n={}; nodes.set(id,n); }
-  Object.assign(n, o); n._seen = performance.now();
+  Object.assign(n, o); n.addr = id; n._seen = performance.now();
   if(!selfAddr || (prevSelf && prevSelf.role!=='tag' && o.role==='tag')) selfAddr = id;
 }
 function onAnchors(o){
@@ -340,7 +345,7 @@ function onStats(o){
   }
 }
 function onAnchorStats(o){
-  const id = o.addr; if(!id) return;
+  const id = canonAddr(o.addr); if(!id) return;
   getColor(id);
   let n = nodes.get(id);
   if(!n){ n = {role:'anchor', name:id, addr:id}; nodes.set(id,n); }

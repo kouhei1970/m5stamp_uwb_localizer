@@ -524,7 +524,14 @@ extern "C" void app_main(void)
     // ため、g_shortAddr が確定したこの時点で一度だけ整形する
     // （scratchpad/NET_SPEC.md §8: name="uwb-anchor-XXXX", addr="0xXXXX"）。
     std::snprintf(g_netName, sizeof(g_netName), "uwb-anchor-%04X", static_cast<unsigned>(g_shortAddr));
-    std::snprintf(g_netAddr, sizeof(g_netAddr), "0x%04X", static_cast<unsigned>(g_shortAddr));
+    // JSON 行の世界はアンカーを "A%04X" で表す（meas/stats/anchor_stats と同じ、
+    // formatAnchorId()/shortAddrToId() の流儀）。"0x%04X" はコンソール表示用の
+    // 表記で、ここで混ぜると同じ機体がダッシュボード上で 2 枚に割れる
+    // (2026-08-31 に実機で確認)。
+    // JSON lines use "A%04X" for anchors (same as meas/stats/anchor_stats);
+    // "0x%04X" is the console notation. Mixing them split one device into
+    // two dashboard cards (observed 2026-08-31).
+    std::snprintf(g_netAddr, sizeof(g_netAddr), "A%04X", static_cast<unsigned>(g_shortAddr));
 
     // static にする理由: xTaskCreatePinnedToCore() が起こす uwb_radio タスクが
     // このオブジェクトへの生ポインタを保持し、タスクが動き続ける間ずっと
