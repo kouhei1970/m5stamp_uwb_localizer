@@ -38,3 +38,27 @@ CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 # が使えるようになる。UART0 のピン(GPIO43/44)へは出力されなくなるが、これらの
 # ボードでは元々その先に何も繋がっていない。
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# --- uwb_net（Wi-Fi + ブラウザダッシュボード + 無線コンソール）---
+# scratchpad/NET_SPEC.md §7。firmware/tag/sdkconfig.defaults と同一。
+
+# M5StampS3A は 8MB フラッシュ（esptool flash_id で実測確認済み）。factory
+# パーティションを 1M -> 3M に広げる（partitions.csv）ためフラッシュ側の
+# 上限も合わせて広げる。
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+
+# ブラウザダッシュボードの WebSocket ("/ws") に必須。
+CONFIG_HTTPD_WS_SUPPORT=y
+# esp_http_server が受け付けるリクエストヘッダの上限。既定値のままだと
+# 一部ブラウザが付ける長いヘッダ（Sec-WebSocket-Extensions 等）で
+# ハンドシェイクが弾かれることがあるため広げる。
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
+
+# lwIP の同時ソケット数上限。HTTPサーバ(最大6接続)+UDP(1)+TCPコンソール
+# (listen1+accept1)+mDNS が同時に開く分の余裕を見て既定の10から増やす。
+CONFIG_LWIP_MAX_SOCKETS=16
+# lwIP の TCP/IPタスクをコア0に固定する（uwb_net の各タスクと同じコア。
+# UWBの電波を扱うタスク（コア1、uwb_radio）に持ち込まないため）。
+CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU0=y
+# Wi-Fiドライバの内部タスクもコア0に固定する（同上の理由）。
+CONFIG_ESP_WIFI_TASK_PINNED_TO_CORE_0=y

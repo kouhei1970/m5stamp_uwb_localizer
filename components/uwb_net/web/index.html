@@ -1,0 +1,681 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>UWB ダッシュボード</title>
+<style>
+:root{
+  --surface:#fcfcfb; --page:#f9f9f7; --ink:#0b0b0b; --ink2:#52514e; --muted:#898781;
+  --grid:#e1e0d9; --axis:#c3c2b7; --border:rgba(11,11,11,.10);
+  --good:#0ca30c; --warn:#fab219; --bad:#d03b3b;
+  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100; --s5:#e87ba4; --s6:#008300; --s7:#4a3aa7; --s8:#e34948;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --surface:#1a1a19; --page:#0d0d0d; --ink:#ffffff; --ink2:#c3c2b7; --muted:#898781;
+    --grid:#2c2c2a; --axis:#383835; --border:rgba(255,255,255,.10);
+    --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --s5:#d55181; --s6:#008300; --s7:#9085e9; --s8:#e66767;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);color:var(--ink);font:13px/1.45 -apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic UI",system-ui,sans-serif}
+h1,h2,h3{margin:0;font-weight:600}
+code{font-family:ui-monospace,Menlo,Consolas,monospace}
+button,input{font:inherit;color:inherit}
+button{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 10px;cursor:pointer}
+button:hover{filter:brightness(0.97)}
+button:disabled{opacity:.45;cursor:default}
+button.active{background:var(--bad);color:#fff;border-color:var(--bad)}
+input[type=text],input:not([type]){background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:inherit}
+.muted{color:var(--muted)}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:middle}
+.dot.ok{background:var(--good)}.dot.bad{background:var(--bad)}.dot.warn{background:var(--warn)}
+
+header{position:sticky;top:0;z-index:5;background:var(--surface);border-bottom:1px solid var(--border);
+  padding:8px 14px;display:flex;flex-wrap:wrap;align-items:center;gap:6px 18px}
+header .hgroup{display:flex;align-items:baseline;gap:8px}
+header .hgroup h1{font-size:16px}
+.badge{font-size:11px;padding:1px 7px;border-radius:20px;border:1px solid var(--border);color:var(--ink2)}
+header .spacer{flex:1 1 auto}
+header .actions{display:flex;align-items:center;gap:8px}
+
+main{max-width:1360px;margin:0 auto;padding:12px;display:grid;grid-template-columns:1fr;gap:12px}
+@media (min-width:920px){ main{grid-template-columns:1fr 1fr} .full{grid-column:1/-1} }
+
+.panel{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 12px;min-width:0}
+.panel h2{font-size:13px;color:var(--ink2);margin-bottom:8px;letter-spacing:.02em}
+
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px}
+.card{border:1px solid var(--border);border-radius:8px;padding:8px 10px;transition:opacity .3s}
+.card.stale{opacity:.4}
+.card h3{font-size:12.5px;display:flex;align-items:center;gap:4px;margin-bottom:6px}
+.card h3 .muted{margin-left:auto;font-weight:400;font-size:11px}
+.card dl{display:grid;grid-template-columns:minmax(0,auto) minmax(0,1fr);gap:2px 8px;margin:0;font-size:11.5px}
+.card dt{color:var(--muted);max-width:52%}
+.card dd{margin:0;text-align:right;font-variant-numeric:tabular-nums;word-break:break-word;overflow-wrap:anywhere}
+.card dt code{font-size:10px}
+
+.twrap{overflow-x:auto;min-width:0}
+table{border-collapse:collapse;width:100%;font-size:12px;white-space:nowrap}
+th,td{padding:4px 8px;text-align:right;border-bottom:1px solid var(--border)}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--muted);font-weight:500}
+tr.disabled{opacity:.45}
+
+.legend{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:11px;color:var(--ink2);margin-bottom:4px}
+.legend span.dot{margin-right:4px}
+.chart-title{font-size:11px;margin:2px 0}
+.chart-title code{font-size:10px}
+.chart-box{height:150px;margin-bottom:10px}
+.chart-box canvas{width:100%;height:100%;display:block}
+#planBox{height:320px}
+#planBox canvas{width:100%;height:100%;display:block}
+
+#conOut{height:180px;overflow-y:auto;background:var(--page);border:1px solid var(--border);border-radius:6px;
+  padding:6px 8px;margin:0 0 6px;white-space:pre-wrap;word-break:break-word;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px}
+#conOut .err{color:var(--bad)}
+.con-in{display:flex;align-items:center;gap:6px;margin-bottom:6px}
+.con-in span{color:var(--muted);font-family:ui-monospace,Menlo,Consolas,monospace}
+.con-in input{flex:1}
+.con-quick{display:flex;flex-wrap:wrap;gap:6px}
+.con-quick button{font-size:11px;padding:4px 8px}
+
+details#rawDet summary{cursor:pointer;font-size:13px;color:var(--ink2);margin-bottom:6px}
+#rawFilter{width:200px;margin-bottom:6px}
+#rawOut{max-height:220px;overflow-y:auto;background:var(--page);border:1px solid var(--border);border-radius:6px;
+  padding:6px 8px;margin:0;white-space:pre-wrap;word-break:break-all;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:10.5px}
+</style>
+</head>
+<body>
+<header>
+  <div class="hgroup"><h1 id="devName">&mdash;</h1><span id="devRole" class="badge"></span></div>
+  <div id="hdrInfo" class="muted"></div>
+  <div id="hdrUptime" class="muted"></div>
+  <div class="spacer"></div>
+  <div><span id="connDot" class="dot warn"></span><span id="connText" class="muted">接続中&hellip;</span></div>
+  <div id="rateText" class="muted"></div>
+  <div class="actions">
+    <button id="btnRec">● 記録開始</button>
+    <button id="btnSave" disabled>保存</button>
+    <span id="recInfo" class="muted"></span>
+  </div>
+</header>
+
+<main>
+  <section class="panel full">
+    <h2>ノード</h2>
+    <div class="cards" id="cards"></div>
+  </section>
+
+  <section class="panel full">
+    <h2>アンカー一覧（タグの stats 行より）</h2>
+    <div class="twrap">
+      <table>
+        <thead><tr>
+          <th>a</th><th>att</th><th>succ</th><th>rate</th><th>retries</th><th>rescued</th>
+          <th>初回成功率</th><th>d [m]</th><th>elapsed_ms</th><th>状態</th><th>位置 p [m]</th>
+        </tr></thead>
+        <tbody id="anchorTbody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel full">
+    <h2>チャート（直近60秒）</h2>
+    <div class="legend" id="chartLegend"></div>
+    <div class="chart-title muted">距離 d <code>meas.d</code> [m]</div>
+    <div class="chart-box"><canvas id="cvDist"></canvas></div>
+    <div class="chart-title muted">成功率 <code>stats</code> [%]（太line=瞬時 細line=累積）</div>
+    <div class="chart-box"><canvas id="cvRate"></canvas></div>
+    <div class="chart-title muted">cycle_ms <code>fix.cycle_ms</code>（薄い帯=直近1秒の最大）</div>
+    <div class="chart-box"><canvas id="cvCycle"></canvas></div>
+  </section>
+
+  <section class="panel">
+    <h2>平面図</h2>
+    <div id="planBox"><canvas id="cvPlan"></canvas></div>
+  </section>
+
+  <section class="panel">
+    <h2>コンソール</h2>
+    <pre id="conOut"></pre>
+    <div class="con-in"><span>&gt;</span><input id="conIn" autocomplete="off" spellcheck="false" placeholder="コマンドを入力して Enter"></div>
+    <div class="con-quick" id="conQuick">
+      <button data-cmd="info">info</button>
+      <button data-cmd="anchor list">anchor list</button>
+      <button data-cmd="wifi">wifi</button>
+      <button data-cmd="help">help</button>
+    </div>
+  </section>
+
+  <section class="panel full">
+    <details id="rawDet">
+      <summary>生ログ <span id="rawCount" class="muted"></span></summary>
+      <input id="rawFilter" placeholder="type で絞り込み (例: meas)">
+      <pre id="rawOut"></pre>
+    </details>
+  </section>
+</main>
+
+<script>
+"use strict";
+// ---- 定数・状態 / constants & state ----
+const TAU = Math.PI*2;
+const ORDER_KEYS = ['s1','s2','s3','s4','s5','s6','s7','s8'];
+const COL = {};
+let colorHex = [];
+const anchorColorIdx = new Map(); // anchor id -> 0..7 (固定順・初出順)
+
+const nodes = new Map();          // addr -> merged node/anchor_stats fields
+let selfAddr = null;
+
+let anchorsCfg = [];               // "anchors" 行の配列
+let anchorsCfgMap = new Map();     // id -> {id,p,enabled,antenna_delay_m}
+
+const measLatest = new Map();      // a -> {d,t}
+const distSeries = new Map();      // a -> [{t,d}]
+const statsPrevByA = new Map();    // a -> {att,succ}
+const statsLatestByA = new Map();  // a -> latest stats.anchors[] entry
+const rateSeries = new Map();      // a -> [{t,inst,cum}]
+const fixAnchorsLatest = new Map();// a -> latest fix.anchors[] entry
+let fixLatest = null;
+const cycleSeries = [];            // [{t,val,band}]
+const fixTrail = [];               // [{x,y}] 最大200点
+
+const rawBuf = [];                 // [{raw,type}] 最大100件
+let recording = false, recLines = [], recBytes = 0, recCount = 0;
+let curLines = 0, curBytes = 0, rateLinesShown = 0, rateBytesShown = 0;
+const conHistory = []; let conHistIdx = 0;
+const conBuf = [];
+
+let ws = null, connState = 'connecting', reconnectTimer = null;
+
+// ---- 汎用ヘルパ / helpers ----
+function esc(s){ return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function fmtUptime(s){
+  if(s==null) return '—';
+  s = Math.floor(s);
+  const d=Math.floor(s/86400); s%=86400;
+  const h=Math.floor(s/3600); s%=3600;
+  const m=Math.floor(s/60); const sec=s%60;
+  const p=n=>String(n).padStart(2,'0');
+  return (d>0? d+'日 ':'') + `${p(h)}:${p(m)}:${p(sec)}`;
+}
+function fmtBytes(n){
+  if(n==null) return '—';
+  if(n>=1048576) return (n/1048576).toFixed(2)+' MB';
+  if(n>=1024) return (n/1024).toFixed(1)+' KB';
+  return n+' B';
+}
+function pct(n,d){ return (d>0)? (n/d*100).toFixed(1)+'%' : '—'; }
+function utf8Len(s){ return new TextEncoder().encode(s).length; }
+
+function rebuildTheme(){
+  const cs = getComputedStyle(document.documentElement);
+  ['grid','axis','muted','ink','s1','s2','s3','s4','s5','s6','s7','s8'].forEach(k=>{ COL[k]=cs.getPropertyValue('--'+k).trim(); });
+  colorHex = ORDER_KEYS.map(k=>COL[k]);
+}
+function getColor(id){
+  if(!anchorColorIdx.has(id)){
+    if(anchorColorIdx.size<8){ anchorColorIdx.set(id, anchorColorIdx.size); updateLegend(); }
+    else anchorColorIdx.set(id, -1);
+  }
+  const idx = anchorColorIdx.get(id);
+  return idx>=0 ? colorHex[idx] : COL.muted;
+}
+function updateLegend(){
+  const el = document.getElementById('chartLegend');
+  el.innerHTML = Array.from(anchorColorIdx.keys()).map(id=>
+    `<span><span class="dot" style="background:${getColor(id)}"></span>${esc(id)}</span>`).join('');
+}
+
+// ---- WebSocket 接続 / connection ----
+function connect(){
+  connState = ws ? 'reconnecting' : 'connecting';
+  let sock;
+  try{ sock = new WebSocket(`ws://${location.host}/ws`); }
+  catch(e){ scheduleReconnect(); return; }
+  ws = sock;
+  ws.onopen = ()=>{ connState='open'; };
+  ws.onmessage = onMessage;
+  ws.onclose = ()=>{ connState='reconnecting'; scheduleReconnect(); };
+  ws.onerror = ()=>{ try{ sock.close(); }catch(e){} };
+}
+function scheduleReconnect(){
+  if(reconnectTimer) return;
+  reconnectTimer = setTimeout(()=>{ reconnectTimer=null; connect(); }, 2000);
+}
+function onMessage(ev){
+  if(typeof ev.data !== 'string') return;
+  curBytes += utf8Len(ev.data);
+  const parts = ev.data.split('\n');
+  for(const raw of parts){
+    if(!raw) continue;
+    curLines++;
+    handleLine(raw);
+  }
+}
+
+// ---- 行の処理 / line handling ----
+function handleLine(raw){
+  let type = '?';
+  const m = /"type":"([a-zA-Z_]+)"/.exec(raw);
+  if(m) type = m[1];
+  rawBuf.push({raw,type});
+  if(rawBuf.length>100) rawBuf.shift();
+  if(recording){ recLines.push(raw); recBytes += utf8Len(raw)+1; recCount++; }
+  let o;
+  try{ o = JSON.parse(raw); }catch(e){ return; }
+  if(!o || typeof o!=='object') return;
+  try{
+    switch(o.type){
+      case 'node': onNode(o); break;
+      case 'anchors': onAnchors(o); break;
+      case 'meas': onMeas(o); break;
+      case 'fix': onFix(o); break;
+      case 'stats': onStats(o); break;
+      case 'anchor_stats': onAnchorStats(o); break;
+      case 'con': onCon(o); break;
+      default: break;
+    }
+  }catch(e){ /* 未知フィールド欠落等は無視 / never throw on malformed content */ }
+}
+
+function onNode(o){
+  const id = o.addr; if(!id) return;
+  const prevSelf = selfAddr ? nodes.get(selfAddr) : null;
+  let n = nodes.get(id); if(!n){ n={}; nodes.set(id,n); }
+  Object.assign(n, o); n._seen = performance.now();
+  if(!selfAddr || (prevSelf && prevSelf.role!=='tag' && o.role==='tag')) selfAddr = id;
+}
+function onAnchors(o){
+  anchorsCfg = Array.isArray(o.anchors) ? o.anchors : [];
+  anchorsCfgMap = new Map(anchorsCfg.filter(a=>a && a.id).map(a=>[a.id,a]));
+  for(const a of anchorsCfg) if(a && a.id) getColor(a.id);
+}
+function onMeas(o){
+  const t = performance.now();
+  for(const mm of (o.meas||[])){
+    if(!mm || !mm.a) continue;
+    getColor(mm.a);
+    let arr = distSeries.get(mm.a); if(!arr){ arr=[]; distSeries.set(mm.a,arr); }
+    arr.push({t, d:mm.d});
+    while(arr.length && arr[0].t < t-60000) arr.shift();
+    measLatest.set(mm.a, {d:mm.d, t});
+  }
+}
+function onFix(o){
+  const t = performance.now();
+  fixLatest = o;
+  const val = (typeof o.cycle_ms==='number') ? o.cycle_ms : 0;
+  let band = val;
+  for(let i=cycleSeries.length-1; i>=0 && cycleSeries[i].t>=t-1000; i--) if(cycleSeries[i].val>band) band=cycleSeries[i].val;
+  cycleSeries.push({t, val, band});
+  while(cycleSeries.length && cycleSeries[0].t < t-60000) cycleSeries.shift();
+  if(o.ok && Array.isArray(o.p)){
+    fixTrail.push({x:o.p[0], y:o.p[1]});
+    if(fixTrail.length>200) fixTrail.shift();
+  }
+  for(const a of (o.anchors||[])) if(a && a.a) fixAnchorsLatest.set(a.a, a);
+}
+function onStats(o){
+  const t = performance.now();
+  for(const a of (o.anchors||[])){
+    if(!a || !a.a) continue;
+    getColor(a.a);
+    const prev = statsPrevByA.get(a.a);
+    let inst = null;
+    if(prev){
+      const dAtt = a.att - prev.att, dSucc = a.succ - prev.succ;
+      if(dAtt>0) inst = Math.max(0, Math.min(100, dSucc/dAtt*100));
+    }
+    const cum = a.att>0 ? a.succ/a.att*100 : 0;
+    let arr = rateSeries.get(a.a); if(!arr){ arr=[]; rateSeries.set(a.a,arr); }
+    arr.push({t, inst, cum});
+    while(arr.length && arr[0].t < t-60000) arr.shift();
+    statsPrevByA.set(a.a, {att:a.att, succ:a.succ});
+    statsLatestByA.set(a.a, a);
+  }
+}
+function onAnchorStats(o){
+  const id = o.addr; if(!id) return;
+  getColor(id);
+  let n = nodes.get(id);
+  if(!n){ n = {role:'anchor', name:id, addr:id}; nodes.set(id,n); }
+  Object.assign(n, {
+    polls:o.polls, responses:o.responses, finals:o.finals, results:o.results,
+    restarts:o.restarts, final_timeouts:o.final_timeouts, rx_errors:o.rx_errors, tx_failures:o.tx_failures,
+    dist_n:o.dist_n, dist_mean_m:o.dist_mean_m, dist_std_m:o.dist_std_m,
+  });
+  n._seen = performance.now();
+}
+function onCon(o){
+  // "> cmd" は送信直後に sendCmd() 側で既にエコー済みなので、ここでは応答本文だけを表示する
+  // the "> cmd" echo was already printed by sendCmd() at send time; only show the reply body here
+  conPush(String(o.text||'').replace(/\n+$/,''), !!o.ret, false);
+}
+
+// ---- コンソール表示 / console panel ----
+function conPush(text, isErr, isEcho){
+  conBuf.push({t:text, e:isErr, q:isEcho});
+  if(conBuf.length>200) conBuf.shift();
+  renderCon();
+}
+function renderCon(){
+  const el = document.getElementById('conOut');
+  el.innerHTML = conBuf.map(b=>`<span${b.e?' class="err"':''}>${esc(b.t)}</span>`).join('\n');
+  el.scrollTop = el.scrollHeight;
+}
+function sendCmd(text){
+  text = (text||'').trim();
+  if(!text) return;
+  conPush('> '+text, false, true);
+  conHistory.push(text); conHistIdx = conHistory.length;
+  document.getElementById('conIn').value = '';
+  if(ws && ws.readyState===1) ws.send(JSON.stringify({cmd:text}));
+  else conPush('(未接続のため送信できません)', true, false);
+}
+
+// ---- 描画: DOM（ヘッダ・カード・表・生ログ） / DOM rendering ----
+function renderHeader(){
+  const n = selfAddr ? nodes.get(selfAddr) : null;
+  document.getElementById('devName').textContent = n && n.name ? n.name : '—';
+  document.getElementById('devRole').textContent = n ? (n.role==='tag'?'タグ':n.role==='anchor'?'アンカー':n.role||'') : '';
+  const w = (n && n.wifi) || {};
+  document.getElementById('hdrInfo').textContent = n ?
+    `${w.mode||'?'} / ${w.ssid||'-'} / ${w.ip||'-'} / RSSI ${w.rssi!=null?w.rssi:'-'} dBm` : '—';
+  document.getElementById('hdrUptime').textContent = n ? '稼働 ' + fmtUptime(n.uptime_s) : '';
+  const dot = document.getElementById('connDot');
+  const txt = document.getElementById('connText');
+  dot.className = 'dot ' + (connState==='open'?'ok':'warn');
+  txt.textContent = connState==='open' ? 'WebSocket 接続中' : (connState==='reconnecting' ? '再接続中…' : '接続中…');
+  document.getElementById('rateText').textContent = `${rateLinesShown} 行/秒 ・ ${(rateBytesShown/1024).toFixed(1)} KB/秒`;
+  document.getElementById('recInfo').textContent = recCount ? `${recCount} 行 / ${fmtBytes(recBytes)}` : '';
+  document.getElementById('btnSave').disabled = recCount===0;
+}
+function kv(label,key,val){
+  return `<dt>${esc(label)}${key?` <code>${esc(key)}</code>`:''}</dt><dd>${esc(String(val))}</dd>`;
+}
+function cardHtml(n, now){
+  const stale = !n._seen || (now-n._seen>5000);
+  const w = n.wifi || {};
+  const rows = [];
+  rows.push(kv('役割','role', n.role==='tag'?'タグ':n.role==='anchor'?'アンカー':'?'));
+  rows.push(kv('名前','name', n.name??'-'));
+  rows.push(kv('アドレス','addr', n.addr??'-'));
+  rows.push(kv('IP','ip', w.ip??'-'));
+  rows.push(kv('RSSI','rssi', w.rssi!=null? w.rssi+' dBm':'-'));
+  rows.push(kv('稼働','uptime_s', fmtUptime(n.uptime_s)));
+  rows.push(kv('空きヒープ','heap_free', n.heap_free!=null? fmtBytes(n.heap_free):'-'));
+  if(n.phy) rows.push(kv('PHY','phy', n.phy));
+  if(n.pll_coarse) rows.push(kv('PLL','pll_coarse', n.pll_coarse));
+  if(n.method) rows.push(kv('方式','method', n.method));
+  rows.push(kv('破棄','drops', n.drops??'-'));
+  rows.push(kv('WSクライアント','ws_clients', n.ws_clients??'-'));
+  rows.push(kv('UDP tx/rx','udp_tx/rx', `${n.udp_tx??'-'} / ${n.udp_rx??'-'}`));
+  if(n.role==='anchor'){
+    rows.push(kv('Poll/Resp/Final/Result','', `${n.polls??'-'} / ${n.responses??'-'} / ${n.finals??'-'} / ${n.results??'-'}`));
+    rows.push(kv('再起動/Finalタイムアウト','', `${n.restarts??'-'} / ${n.final_timeouts??'-'}`));
+    rows.push(kv('RXエラー/TX失敗','', `${n.rx_errors??'-'} / ${n.tx_failures??'-'}`));
+    rows.push(kv('Poll→Resp/Resp→Final/Result率','', `${pct(n.responses,n.polls)} / ${pct(n.finals,n.responses)} / ${pct(n.results,n.polls)}`));
+    rows.push(kv('距離','dist_mean_m', (n.dist_n? `${n.dist_mean_m.toFixed(3)} ± ${n.dist_std_m.toFixed(3)} m (n=${n.dist_n})` : '-')));
+  }
+  const dot = anchorColorIdx.has(n.addr) ? `<span class="dot" style="background:${getColor(n.addr)}"></span>` : '';
+  return `<div class="card${stale?' stale':''}"><h3>${dot}${esc(n.name||n.addr||'?')}<span class="muted">${esc(n.addr||'')}</span></h3><dl>${rows.join('')}</dl></div>`;
+}
+function renderCards(){
+  const now = performance.now();
+  const el = document.getElementById('cards');
+  el.innerHTML = Array.from(nodes.values()).map(n=>cardHtml(n,now)).join('');
+}
+function rowHtml(id){
+  const s = statsLatestByA.get(id) || {};
+  const cfg = anchorsCfgMap.get(id);
+  const m = measLatest.get(id);
+  const fa = fixAnchorsLatest.get(id);
+  const att = s.att, succ = s.succ, retries = s.retries, rescued = s.rescued;
+  const rate = pct(succ, att);
+  const first = (att>0) ? (Math.max(0,(succ-rescued))/att*100).toFixed(1)+'%' : '—';
+  const en = cfg ? cfg.enabled!==false : true;
+  const pos = (cfg && Array.isArray(cfg.p)) ? cfg.p.map(v=>Number(v).toFixed(2)).join(', ') : '—';
+  return `<tr class="${en?'':'disabled'}"><td><span class="dot" style="background:${getColor(id)}"></span>${esc(id)}</td>` +
+    `<td>${att??'—'}</td><td>${succ??'—'}</td><td>${rate}</td><td>${retries??'—'}</td><td>${rescued??'—'}</td>` +
+    `<td>${first}</td><td>${m? m.d.toFixed(3):'—'}</td><td>${(fa&&fa.elapsed_ms!=null)? fa.elapsed_ms:'—'}</td>` +
+    `<td>${en?'有効':'無効'}</td><td>${pos}</td></tr>`;
+}
+function renderAnchorTable(){
+  const order = anchorsCfg.filter(a=>a&&a.id).map(a=>a.id);
+  for(const id of statsLatestByA.keys()) if(!order.includes(id)) order.push(id);
+  document.getElementById('anchorTbody').innerHTML = order.map(rowHtml).join('');
+}
+function renderRaw(){
+  document.getElementById('rawCount').textContent = `(${rawBuf.length})`;
+  const det = document.getElementById('rawDet');
+  if(!det.open) return;
+  const f = document.getElementById('rawFilter').value.trim().toLowerCase();
+  const shown = f ? rawBuf.filter(e=>e.type.toLowerCase().includes(f)) : rawBuf;
+  document.getElementById('rawOut').textContent = shown.map(e=>e.raw).join('\n');
+}
+
+// ---- 描画: canvas チャート / chart canvases (throttled to <=10fps) ----
+function fitCanvas(cv){
+  const dpr = window.devicePixelRatio||1;
+  const r = cv.getBoundingClientRect();
+  if(r.width<=0||r.height<=0) return null;
+  const W = Math.max(1,Math.round(r.width*dpr)), H = Math.max(1,Math.round(r.height*dpr));
+  if(cv.width!==W||cv.height!==H){ cv.width=W; cv.height=H; }
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  return {ctx, w:r.width, h:r.height};
+}
+function drawAxes(ctx,w,h,ymin,ymax,windowMs,now,yFmt){
+  const padL=34, padR=36, padT=6, padB=14;
+  const iw=Math.max(1,w-padL-padR), ih=Math.max(1,h-padT-padB);
+  ctx.clearRect(0,0,w,h);
+  ctx.font='10px system-ui,sans-serif';
+  for(let i=0;i<=4;i++){
+    const v = ymin+(ymax-ymin)*i/4;
+    const y = padT+ih-(ih*i/4);
+    ctx.strokeStyle=COL.grid; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(padL+iw,y); ctx.stroke();
+    ctx.fillStyle=COL.muted; ctx.textAlign='right'; ctx.textBaseline='middle';
+    ctx.fillText(yFmt(v), padL-4, y);
+  }
+  ctx.strokeStyle=COL.axis;
+  ctx.beginPath(); ctx.moveTo(padL,padT); ctx.lineTo(padL,padT+ih); ctx.lineTo(padL+iw,padT+ih); ctx.stroke();
+  ctx.fillStyle=COL.muted; ctx.textAlign='left'; ctx.textBaseline='top';
+  ctx.fillText('-60s', padL, padT+ih+2);
+  ctx.textAlign='right';
+  ctx.fillText('now', padL+iw, padT+ih+2);
+  const toPx=(t,val)=>[padL+(t-(now-windowMs))/windowMs*iw, padT+ih-((val-ymin)/((ymax-ymin)||1))*ih];
+  return {toPx, padL, iw, padT, ih};
+}
+function drawDist(){
+  const fc = fitCanvas(document.getElementById('cvDist')); if(!fc) return;
+  const {ctx,w,h} = fc, now = performance.now(), windowMs = 60000;
+  let ymax = 0.5;
+  for(const arr of distSeries.values()) for(const p of arr) if(p.t>=now-windowMs && p.d>ymax) ymax=p.d;
+  ymax = Math.ceil(ymax*1.15*10)/10;
+  const {toPx,padL,iw} = drawAxes(ctx,w,h,0,ymax,windowMs,now,v=>v.toFixed(1));
+  for(const [id,arr] of distSeries){
+    const col = getColor(id);
+    ctx.strokeStyle=col; ctx.lineWidth=1.5; ctx.beginPath();
+    let started=false, last=null;
+    for(const p of arr){
+      if(p.t<now-windowMs) continue;
+      const [x,y]=toPx(p.t,p.d);
+      if(!started){ ctx.moveTo(x,y); started=true; } else ctx.lineTo(x,y);
+      last=[x,y,p.d];
+    }
+    ctx.stroke();
+    if(last){ ctx.fillStyle=col; ctx.font='10px system-ui'; ctx.textAlign='left'; ctx.textBaseline='middle';
+      ctx.fillText(last[2].toFixed(2), Math.min(last[0]+3,padL+iw-2), last[1]); }
+  }
+}
+function drawRate(){
+  const fc = fitCanvas(document.getElementById('cvRate')); if(!fc) return;
+  const {ctx,w,h} = fc, now = performance.now(), windowMs = 60000;
+  const {toPx} = drawAxes(ctx,w,h,0,100,windowMs,now,v=>v.toFixed(0));
+  for(const [id,arr] of rateSeries){
+    const col = getColor(id);
+    ctx.globalAlpha=0.45; ctx.strokeStyle=col; ctx.lineWidth=1; ctx.beginPath();
+    let started=false;
+    for(const p of arr){ if(p.t<now-windowMs) continue; const [x,y]=toPx(p.t,p.cum); if(!started){ctx.moveTo(x,y);started=true;} else ctx.lineTo(x,y); }
+    ctx.stroke(); ctx.globalAlpha=1;
+    ctx.strokeStyle=col; ctx.lineWidth=2; ctx.beginPath();
+    started=false; let last=null;
+    for(const p of arr){
+      if(p.t<now-windowMs || p.inst==null){ started=false; continue; }
+      const [x,y]=toPx(p.t,p.inst);
+      if(!started){ ctx.moveTo(x,y); started=true; } else ctx.lineTo(x,y);
+      last=[x,y,p.inst];
+    }
+    ctx.stroke();
+    if(last){ ctx.fillStyle=col; ctx.font='10px system-ui'; ctx.textAlign='left'; ctx.textBaseline='middle';
+      ctx.fillText(last[2].toFixed(0)+'%', last[0]+3, last[1]); }
+  }
+}
+function drawCycle(){
+  const fc = fitCanvas(document.getElementById('cvCycle')); if(!fc) return;
+  const {ctx,w,h} = fc, now = performance.now(), windowMs = 60000;
+  let ymax = 20;
+  for(const p of cycleSeries) if(p.t>=now-windowMs && p.band>ymax) ymax=p.band;
+  ymax = Math.ceil(ymax*1.15);
+  const {toPx,padT,ih} = drawAxes(ctx,w,h,0,ymax,windowMs,now,v=>v.toFixed(0));
+  const pts = cycleSeries.filter(p=>p.t>=now-windowMs);
+  if(pts.length){
+    ctx.fillStyle=COL.s1; ctx.globalAlpha=0.15; ctx.beginPath();
+    pts.forEach((p,i)=>{ const [x,y]=toPx(p.t,p.band); if(i===0){ ctx.moveTo(x,padT+ih); ctx.lineTo(x,y); } else ctx.lineTo(x,y); if(i===pts.length-1) ctx.lineTo(x,padT+ih); });
+    ctx.closePath(); ctx.fill(); ctx.globalAlpha=1;
+    ctx.strokeStyle=COL.s1; ctx.lineWidth=1.5; ctx.beginPath();
+    let last=null;
+    pts.forEach((p,i)=>{ const [x,y]=toPx(p.t,p.val); if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y); last=[x,y,p.val]; });
+    ctx.stroke();
+    if(last){ ctx.fillStyle=COL.s1; ctx.font='10px system-ui'; ctx.textAlign='left'; ctx.textBaseline='middle';
+      ctx.fillText(last[2].toFixed(0)+' ms', last[0]+3, last[1]); }
+  }
+}
+function drawPlan(){
+  const fc = fitCanvas(document.getElementById('cvPlan')); if(!fc) return;
+  const {ctx,w,h} = fc;
+  ctx.clearRect(0,0,w,h);
+  const pad = 26;
+  let xs=[0,1], ys=[0,1];
+  const validAnchors = anchorsCfg.filter(a=>a && Array.isArray(a.p));
+  if(validAnchors.length){ xs=[]; ys=[]; }
+  for(const a of validAnchors){
+    xs.push(a.p[0]); ys.push(a.p[1]);
+    const m = measLatest.get(a.id);
+    if(m){ xs.push(a.p[0]-m.d, a.p[0]+m.d); ys.push(a.p[1]-m.d, a.p[1]+m.d); }
+  }
+  for(const p of fixTrail){ xs.push(p.x); ys.push(p.y); }
+  let minX=Math.min(...xs)-0.5, maxX=Math.max(...xs)+0.5, minY=Math.min(...ys)-0.5, maxY=Math.max(...ys)+0.5;
+  if(maxX-minX<1){ const c=(maxX+minX)/2; minX=c-0.5; maxX=c+0.5; }
+  if(maxY-minY<1){ const c=(maxY+minY)/2; minY=c-0.5; maxY=c+0.5; }
+  const iw=w-pad*2, ih=h-pad*2;
+  const scale = Math.max(0.001, Math.min(iw/(maxX-minX), ih/(maxY-minY)));
+  const ox = pad+(iw-(maxX-minX)*scale)/2, oy = pad+(ih-(maxY-minY)*scale)/2;
+  const toPx=(x,y)=>[ox+(x-minX)*scale, h-oy-(y-minY)*scale];
+
+  ctx.strokeStyle=COL.grid; ctx.lineWidth=1; ctx.font='9px system-ui'; ctx.fillStyle=COL.muted;
+  for(let x=Math.ceil(minX); x<=Math.floor(maxX); x++){
+    const [px] = toPx(x,0);
+    ctx.beginPath(); ctx.moveTo(px,oy); ctx.lineTo(px,h-oy); ctx.stroke();
+    ctx.textAlign='center'; ctx.textBaseline='top'; ctx.fillText(String(x), px, h-oy+2);
+  }
+  for(let y=Math.ceil(minY); y<=Math.floor(maxY); y++){
+    const [,py] = toPx(0,y);
+    ctx.beginPath(); ctx.moveTo(ox,py); ctx.lineTo(w-ox,py); ctx.stroke();
+    ctx.textAlign='right'; ctx.textBaseline='middle'; ctx.fillText(String(y), ox-3, py);
+  }
+  ctx.fillStyle=COL.muted; ctx.textAlign='center'; ctx.textBaseline='alphabetic'; ctx.fillText('x [m]', w/2, h-8);
+  ctx.save(); ctx.translate(9,h/2); ctx.rotate(-Math.PI/2); ctx.textAlign='center'; ctx.fillText('y [m]',0,0); ctx.restore();
+
+  for(const a of validAnchors){
+    const m = measLatest.get(a.id); if(!m) continue;
+    const [cx,cy] = toPx(a.p[0],a.p[1]);
+    ctx.strokeStyle=getColor(a.id); ctx.globalAlpha=0.25; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.arc(cx,cy,m.d*scale,0,TAU); ctx.stroke(); ctx.globalAlpha=1;
+  }
+  if(fixTrail.length>1){
+    ctx.strokeStyle=COL.ink; ctx.globalAlpha=0.3; ctx.lineWidth=1.5; ctx.beginPath();
+    fixTrail.forEach((p,i)=>{ const [x,y]=toPx(p.x,p.y); if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y); });
+    ctx.stroke(); ctx.globalAlpha=1;
+  }
+  for(const a of validAnchors){
+    const [x,y] = toPx(a.p[0],a.p[1]);
+    const enabled = a.enabled!==false;
+    ctx.fillStyle = enabled ? getColor(a.id) : COL.muted;
+    ctx.beginPath(); ctx.arc(x,y,4,0,TAU); ctx.fill();
+    ctx.fillStyle = enabled ? COL.ink : COL.muted;
+    ctx.font='10px system-ui'; ctx.textAlign='left'; ctx.textBaseline='bottom';
+    ctx.fillText(a.id, x+6, y-4);
+  }
+  if(fixLatest && fixLatest.ok && Array.isArray(fixLatest.p)){
+    const [x,y] = toPx(fixLatest.p[0], fixLatest.p[1]);
+    ctx.strokeStyle=COL.ink; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.moveTo(x-7,y); ctx.lineTo(x+7,y); ctx.moveTo(x,y-7); ctx.lineTo(x,y+7); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x,y,4,0,TAU); ctx.fillStyle=COL.ink; ctx.fill();
+  }
+}
+
+// ---- 更新ループ / update loops ----
+let lastDraw = 0;
+function tick(ts){
+  if(ts - lastDraw >= 100){
+    lastDraw = ts;
+    drawDist(); drawRate(); drawCycle(); drawPlan();
+  }
+  requestAnimationFrame(tick);
+}
+function uiTick(){
+  renderHeader(); renderCards(); renderAnchorTable(); renderRaw();
+}
+function rateTick(){
+  rateLinesShown = curLines; rateBytesShown = curBytes;
+  curLines = 0; curBytes = 0;
+}
+
+// ---- UI 配線 / UI wiring ----
+document.getElementById('btnRec').addEventListener('click', ()=>{
+  recording = !recording;
+  const b = document.getElementById('btnRec');
+  if(recording){ recLines=[]; recBytes=0; recCount=0; b.textContent='● 記録停止'; b.classList.add('active'); }
+  else { b.textContent='● 記録開始'; b.classList.remove('active'); }
+});
+document.getElementById('btnSave').addEventListener('click', ()=>{
+  if(!recCount) return;
+  const n = selfAddr ? nodes.get(selfAddr) : null;
+  const name = (n && n.name) ? n.name : 'device';
+  const d = new Date(); const p = x=>String(x).padStart(2,'0');
+  const fname = `uwb_${name}_${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.jsonl`;
+  const blob = new Blob([recLines.join('\n')+'\n'], {type:'application/x-ndjson'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = fname; document.body.appendChild(a); a.click();
+  setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(url); }, 1000);
+});
+document.getElementById('conIn').addEventListener('keydown', e=>{
+  if(e.key==='Enter'){ sendCmd(e.target.value); }
+  else if(e.key==='ArrowUp'){ e.preventDefault(); if(conHistory.length){ conHistIdx=Math.max(0,conHistIdx-1); e.target.value=conHistory[conHistIdx]||''; } }
+  else if(e.key==='ArrowDown'){ e.preventDefault(); if(conHistory.length){ conHistIdx=Math.min(conHistory.length,conHistIdx+1); e.target.value=conHistory[conHistIdx]||''; } }
+});
+document.getElementById('conQuick').addEventListener('click', e=>{
+  const c = e.target.dataset && e.target.dataset.cmd;
+  if(c) sendCmd(c);
+});
+document.getElementById('rawFilter').addEventListener('input', renderRaw);
+document.getElementById('rawDet').addEventListener('toggle', renderRaw);
+
+// ---- 初期化 / init ----
+rebuildTheme();
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', rebuildTheme);
+connect();
+requestAnimationFrame(tick);
+setInterval(uiTick, 500);
+setInterval(rateTick, 1000);
+</script>
+</body>
+</html>

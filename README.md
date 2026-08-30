@@ -51,6 +51,7 @@
 | **シリアルコンソールによる実行時設定**（アンカーのアドレス・座標を NVS に保存。再ビルド不要） | 実装済み（実機未検証） |
 | **IRQ 駆動**（アンカー側。既定は無効） | 実装済み（**極性が実機未検証**。[`docs/IRQ_POLICY.md`](docs/IRQ_POLICY.md)） |
 | **TWR 遅延プリセットと版不一致の自動検出** | 実装済み（[`docs/TIMING_PRESETS.md`](docs/TIMING_PRESETS.md)） |
+| **Wi-Fi ブラウザダッシュボード + 無線コンソール**（HTTP/WebSocket、TCP コンソール） | 実装済み（実機確認: UWB 測距への悪影響なし。ブラウザ側の動作確認は保留。[`docs/NET_DASHBOARD.md`](docs/NET_DASHBOARD.md)） |
 | ch9 PLL 再校正 / NLOS 判定 | **未実装**（[§既知の制約](docs/GETTING_STARTED.md#limitations)） |
 
 ---
@@ -225,6 +226,7 @@ m5stamp_uwb_localizer/
 ├── docs/
 │   ├── README.md            ★ ドキュメント索引（ここから探す）
 │   ├── GETTING_STARTED.md   ★ 買ってから測位が出るまでの完全手順
+│   ├── NET_DASHBOARD.md     Wi-Fi ダッシュボード・無線コンソール（uwb_net）の使い方
 │   ├── EXPERIMENT_PLAN.md   ★ 実機到着後の実験計画とフラグ有効化の順序
 │   ├── UWB_PRIMER.md        ★ UWB 入門（なぜ電波で cm が測れるのか）
 │   ├── UWB_ALGORITHMS.md    測位アルゴリズムの導出（上流からの移植・改訂版）

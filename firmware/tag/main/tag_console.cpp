@@ -59,6 +59,7 @@
 #include "freertos/semphr.h"
 
 #include "uwb_cfgstore.hpp"
+#include "uwb_net.hpp"
 
 namespace tagapp {
 
@@ -820,6 +821,12 @@ esp_err_t consoleStart()
 
     esp_console_register_help_command();
     registerCommands();
+    // "wifi" コマンドをこの esp_console のコマンド一覧へ追加登録する
+    // （uwb_net.hpp 冒頭コメント §1・scratchpad/NET_SPEC.md §8）。ここで
+    // 登録した内容は USB シリアルの REPL だけでなく、uwb_net のブラウザ
+    // WebSocket / TCP コンソール（同じ esp_console_run() 経由）からも
+    // そのまま呼べる。CONFIG_UWB_NET_ENABLE=n のときは no-op。
+    uwb::net::registerConsoleCommands();
 
 #if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
     esp_console_dev_usb_serial_jtag_config_t devCfg = ESP_CONSOLE_DEV_USB_SERIAL_JTAG_CONFIG_DEFAULT();

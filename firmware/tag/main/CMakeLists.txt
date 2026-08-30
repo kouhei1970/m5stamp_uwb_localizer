@@ -38,4 +38,6 @@ idf_component_register(
         uwb_cfgstore
         # シリアルコンソール（linenoise + argtable3）。上のコメント参照。
         console
+        # Wi-Fi + ブラウザダッシュボード + 無線コンソール（scratchpad/NET_SPEC.md）。
+        uwb_net
 )

@@ -1,0 +1,13 @@
+# components/uwb_net の外部依存（ESP-IDF Component Manager）。
+# External dependency for components/uwb_net (ESP-IDF Component Manager).
+#
+# mDNS（"<name>.local" での名前解決、uwb_net_wifi.cpp）は ESP-IDF 本体には
+# 含まれないマネージド・コンポーネントなので、REQUIRES に書くだけでは
+# 取得されない。ここに書いておくと `idf.py build`（内部で
+# `idf.py reconfigure` 相当のコンポーネントマネージャ処理）が
+# managed_components/espressif__mdns/ へ自動的に取得し、以後は
+# CMakeLists.txt の REQUIRES に "mdns" と書くだけで通常のコンポーネントと
+# 同じように使える（scratchpad/NET_SPEC.md §7 の指定どおり）。
+dependencies:
+  idf: ">=5.5"
+  espressif/mdns: "^1.4.0"

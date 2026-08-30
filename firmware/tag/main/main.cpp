@@ -67,6 +67,13 @@
 #include "tag_console.hpp"
 #endif
 
+// Wi-Fi + ブラウザダッシュボード + 無線コンソール（components/uwb_net）。
+// CONFIG_UWB_NET_ENABLE=n でも公開関数は no-op になるだけなので、この
+// #include と下の呼び出しは常に有効にしてよい（uwb_net.hpp 冒頭コメント）。
+// Wi-Fi + browser dashboard + remote console. Safe to include/call
+// unconditionally - every public function is a no-op when disabled.
+#include "uwb_net.hpp"
+
 #if CONFIG_UWB_TAG_BOARD_ATOMS3
 #include "boards/atoms3.h"
 #define BOARD_UWB_PORT_CONFIG BOARD_ATOMS3_UWB_PORT_CONFIG
@@ -111,6 +118,54 @@ static constexpr uwb::TimingProfile TIMING_PROFILE = uwb::TimingProfile::Polling
  * PollingBoth when the IRQ line turns out to be dead, so the compile-time
  * TIMING_PROFILE must not be used directly. */
 static uwb::TimingProfile g_effectiveTimingProfile = TIMING_PROFILE;
+
+/* ==================================================================== *
+ * uwb_net（components/uwb_net）の "node" 行へ載せる role固有情報
+ * ==================================================================== *
+ * uwb::net::Config::statusFn はネットワークタスク（コア0）から1秒ごとに
+ * 呼ばれるコールバックで、電波（UWBチップ）を一切触ってはいけない
+ * （scratchpad/NET_SPEC.md §8）。そのため「phy:」起動ログと同じ値を、
+ * 起動時に一度だけここの静的バッファへ整形しておき、statusFn はそれを
+ * 読むだけにする。
+ *
+ * Qm33120::logPhy() が読む Impl::applied_phy への公開アクセサは無い
+ * （uwb_qm33120.hpp logPhy() コメント参照）。本ファームは
+ * uwb::phyConfigFromKconfig() が channel だけでなく全項目を明示指定するため、
+ * begin() に渡した要求値（下の `phy` ローカル変数）と実際に適用された値は
+ * 一致する（同コメントの「channelだけを変えた場合に限り異なる」の対象外）。 */
+static char g_netPhyStr[40]       = "";
+static char g_netPllCoarseStr[8] = "";
+
+/** uwb_qm33120_phy_kconfig.cpp のファイル内 pacSizeCount() と同じ対応表
+ *  （非公開のためログ表示用にここで複製する）。 */
+static unsigned pacSizeCountForNet(uwb::PacSize pac)
+{
+    switch (pac) {
+    case uwb::PacSize::Pac4:  return 4;
+    case uwb::PacSize::Pac8:  return 8;
+    case uwb::PacSize::Pac16: return 16;
+    case uwb::PacSize::Pac32: return 32;
+    }
+    return 0;
+}
+
+/** uwb::net::Config::statusFn 本体。"node" 行へ
+ *  `"phy":"...","pll_coarse":"...","method":"...","retry_max":N,"retry_delay_ms":N`
+ *  を追記する（先頭カンマ・波括弧なし。uwb_net.hpp StatusJsonFn のコメント参照）。 */
+static size_t tagNetStatus(char* buf, size_t cap, void* /*user*/)
+{
+    const int n = std::snprintf(
+        buf, cap,
+        "\"phy\":\"%s\",\"pll_coarse\":\"%s\",\"method\":\"%s\",\"retry_max\":%d,\"retry_delay_ms\":%d",
+        g_netPhyStr, g_netPllCoarseStr,
+#if CONFIG_UWB_TAG_METHOD_DS
+        "DS",
+#else
+        "SS",
+#endif
+        static_cast<int>(CONFIG_UWB_TAG_RETRY_MAX), static_cast<int>(CONFIG_UWB_TAG_RETRY_DELAY_MS));
+    return (n > 0) ? static_cast<size_t>(n) : 0;
+}
 
 /* --- ネットワーク共通パラメータ（firmware/anchor と揃えること） --- */
 static constexpr uint16_t PAN_ID          = 0xDECA;
@@ -325,6 +380,7 @@ static void printAnchorsLine(const uwb::AnchorTable& table)
     }
     jsonAppendClose(buf, JSON_BUF_SIZE, &off);
     std::fputs(buf, stdout);
+    uwb::net::publishLine(buf, off);
 }
 
 /** 毎エポック出す "type":"meas" 行（JsonLinesHal がそのまま読める標準形）。
@@ -353,6 +409,7 @@ static void printMeasLine(double t, const uwb::AnchorTable& table, const uwb::Ra
     }
     jsonAppendClose(buf, JSON_BUF_SIZE, &off);
     std::fputs(buf, stdout);
+    uwb::net::publishLine(buf, off);
 }
 
 /** PositionResult の中身を（波括弧なしで）キー:値の並びとして書く。
@@ -443,6 +500,7 @@ static void printFixLine(double t, uint32_t cycleMs, const uwb::AnchorTable& tab
     }
     jsonAppendClose(buf, JSON_BUF_SIZE, &off);
     std::fputs(buf, stdout);
+    uwb::net::publishLine(buf, off);
 }
 
 /**
@@ -481,6 +539,7 @@ static void printStatsLine(double t, const uwb::AnchorTable& table, const uwb::R
     }
     jsonAppendClose(buf, JSON_BUF_SIZE, &off);
     std::fputs(buf, stdout);
+    uwb::net::publishLine(buf, off);
 }
 
 /* ==================================================================== *
@@ -755,6 +814,22 @@ extern "C" void app_main(void)
     // UWB_PHY_PLL_COARSE_MODE=Auto: no forcing call - the logCal() line
     // above already shows the chip's own auto-calibration result.
 
+    // uwb_net の "node" 行用に、起動時に決まったPHY/PLL粗調整の要約を
+    // 一度だけ静的バッファへ書いておく（このファイル冒頭の tagNetStatus()
+    // コメント参照。ネットワークタスクからは電波を一切触らない）。
+    std::snprintf(g_netPhyStr, sizeof(g_netPhyStr), "%s/pre%u/pac%u/ch%u",
+                  (phy.dataRate == uwb::DataRate::Rate850K) ? "850k" : "6m8",
+                  static_cast<unsigned>(phy.preambleLength), pacSizeCountForNet(phy.pacSize),
+                  static_cast<unsigned>(phy.channel));
+#if CONFIG_UWB_PHY_PLL_COARSE_MODE_FIXED
+    std::snprintf(g_netPllCoarseStr, sizeof(g_netPllCoarseStr), "0x%02X",
+                  static_cast<unsigned>(CONFIG_UWB_PHY_PLL_COARSE_CH9));
+#elif CONFIG_UWB_PHY_PLL_COARSE_MODE_OTP
+    std::snprintf(g_netPllCoarseStr, sizeof(g_netPllCoarseStr), "otp");
+#else
+    std::snprintf(g_netPllCoarseStr, sizeof(g_netPllCoarseStr), "auto");
+#endif
+
     // init() may have downgraded the requested TIMING_PROFILE to PollingBoth
     // if the IRQ line turned out to be dead (Qm33120::verifyIrqLine()). Carry
     // the profile that was actually applied forward from here on.
@@ -920,9 +995,33 @@ extern "C" void app_main(void)
         ESP_LOGE(TAG, "uwb_log タスクの起動に失敗しました。JSON Lines / 診断ログは出ません");
     }
 
+    /* --- uwb_net（Wi-Fi + ブラウザダッシュボード + 無線コンソール）を起動する ---
+     * UWBの初期化・測位開始が済んだ後に呼ぶ（uwb_net.hpp 冒頭コメント）。
+     * 失敗してもUSBシリアルでの運用・測位そのものは継続するので、ログだけ
+     * 出して先へ進む。 */
+    {
+        uwb::net::Config netCfg;
+        netCfg.role                    = uwb::net::Role::Tag;
+        netCfg.name                     = "uwb-tag";
+        netCfg.addr                     = "tag0";
+        netCfg.aggregate                = true;  // アンカーからのUDPを自分の配信へ混ぜる
+        netCfg.forward                   = false; // タグ自身はUDPで送らない
+        netCfg.httpPort                 = static_cast<uint16_t>(CONFIG_UWB_NET_HTTP_PORT);
+        netCfg.consolePort              = static_cast<uint16_t>(CONFIG_UWB_NET_CONSOLE_PORT);
+        netCfg.udpPort                   = static_cast<uint16_t>(CONFIG_UWB_NET_UDP_PORT);
+        netCfg.highRateMinIntervalMs = static_cast<uint32_t>(CONFIG_UWB_NET_HIGHRATE_MIN_INTERVAL_MS);
+        netCfg.statusFn                 = &tagNetStatus;
+        netCfg.statusUser               = nullptr;
+        const esp_err_t netErr = uwb::net::start(netCfg);
+        if (netErr != ESP_OK) {
+            ESP_LOGE(TAG, "uwb_net の起動に失敗しました (err=%s)。JSON出力・測位は継続します",
+                     esp_err_to_name(netErr));
+        }
+    }
+
     // セットアップはここまで。測距・測位（uwb_ranging_svc タスク）・
-    // JSON出力（uwb_log タスク）・コンソール（REPLタスク）は、それぞれ
-    // 自前のタスクで動き続けるので、app_main は return してよい
-    // （ESP-IDF は app_main のタスクスタックを回収する）。
+    // JSON出力（uwb_log タスク）・コンソール（REPLタスク）・uwb_net の
+    // 各タスクは、それぞれ自前のタスクで動き続けるので、app_main は
+    // return してよい（ESP-IDF は app_main のタスクスタックを回収する）。
     ESP_LOGI(TAG, "setup complete: uwb_ranging_svc + uwb_log tasks running");
 }

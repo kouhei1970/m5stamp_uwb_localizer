@@ -1,0 +1,92 @@
+# components/uwb_net 共通 Kconfig
+#
+# ESP-IDF はコンポーネントディレクトリ直下の `Kconfig` を自動的に取り込み、
+# "Component config" メニューの下に出す（firmware/*/main/Kconfig.projbuild
+# 側から include する必要は無い。components/uwb_qm33120/Kconfig と同じ流儀）。
+
+menu "UWB Network (Wi-Fi dashboard)"
+
+    config UWB_NET_ENABLE
+        bool "Enable uwb_net (Wi-Fi + browser dashboard + remote console)"
+        default y
+        help
+            n にすると uwb_net.hpp の公開関数
+            (start/publishLine/isStarted/registerConsoleCommands) はすべて
+            no-op になり、Wi-Fi・HTTP・UDP・TCP コンソールを一切起動しない
+            （scratchpad/NET_SPEC.md §7）。フラッシュ書き込みは既存の
+            USB-Serial/JTAG シリアルコンソールと JSON Lines 出力のみで運用
+            したい場合や、Wi-Fi 由来の消費電力・干渉を避けたい場合に使う。
+
+    # 以下のオプションはあえて "depends on UWB_NET_ENABLE" を付けていない:
+    # UWB_NET_ENABLE=n でも CONFIG_UWB_NET_* の #define 自体は常に生成されて
+    # いてほしい（firmware/tag, firmware/anchor の main.cpp は uwb_net.hpp の
+    # 設計方針どおり #if で分岐せず常に同じコードを書くため、これらの値を
+    # 無条件に参照する。ENABLE=n のときは値そのものが使われないだけ）。
+
+    config UWB_NET_AP_PASSWORD
+        string "SoftAP password"
+        default "uwb-localizer"
+        help
+            NVS に有効な Wi-Fi 認証情報が無い場合（買ったばかり、または
+            "wifi clear" 実行後）に立ち上げる SoftAP の WPA2 パスワード。
+            SSID は機体名（"uwb-tag" / "uwb-anchor-XXXX"）そのもの。
+
+    config UWB_NET_AP_CHANNEL
+        int "SoftAP channel"
+        range 1 13
+        default 1
+        help
+            SoftAP のチャネル。UWB（ch9, 3.5〜6.5GHz 帯の一部を含む UWB
+            チャネル）とは周波数帯が異なる 2.4GHz Wi-Fi なので、UWB 測距へ
+            の直接の干渉は無い。
+
+    config UWB_NET_HTTP_PORT
+        int "HTTP port"
+        range 1 65535
+        default 80
+        help
+            ブラウザ用ダッシュボード（"/"）と WebSocket（"/ws"）を出す
+            ポート。
+
+    config UWB_NET_CONSOLE_PORT
+        int "TCP console port"
+        range 1 65535
+        default 23
+        help
+            USB を挿さずに Wi-Fi 経由でシリアルコンソール相当の操作をする
+            ための平文 TCP コンソール（1 クライアントのみ）。
+
+    config UWB_NET_UDP_PORT
+        int "UDP broadcast/aggregate port"
+        range 1 65535
+        default 5006
+        help
+            アンカー（forward=true）がこのポートへ JSON Lines を
+            ブロードキャストし、タグ（aggregate=true）がこのポートで
+            受信して自分の配信へ混ぜる。
+
+    config UWB_NET_HIGHRATE_MIN_INTERVAL_MS
+        int "High-rate line decimation interval [ms]"
+        default 50
+        help
+            "meas" / "fix" / "range" 行をネットワーク側へ配信する最短間隔。
+            0 だと間引きなし（UWB 側の生の頻度のまま、~100Hz でブラウザ・
+            UDP・TCP へ流れる）。USB シリアルの JSON Lines 出力そのものは
+            この設定の影響を受けない（間引きは publishLine() の中、
+            つまりネットワーク側だけの経路にのみ掛かる）。
+
+    config UWB_NET_RING_BYTES
+        int "Line ring buffer size [bytes]"
+        default 12288
+        help
+            配信待ちの JSON Lines を溜めるリングバッファのサイズ。溢れた
+            行は捨てられ "node" 行の "drops" に計上される（ブロックはしない）。
+
+    config UWB_NET_MDNS
+        bool "Enable mDNS (<name>.local)"
+        default y
+        help
+            n にすると mDNS を起動しない（IP アドレス直打ちでのみ
+            ダッシュボードへアクセスできる）。
+
+endmenu

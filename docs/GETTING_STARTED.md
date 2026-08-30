@@ -1321,6 +1321,48 @@ if (service.getLatest(r) && r.seq != lastSeq) {  // seq の変化で新しい周
 （`uxTaskGetStackHighWaterMark()`）を診断ログへ1回出します。2KB を切っていたら
 上のスタックサイズを上げてください。
 
+<a id="net-dashboard"></a>
+
+### 8.7 Wi-Fi でブラウザから見る（`uwb_net`）
+
+ここまででタグ（[8.1](#run-tag)）とアンカー（[6](#anchors5)）の両方が USB で
+動いていれば、**Wi-Fi 経由でブラウザから測距・測位の状態を見られる**ようになります。
+USB を挿したまま設定し、その後はモバイルバッテリ給電 + 無線だけで運用できます。
+
+**【重要】このリポジトリを新しく `pull` した直後は、`uwb_net` 追加に伴う
+フラッシュサイズ・パーティション変更（8 MiB フラッシュ・factory パーティション
+1 MiB → 3 MiB）を反映させるため、[6.2](#anchors5-console) と同じ理由で
+`firmware/tag/sdkconfig` と `firmware/anchor/sdkconfig` を必ず作り直してください。**
+
+```sh
+rm -f firmware/tag/sdkconfig firmware/anchor/sdkconfig
+```
+
+あとは通常どおりビルド・書き込みし（初回ビルドは mDNS 用のマネージド・
+コンポーネント取得にインターネット接続が必要です）、コンソールから Wi-Fi を設定します。
+
+```sh
+cd firmware/tag && idf.py build && idf.py -p /dev/cu.usbmodemXXXX flash monitor
+```
+
+```
+uwb-tag> wifi set <ルーターのSSID> <パスワード>
+```
+
+起動ログ（または再起動後）の次の行に、開くべき URL がそのまま出ます。
+
+```
+I (xxx) uwb_net_wifi: net: mode=sta ssid=... ip=192.168.2.50 url=http://192.168.2.50/ mdns=http://uwb-tag.local/
+```
+
+この URL（または mDNS が使える環境なら `http://uwb-tag.local/`）をブラウザで開くと、
+タグと（UDP 集約された）全アンカーの数値・グラフ・平面図・無線コンソールが
+1 画面で見られます。トポロジの選び方（ルーター経由 vs タグを親機にする）・
+`wifi` コマンドの全リファレンス・ダッシュボードの各パネルの意味・データの
+間引き（`meas`/`fix` はネットワーク経路のみ最大20Hzに間引かれる。USB
+シリアルの記録がフルレートの一次資料）・既知の制約は
+**[`docs/NET_DASHBOARD.md`](NET_DASHBOARD.md) に完全な説明があります。**
+
 ---
 
 <a id="antenna-delay"></a>

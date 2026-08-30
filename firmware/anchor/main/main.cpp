@@ -79,6 +79,11 @@
 #include "anchor_console.hpp"
 #endif
 
+// Wi-Fi + ブラウザダッシュボード + 無線コンソール（components/uwb_net）。
+// CONFIG_UWB_NET_ENABLE=n でも公開関数は no-op になるだけなので、この
+// #include と下の呼び出しは常に有効にしてよい（uwb_net.hpp 冒頭コメント）。
+#include "uwb_net.hpp"
+
 #if CONFIG_UWB_ANCHOR_BOARD_ATOMS3
 #include "boards/atoms3.h"
 #define BOARD_UWB_PORT_CONFIG BOARD_ATOMS3_UWB_PORT_CONFIG
@@ -134,6 +139,51 @@ static constexpr uint16_t ANCHOR_SHORT_ADDR_DEFAULT = CONFIG_UWB_ANCHOR_SHORT_AD
 // ResponderConfig::shortAddr へコピーされ、radio タスク開始後は変わらない
 // （このファイル冒頭のコメント「v2 での変更点」参照）。
 static uint16_t g_shortAddr = ANCHOR_SHORT_ADDR_DEFAULT;
+
+/* ==================================================================== *
+ * uwb_net（components/uwb_net）の "node" 行へ載せる role固有情報
+ * ==================================================================== *
+ * firmware/tag/main/main.cpp の同名セクションと同じ理由・同じ制約
+ * （statusFn はネットワークタスク(コア0)から1秒ごとに呼ばれ、電波を一切
+ * 触ってはいけない。scratchpad/NET_SPEC.md §8）。g_netName/g_netAddr は
+ * uwb::net::Config::name/addr が「静的寿命の文字列であること」を要求する
+ * （uwb_net.hpp Config コメント）ため、app_main で g_shortAddr が確定した
+ * 直後に一度だけ整形する。 */
+static char g_netName[24]        = "";  // "uwb-anchor-XXXX"
+static char g_netAddr[8]          = "";  // "0xXXXX"
+static char g_netPhyStr[40]       = "";
+static char g_netPllCoarseStr[8] = "";
+
+/** uwb_qm33120_phy_kconfig.cpp のファイル内 pacSizeCount() と同じ対応表
+ *  （非公開のためログ表示用にここで複製する。firmware/tag/main/main.cpp と同一）。 */
+static unsigned pacSizeCountForNet(uwb::PacSize pac)
+{
+    switch (pac) {
+    case uwb::PacSize::Pac4:  return 4;
+    case uwb::PacSize::Pac8:  return 8;
+    case uwb::PacSize::Pac16: return 16;
+    case uwb::PacSize::Pac32: return 32;
+    }
+    return 0;
+}
+
+/** uwb::net::Config::statusFn 本体。"node" 行へ
+ *  `"phy":"...","pll_coarse":"...","method":"...","short_addr":"..."`
+ *  を追記する（先頭カンマ・波括弧なし。uwb_net.hpp StatusJsonFn のコメント参照）。 */
+static size_t anchorNetStatus(char* buf, size_t cap, void* /*user*/)
+{
+    const int n = std::snprintf(
+        buf, cap,
+        "\"phy\":\"%s\",\"pll_coarse\":\"%s\",\"method\":\"%s\",\"short_addr\":\"%s\"", g_netPhyStr,
+        g_netPllCoarseStr,
+#if CONFIG_UWB_ANCHOR_METHOD_DS
+        "DS",
+#else
+        "SS",
+#endif
+        g_netAddr);
+    return (n > 0) ? static_cast<size_t>(n) : 0;
+}
 
 /**
  * @brief 測距統計をコンソール(info コマンド)へ公開する。
@@ -393,7 +443,9 @@ static void shortAddrToId(uint16_t addr, char prefix, char* out, size_t outSize)
  */
 static void printAnchorStatsLine(const uwb::ResponderStats& s, double tSec, const char* addrId)
 {
-    std::printf(
+    char buf[512];
+    const int n = std::snprintf(
+        buf, sizeof(buf),
         "{\"v\":1,\"type\":\"anchor_stats\",\"t\":%.3f,\"addr\":\"%s\",\"polls\":%lu,\"responses\":%lu,"
         "\"finals\":%lu,\"results\":%lu,\"restarts\":%lu,\"final_timeouts\":%lu,\"rx_errors\":%lu,"
         "\"tx_failures\":%lu,\"rearms\":%lu,\"other\":%lu,\"event_drops\":%lu,\"last_rx_status\":\"0x%08lX\","
@@ -405,6 +457,12 @@ static void printAnchorStatsLine(const uwb::ResponderStats& s, double tSec, cons
         static_cast<unsigned long>(s.rearms), static_cast<unsigned long>(s.other),
         static_cast<unsigned long>(s.eventDrops), static_cast<unsigned long>(s.lastRxStatus),
         static_cast<unsigned long>(s.distance.count), s.distance.mean / 1000.0, s.distance.stddev() / 1000.0);
+    if (n <= 0) {
+        return;
+    }
+    const size_t len = (static_cast<size_t>(n) < sizeof(buf)) ? static_cast<size_t>(n) : (sizeof(buf) - 1);
+    std::fputs(buf, stdout);
+    uwb::net::publishLine(buf, len);
 }
 
 #if CONFIG_UWB_ANCHOR_LOG_EVENTS
@@ -423,10 +481,20 @@ static void printRangeEventLine(const uwb::RangeEvent& ev, int64_t bootUs, const
     char peerId[8];
     shortAddrToId(ev.peer, 'T', peerId, sizeof(peerId));
     const double t = static_cast<double>(ev.tUs - bootUs) / 1e6;
-    std::printf("{\"v\":1,\"type\":\"range\",\"t\":%.3f,\"addr\":\"%s\",\"peer\":\"%s\",\"seq\":%u,\"d\":%.4f,"
-                "\"elapsed_us\":%lu}\n",
-                t, addrId, peerId, static_cast<unsigned>(ev.seq), static_cast<double>(ev.distanceMm) / 1000.0,
-                static_cast<unsigned long>(ev.elapsedUs));
+
+    char buf[512];
+    const int n =
+        std::snprintf(buf, sizeof(buf),
+                      "{\"v\":1,\"type\":\"range\",\"t\":%.3f,\"addr\":\"%s\",\"peer\":\"%s\",\"seq\":%u,\"d\":%.4f,"
+                      "\"elapsed_us\":%lu}\n",
+                      t, addrId, peerId, static_cast<unsigned>(ev.seq), static_cast<double>(ev.distanceMm) / 1000.0,
+                      static_cast<unsigned long>(ev.elapsedUs));
+    if (n <= 0) {
+        return;
+    }
+    const size_t len = (static_cast<size_t>(n) < sizeof(buf)) ? static_cast<size_t>(n) : (sizeof(buf) - 1);
+    std::fputs(buf, stdout);
+    uwb::net::publishLine(buf, len);
 }
 #endif
 
@@ -451,6 +519,12 @@ extern "C" void app_main(void)
 
     ESP_LOGI(TAG, "uwb_anchor firmware (v2/Responder), board=%s method=%s short_addr=0x%04X (%s)", BOARD_NAME,
              METHOD_NAME, g_shortAddr, uwb::configSourceName(addrSource));
+
+    // uwb_net の Config::name/addr は静的寿命の文字列であることを要求する
+    // ため、g_shortAddr が確定したこの時点で一度だけ整形する
+    // （scratchpad/NET_SPEC.md §8: name="uwb-anchor-XXXX", addr="0xXXXX"）。
+    std::snprintf(g_netName, sizeof(g_netName), "uwb-anchor-%04X", static_cast<unsigned>(g_shortAddr));
+    std::snprintf(g_netAddr, sizeof(g_netAddr), "0x%04X", static_cast<unsigned>(g_shortAddr));
 
     // static にする理由: xTaskCreatePinnedToCore() が起こす uwb_radio タスクが
     // このオブジェクトへの生ポインタを保持し、タスクが動き続ける間ずっと
@@ -523,6 +597,22 @@ extern "C" void app_main(void)
 #endif
     // UWB_PHY_PLL_COARSE_MODE=Auto: no forcing call - the logCal() line
     // above already shows the chip's own auto-calibration result.
+
+    // uwb_net の "node" 行用に、起動時に決まったPHY/PLL粗調整の要約を
+    // 一度だけ静的バッファへ書いておく（firmware/tag/main/main.cpp の
+    // 同名処理と同一の理由・同一のロジック）。
+    std::snprintf(g_netPhyStr, sizeof(g_netPhyStr), "%s/pre%u/pac%u/ch%u",
+                  (phy.dataRate == uwb::DataRate::Rate850K) ? "850k" : "6m8",
+                  static_cast<unsigned>(phy.preambleLength), pacSizeCountForNet(phy.pacSize),
+                  static_cast<unsigned>(phy.channel));
+#if CONFIG_UWB_PHY_PLL_COARSE_MODE_FIXED
+    std::snprintf(g_netPllCoarseStr, sizeof(g_netPllCoarseStr), "0x%02X",
+                  static_cast<unsigned>(CONFIG_UWB_PHY_PLL_COARSE_CH9));
+#elif CONFIG_UWB_PHY_PLL_COARSE_MODE_OTP
+    std::snprintf(g_netPllCoarseStr, sizeof(g_netPllCoarseStr), "otp");
+#else
+    std::snprintf(g_netPllCoarseStr, sizeof(g_netPllCoarseStr), "auto");
+#endif
 
     // init() may have downgraded the requested TIMING_PROFILE to PollingBoth
     // if the IRQ line turned out to be dead (Qm33120::verifyIrqLine()). Carry
@@ -636,6 +726,30 @@ extern "C" void app_main(void)
              // （makeResponderConfig()のコメント参照:
              // n選択時はマクロ自体が未定義になるため、式の中で直接使えない）。
              (int)g_radioTaskArgs.cfg.restartOnForeignPoll);
+
+    /* --- uwb_net（Wi-Fi + ブラウザダッシュボード + 無線コンソール）を起動する ---
+     * uwb_radio タスク起動後・main タスクのループに入る前に呼ぶ
+     * （scratchpad/NET_SPEC.md §8）。失敗してもUSBシリアルでの運用・測距
+     * そのものは継続するので、ログだけ出して先へ進む。 */
+    {
+        uwb::net::Config netCfg;
+        netCfg.role                    = uwb::net::Role::Anchor;
+        netCfg.name                     = g_netName;
+        netCfg.addr                     = g_netAddr;
+        netCfg.aggregate                = false; // アンカーは他機からのUDPを集約しない
+        netCfg.forward                   = true;  // 自分の行をUDPブロードキャストする
+        netCfg.httpPort                 = static_cast<uint16_t>(CONFIG_UWB_NET_HTTP_PORT);
+        netCfg.consolePort              = static_cast<uint16_t>(CONFIG_UWB_NET_CONSOLE_PORT);
+        netCfg.udpPort                   = static_cast<uint16_t>(CONFIG_UWB_NET_UDP_PORT);
+        netCfg.highRateMinIntervalMs = static_cast<uint32_t>(CONFIG_UWB_NET_HIGHRATE_MIN_INTERVAL_MS);
+        netCfg.statusFn                 = &anchorNetStatus;
+        netCfg.statusUser               = nullptr;
+        const esp_err_t netErr = uwb::net::start(netCfg);
+        if (netErr != ESP_OK) {
+            ESP_LOGE(TAG, "uwb_net の起動に失敗しました (err=%s)。JSON出力・測距は継続します",
+                     esp_err_to_name(netErr));
+        }
+    }
 
     /* ==================================================================== *
      * main タスク（このタスク自身、コア0）のループ (docs/ARCHITECTURE_V2.md

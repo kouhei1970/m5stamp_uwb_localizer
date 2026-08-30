@@ -1,6 +1,6 @@
 # ドキュメント索引
 
-現役 16 本あります。**全部読む必要はありません。**
+現役 17 本あります。**全部読む必要はありません。**
 下の「あなたはどれですか」から入ってください。
 
 **現役文書には「いま正しいこと」だけが書いてあります。**
@@ -41,6 +41,7 @@ GETTING_STARTED.md  →  EXPERIMENT_PLAN.md
 | 3 | [PREBUILT_BINARIES.md](PREBUILT_BINARIES.md) | **ESP-IDF を入れずに**書き込んで試す |
 | 4 | [WIRING.md](WIRING.md) | **配線の正本。接続経路は3通り**（FPC→DIP 変換基板／半田パッド直付け／StampS3A 背面 FPC）。**§0.1 でまず自分の経路を選ぶ** |
 | 5 | [ANCHOR_PLACEMENT.md](ANCHOR_PLACEMENT.md) | アンカーの置き方 |
+| 6 | [NET_DASHBOARD.md](NET_DASHBOARD.md) | 測位が動いたら次に読む。**Wi-Fi のブラウザダッシュボード + 無線コンソール**（USB を外してモバイルバッテリ運用する手順込み） |
 
 > 実験1（SPI 疎通で Device ID を読む）の受入基準と切り分けは、
 > [`GETTING_STARTED.md` §4](GETTING_STARTED.md#probe) を参照。
@@ -95,6 +96,8 @@ PLAN.md  →  各仕様書  →  archive/REIMPL_PLAN.md / archive/CRITICAL_REVIE
 | アンカー座標を測るのが面倒 | [SURVEY_SPEC.md](SURVEY_SPEC.md) |
 | 配線前に確認したい | [WIRING.md](WIRING.md) |
 | StampFly に載せたい | [STAMPFLY_INTEGRATION.md](STAMPFLY_INTEGRATION.md)、[PLAN.md §1](PLAN.md) |
+| USB を外して無線でブラウザから見たい | [NET_DASHBOARD.md](NET_DASHBOARD.md) |
+| Wi-Fi が繋がらない（`reason=201`/`202` 等） | [NET_DASHBOARD.md §3](NET_DASHBOARD.md) の起動ログ・`reason` の表 |
 | なぜこの実装なのか知りたい（経緯） | [archive/REIMPL_PLAN.md](archive/REIMPL_PLAN.md)、[archive/CRITICAL_REVIEW.md](archive/CRITICAL_REVIEW.md) |
 | 何が検証済みで何が未検証か | [HANDOFF.md](HANDOFF.md) §1、[GETTING_STARTED.md §11](GETTING_STARTED.md#limitations) |
 
@@ -119,6 +122,7 @@ PLAN.md  →  各仕様書  →  archive/REIMPL_PLAN.md / archive/CRITICAL_REVIE
 | [GETTING_STARTED.md](GETTING_STARTED.md) | Phase 1（SPI 疎通）の受入確認 |
 | [WIRING.md](WIRING.md) | 配線の正本。3つの接続経路とピン対応・向きの確定 |
 | [ANCHOR_PLACEMENT.md](ANCHOR_PLACEMENT.md) | アンカー配置ルール（実測にもとづく） |
+| [NET_DASHBOARD.md](NET_DASHBOARD.md) | Wi-Fi ブラウザダッシュボード・無線コンソール（`uwb_net`）の使い方。トポロジ・`wifi`/`net probe` コマンド・プロトコル・実測結果 |
 
 ### 設計・仕様
 | 文書 | 内容 |
