@@ -208,13 +208,20 @@ public:
 
 ## 4. PHY を Kconfig で選ぶ（`components/uwb_qm33120/Kconfig`、共通）
 
+**【2026-08-30 実機決定で既定を変更】** 本節を書いた設計時点（実機検証前）の既定案は
+データ速度 6M8・プリアンブル 128 だったが、§5.1・§6.1 の実機検証（e50〜e66）でこの組は
+p=1% と使い物にならないと分かったため、**既定は 850 kbps・プリアンブル 256 に変更した**
+（下表は変更後の値。理由は §6.1「決定」、`docs/HANDOFF.md` §0-D「6.8 Mbps の切り分けと
+本番既定の決定（§G）」参照）。
+
 | オプション | 既定 | 内容 |
 |---|---|---|
-| `UWB_PHY_DATA_RATE_6M8` / `_850K`（choice） | 6M8 | データ速度 |
-| `UWB_PHY_PREAMBLE_LEN`（int: 64/128/256/512/1024） | 128 | プリアンブル長。PAC は Qorvo の規則で自動（≤128→8、256→16、512→16、1024→32） |
+| `UWB_PHY_DATA_RATE_6M8` / `_850K`（choice） | **850K** | データ速度 |
+| `UWB_PHY_PREAMBLE_LEN`（int: 64/128/256/512/1024） | **256** | プリアンブル長。PAC は Qorvo の規則で自動（≤128→8、256→16、512→16、1024→32） |
 | `UWB_PHY_TX_POWER`（hex） | 0xfefefefe | 送信電力 |
 | `UWB_PHY_PG_DELAY`（hex） | 0x34 | PG delay |
-| `UWB_PHY_PLL_COARSE_CH9`（hex、0=自動） | 0 | 起動時に PLL 粗調整コードを固定する（`firmware/twr` の `DIAG_PLL_COARSE_CH9` の手順を `Qm33120::forcePllCoarse()` として共通化） |
+| `UWB_PHY_PLL_COARSE_MODE`（choice: Auto／OTP／Fixed） | **OTP** | ch9 の PLL VCO 粗調整コードの出所。Auto=チップの自動校正まかせ（温度で工場値から 1 段ずれることがある）、OTP=起動時に OTP アドレス `0x35` から個体固有の工場値を読んで強制（`Qm33120::forcePllCoarseFromOtp()`。基板ごとの値を都度読むので board-independent）、Fixed=下の `UWB_PHY_PLL_COARSE_CH9` を直接強制（単体診断専用）。既定は OTP（2026-08-30 実機決定、§6.1・`docs/HANDOFF.md` §0-D「新既定の最終確認と PLL 粗調整（G-2）」参照） |
+| `UWB_PHY_PLL_COARSE_CH9`（hex、`UWB_PHY_PLL_COARSE_MODE=Fixed` のときだけ使用） | 0x00 | Fixed モード限定で PLL 粗調整コードを直接指定する（`firmware/twr` の `DIAG_PLL_COARSE_CH9` の手順を `Qm33120::forcePllCoarse()` として共通化）。既定運用では使わない（既定は上記の OTP モード） |
 
 `uwb::PhyConfig uwb::phyConfigFromKconfig();` を追加し、`firmware/tag` / `firmware/anchor` は
 これを使う。起動ログに `phy: preamble=… pac=… rate=… ch=… code=… sfd=… txpower=… pgdelay=…`
@@ -262,6 +269,36 @@ public:
 | (e) PHR 誤り（RXPHE）が主体 = 同期後の PHR 復号で落ちる（PHR は速度によらず 850 kbps） | `rx_status` の内訳を電文方向別に採り、SFD 種別（DW8／IEEE 4z）を比較 |
 
 判断は `docs/HANDOFF.md` §0-C の判断表（機体上の p で速度を決める）に従う。
+
+### 6.1 実施結果（2026-08-30）
+
+実機で切り分けた（e50, e60〜e65。v2、DS は再試行なし・60 秒・約 1.2 m・PLL 粗調整 0x23
+固定）。詳細な表・掛け算チェックの注記は `docs/HANDOFF.md` §0-D「6.8 Mbps の切り分けと
+本番既定の決定（§G）」に記録してある。上の (a)〜(e) との対応:
+
+| 仮説 | 判定 | 根拠 |
+|---|---|---|
+| (a) IRQ 経路の遅れ・取りこぼし | **棄却** | 同じ PHY（6.8 Mbps/128/`PollingBoth`）で IRQ（e60, p=40.6%）とポーリング（e61, p=40.0%）がほぼ同じ |
+| (b) `BothIrq` の DS プリセットが詰まりすぎ | **確定** | 本番既定（`BothIrq`、e50）は p=1.0%。同じ 6.8 Mbps/128 のまま `PollingBoth` 相当の余裕あるプリセットにしただけ（e60）で p=40.6% まで上がった |
+| (c) 距離 1 m での受信飽和 | **未実施** | 距離掃引（3／5 m）はまだ行っていない |
+| (d) プリアンブル 128/PAC8 では捕捉不足 | **支持** | プリアンブルを 128 → 256 → 1024 と伸ばすと p が 40% → 57% → 75%（e61 → e62 → e64）と単調に上がった |
+| (e) PHR 誤り（RXPHE）主体 | **未実施** | `rx_status` の電文方向別内訳・SFD 種別（DW8／IEEE 4z）比較用の Kconfig がまだ無い |
+
+**基板差の発見（e63）**: e62 の役割を入れ替える（タグ↔アンカーの基板を交換する）と
+p が 57% → 70% に上がった。タグ側の受信（Response・Result の 2 ホップ）がアンカー側
+（Poll の 1 ホップ）より一貫して悪かった原因は、6.8 Mbps 固有の問題というより**基板差**
+（1101 側の基板の受信性能が弱い）が主だったと分かった。良い方の基板をタグにしても、
+850 kbps の水準（p=86.4%、参考 e53）には届かない。
+
+**PLL 粗調整の自動校正コストの発見（e66/e67）**: 上の「決定」の構成をそのまま最終確認する過程で、PLL（Phase-Locked Loop）の粗調整コードをチップの自動校正に任せると、本日の温度で工場値からもう 1 段ずれる（`0x23`→`0x24`）ことがあり、これだけで素の p が **90.5% → 50.1%**（周期成功率 99.4% → 86.8%）まで落ちることが分かった。OTP から個体固有の工場値を読んで強制する方式（`UWB_PHY_PLL_COARSE_MODE=OTP`）を既定にして解消した（詳細は`docs/HANDOFF.md` §0-D「新既定の最終確認と PLL 粗調整（G-2）」）。
+
+**決定**: 本番既定は **850 kbps / プリアンブル 256 / `PollingBoth` タイミング /
+IRQ 有効 / 再試行 2 回・待ち 2 ms**（§4 の Kconfig 既定として反映済み）。6.8 Mbps は
+プリアンブル 1024 まで伸ばしてようやく p=75% に達するが、それでも周期 16 ms は
+850 kbps/256・DS の 9 ms より遅く、**この機材では速度の利点が無い**。`BothIrq` /
+`AnchorIrq` の DS プリセットは 6.8 Mbps 用に導出されたものだが実機で p=1% だったため、
+再導出するまで既定から外した。残る (c)・(e) と、DS の電文数を 3 に減らす設計変更は
+未着手（`docs/HANDOFF.md` §0-D 参照）。
 
 ## 7. 実装の順序
 

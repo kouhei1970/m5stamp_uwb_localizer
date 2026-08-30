@@ -165,6 +165,44 @@ public:
     bool forcePllCoarse(uint8_t code);
 
     /**
+     * @brief Force the ch9 PLL VCO coarse-tune code to the value programmed
+     * in this chip's own OTP (One-Time-Programmable memory), instead of a
+     * caller-supplied constant (docs/ARCHITECTURE_V2.md §4,
+     * UWB_PHY_PLL_COARSE_MODE=OTP - the production default).
+     *
+     * 2026-08-30 実機結果: 本番既定(850kbps/256, PollingBoth, IRQ) +
+     * UWB_PHY_PLL_COARSE_CH9=0（自動校正まかせ）は初回試行成功率
+     * p=50.1%、同一構成で粗調整コードを 0x23 に固定すると p=90% だった
+     * （docs/HANDOFF.md §0-B: 自動校正はブート時のダイ温度で 0x23 または
+     * 0x24 に着地する）。0x23 の直書きは基板ごとの OTP 値と一致する保証が
+     * 無いため危険 - 本関数は「その個体の OTP に書き込まれている値」を
+     * 読んで forcePllCoarse() に渡す、基板非依存の版。
+     *
+     * Real-hardware finding: production defaults with chip auto-calibration
+     * measured first-attempt p=50.1%; forcing the coarse code to 0x23
+     * measured p=90% (docs/HANDOFF.md §0-B - the auto-cal lands on 0x23 or
+     * 0x24 depending on boot-time die temperature). Hard-coding 0x23 is
+     * unsafe across boards, so this reads the value OTP actually holds for
+     * THIS chip instead.
+     *
+     * Reads OTP address 0x35 (`PLL_CC_ADDRESS`, a file-local #define in
+     * components/qm33120w_sdk/dw3720/dw3720_device.c, not exported by any
+     * public header - same address firmware/twr's boot-log dump already
+     * reads via `dwt_otpread(0x35U, &otpPllCc, 1)`), masks bits[6:0] (the
+     * ch9 VCO coarse-tune field, `PLL_COARSE_CODE_CH9_VCO_COARSE_TUNE_BIT_MASK`
+     * = 0x7F, dw3720_deca_regs.h), and calls forcePllCoarse() with that
+     * code.
+     *
+     * @return false (auto-cal left untouched, forcePllCoarse() never
+     *         called) if the raw OTP word read back as 0 (an unprogrammed/
+     *         erased field - forcing code 0 would be worse than leaving the
+     *         chip's own calibration alone). Otherwise, forcePllCoarse()'s
+     *         own return value (true if the PLL reports locked on the OTP
+     *         code afterwards).
+     */
+    bool forcePllCoarseFromOtp();
+
+    /**
      * @brief Log the PHY configuration init() actually applied
      * (docs/ARCHITECTURE_V2.md §4), in the exact format firmware/twr prints
      * from main.cpp (`"phy: preamble=%u pac=%u rate=%s ch=%u code=%u/%u
@@ -185,6 +223,25 @@ public:
      *             fixed tag requirement, only a fixed message format.
      */
     void logPhy(const char* tag) const;
+
+    /**
+     * @brief Log the same PLL-calibration diagnostic line firmware/twr
+     * prints from its logCalibrationDump() (main.cpp) - moved into the
+     * driver (docs/ARCHITECTURE_V2.md §4) so production firmware can show
+     * the effective PLL coarse-tune code without duplicating the register
+     * reads. Format (unchanged from firmware/twr, reproduced verbatim so
+     * existing log-scraping tooling keeps working):
+     *   "cal: pll_coarse=0x%08lX pll_cfg=0x%08lX pll_cal=0x%08lX
+     *    pll_status=0x%08lX pll_lock=%d otp_pll_cc=0x%08lX xtal_reg=0x%02X"
+     *
+     * Intended to be called once right after begin()/init() (alongside
+     * logPhy()) and again after forcePllCoarse()/forcePllCoarseFromOtp(),
+     * if either was used, so the boot log shows both the as-calibrated and
+     * the as-forced state.
+     *
+     * @param tag  ESP_LOG tag to log under (same convention as logPhy()).
+     */
+    void logCal(const char* tag) const;
 
     /**
      * @brief The TX antenna delay init() applied (Impl::tx_antenna_delay,

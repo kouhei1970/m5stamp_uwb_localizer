@@ -491,10 +491,25 @@ extern "C" void app_main(void)
     // docs/ARCHITECTURE_V2.md §4: 実際に適用された PHY 設定を起動ログへ出す
     // （firmware/twr と同じ書式。スクリプトが grep する）。
     uwbDevice.logPhy(TAG);
+    // 校正結果（PLL粗調整コード・OTP値等）を、強制する前の状態としてまず出す。
+    uwbDevice.logCal(TAG);
 
-#if defined(CONFIG_UWB_PHY_PLL_COARSE_CH9) && (CONFIG_UWB_PHY_PLL_COARSE_CH9 != 0)
-    // docs/ARCHITECTURE_V2.md §4: firmware/twr の DIAG_PLL_COARSE_CH9 の
-    // 本番機版。非ゼロなら begin() 直後に ch9 の PLL 粗調整コードを強制する。
+    // 2026-08-30 実機結果: 本番既定(850kbps/256, PollingBoth, IRQ) + PLL
+    // 自動校正まかせは初回試行成功率p=50.1%だったが、粗調整コードを0x23へ
+    // 固定すると90%だった（docs/HANDOFF.md §0-B、components/uwb_qm33120/
+    // Kconfig の UWB_PHY_PLL_COARSE_MODE ヘルプ参照）。0x23は基板固有の値
+    // なので、既定は個体ごとのOTPから読む OTP モード。
+#if CONFIG_UWB_PHY_PLL_COARSE_MODE_OTP
+    {
+        const bool pllOk = uwbDevice.forcePllCoarseFromOtp();
+        if (!pllOk) {
+            ESP_LOGW(TAG,
+                     "forcePllCoarseFromOtp(): OTP field looked unprogrammed/invalid; left the chip's own "
+                     "calibration in place");
+        }
+        uwbDevice.logCal(TAG);
+    }
+#elif CONFIG_UWB_PHY_PLL_COARSE_MODE_FIXED
     {
         const bool pllOk = uwbDevice.forcePllCoarse(static_cast<uint8_t>(CONFIG_UWB_PHY_PLL_COARSE_CH9));
         if (!pllOk) {
@@ -503,8 +518,11 @@ extern "C" void app_main(void)
                      "calibration path (see the DIAG_PLL_COARSE(*) lines above)",
                      (unsigned)CONFIG_UWB_PHY_PLL_COARSE_CH9);
         }
+        uwbDevice.logCal(TAG);
     }
 #endif
+    // UWB_PHY_PLL_COARSE_MODE=Auto: no forcing call - the logCal() line
+    // above already shows the chip's own auto-calibration result.
 
     // init() may have downgraded the requested TIMING_PROFILE to PollingBoth
     // if the IRQ line turned out to be dead (Qm33120::verifyIrqLine()). Carry

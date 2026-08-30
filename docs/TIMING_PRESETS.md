@@ -539,26 +539,45 @@ endchoice
 背面の 12P FPC 経由になり、G16 の IRQ が実際に取れるようになったことで
 （`boards/stampfly.h`、`docs/IRQ_POLICY.md`）、`BothIrq` が実際に成立する構成になっている。
 
-**既定は `BothIrq`**（全ボードで IRQ が取れるため。`docs/IRQ_POLICY.md`）。
-**本ドキュメントの数値はいずれも実機未検証**である。IRQ の極性は
-データシートで既定値（アクティブ HIGH）を確認済みだが、実機での通電確認は
-まだ済んでいない（詳細は `docs/IRQ_POLICY.md`）ので、測距が成立しないときは
-`PollingBoth` へ落として切り分けること。
+**【2026-08-30 訂正】既定は `PollingBoth`（850 kbps・プリアンブル 256 のタイミングで、
+IRQ 自体は有効のまま実行する）。** 以前ここには「既定は `BothIrq`」と書かれていたが、
+実際の Kconfig（`firmware/{tag,anchor}/main/Kconfig.projbuild` の
+`choice UWB_TIMING_PROFILE` の `default`）は当初から `PollingBoth` であり、記述が
+現物と食い違っていた。加えて、`AnchorIrq`/`BothIrq` の DS プリセットは 6.8 Mbps・
+プリアンブル 128 前提で導出されたもので、850 kbps・プリアンブル 256 の実機検証では
+p=1%（`docs/HANDOFF.md` §0-D「6.8 Mbps の切り分けと本番既定の決定（§G）」の e50）
+まで落ちることが分かったため、**再導出するまで既定にしない**という方針を確定させた
+（同じ理由で 6.8 Mbps もこの機材では既定にしない——850 kbps の方が速い。同節参照）。
+`IRQ の有無`と`遅延プリセット`は独立な選択肢であることに注意: 既定は
+「`PollingBoth` のタイミング値 + IRQ 有効（`UWB_ENABLE_IRQ=y`、起床の合図として使うだけ）」
+であり、両側ポーリングだけを意味するわけではない。IRQ とポーリングは実機で同等の
+成功率だった（`docs/HANDOFF.md` §0-D、e51 対 e52・e55 対 e56）ので、測距が成立しない
+ときの切り分けとしては `UWB_ENABLE_IRQ` を無効にする方を先に試すこと。
 
 `docs/GETTING_STARTED.md` に「**アンカーとタグは必ず同じプリセットで焼くこと**」を明記する。
 
 ### 5.1 CI ビルド（`.github/workflows/build.yml`）
-CI の firmware マトリクスは**既定（`BothIrq` + IRQ 有効）で焼いた base variant** と、
-IRQ が動かなかったとき用の**フォールバック**の2系統を配布している:
 
-| variant | プリセット |
+【2026-08-30 訂正】以前の記述は「CI の base variant は `BothIrq` を明示的に焼いており、
+`-polling` サフィックスの variant が `PollingBoth` へのフォールバックとして別に存在する」
+という想定だったが、実際の CI 設定を確認すると base variant（`anchor-stamps3-ds` /
+`tag-stampfly-ds` ほか）は `UWB_TIMING_PROFILE` 系の Kconfig シンボルを明示的に上書きしておらず、
+**Kconfig の既定値（= `PollingBoth`）のままビルドされている**。つまり現状の CI では
+base variant と `-polling` variant が**同じプリセットを重複してビルドしている**
+（`-polling` 側は `CONFIG_UWB_TIMING_PROFILE_POLLING_BOTH=y` を明示するだけで、
+base 側の実効設定と同一）。IRQ 有効/無効を明示的に作り分ける variant は今のところ無い
+（`UWB_ENABLE_IRQ` も既定 `y` のまま）。この重複は本ドキュメントの記述が古かったことに
+今回気づいたもので、CI 設定（`.github/workflows/build.yml`）自体の整理はまだ行っていない。
+
+| variant | プリセット（実効） |
 |---|---|
-| `anchor-stamps3-ds` / `tag-stampfly-ds` ほか base | `BothIrq`（90 Hz、既定） |
-| `anchor-stamps3-ds-polling` / `tag-stampfly-ds-polling` | `PollingBoth`（31 Hz、フォールバック） |
+| `anchor-stamps3-ds` / `tag-stampfly-ds` ほか base | `PollingBoth`（Kconfig 既定のまま。850 kbps 前提） |
+| `anchor-stamps3-ds-polling` / `tag-stampfly-ds-polling` | `PollingBoth`（base と同一設定。**現状は重複**） |
 
 **どちらもタグとアンカーでセットを揃えること。** 片側だけ別のプリセットを焼くと、
 相手側は違う締切で待つことになり測距が成立しない（§0）。
-`AnchorIrq`（59 Hz）は CI では配布していないが、menuconfig で選べる。
+`AnchorIrq`（59 Hz）・`BothIrq`（90 Hz）は CI では配布していないが、menuconfig で選べる
+（ただし上記のとおり 6.8 Mbps 前提の値のまま未検証）。
 
 ---
 

@@ -775,8 +775,15 @@ Kconfig の `UWB_ANCHOR_SHORT_ADDR` も引き続きありますが、これは
 | ボード | **M5StampS3A**（+ StampS3 BreakOut） |
 | 方式 | **DS-TWR** |
 | ショートアドレス | `0x0002`（NVS が空のときの初期値） |
+| PHY（データ速度／プリアンブル／タイミング／IRQ／PLL 粗調整） | **850 kbps／256／`PollingBoth`／IRQ 有効／PLL 粗調整は OTP 由来の値で固定**（`UWB_PHY_*`・`UWB_TIMING_PROFILE`・`UWB_ENABLE_IRQ`・`UWB_PHY_PLL_COARSE_MODE=OTP`、共通 Kconfig）。再試行は `UWB_TAG_RETRY_MAX=2` / `UWB_TAG_RETRY_DELAY_MS=2`。起動ログに強制の前後で `cal: pll_coarse=… otp_pll_cc=…` 行が出る。2026-08-30 に実機で決定した既定（`docs/HANDOFF.md` §0-D「6.8 Mbps の切り分けと本番既定の決定（§G）」「新既定の最終確認と PLL 粗調整（G-2）」） |
 
-`firmware/tag` の既定も **M5StampS3A / DS-TWR** なので、方式は揃っています。
+`firmware/tag` の既定も **M5StampS3A / DS-TWR / 850 kbps・プリアンブル256・`PollingBoth`・IRQ有効・PLL粗調整OTP固定** なので、揃っています。
+
+**【重要】このリポジトリを新しく `pull` した直後は `sdkconfig` を作り直してください。**
+`firmware/tag/sdkconfig` と `firmware/anchor/sdkconfig`（`idf.py build` が生成する、実際に
+ビルドへ効くファイル）は Git 管理外（`.gitignore`）です。古い `sdkconfig` が残っていると
+`Kconfig.projbuild` の既定値を変更しても反映されず、**古い PHY 設定のままビルドされます**。
+該当ファイルを削除するか `idf.py fullclean` を実行してから `idf.py build` してください。
 
 > **AtomS3 を代替に使う場合**は、ビルド前に `idf.py menuconfig` →
 > `UWB Anchor Configuration` → `Target host board` を **`M5 AtomS3 (alternative)`**
@@ -1082,7 +1089,12 @@ idf.py build
 idf.py -p /dev/cu.usbmodemXXXX flash monitor
 ```
 
-既定は **M5StampS3A / DS-TWR / EKF（Extended Kalman Filter、拡張カルマンフィルタ）無効 / 2D 自動フォールバック有効**です。
+既定は **M5StampS3A / DS-TWR / 850 kbps・プリアンブル256・`PollingBoth`・IRQ有効・
+PLL粗調整OTP固定 / EKF（Extended Kalman Filter、拡張カルマンフィルタ）無効 /
+2D 自動フォールバック有効**です（PHY の既定は 2026-08-30 に実機で決定。
+`docs/HANDOFF.md` §0-D 参照）。起動ログに、PLL 粗調整コードを OTP の値へ強制する
+前後 2 回、`cal: pll_coarse=… pll_cfg=… pll_cal=… pll_status=… pll_lock=…
+otp_pll_cc=… xtal_reg=…` 行が出る。
 
 **アンカー 5 台に先に電源を入れてから**タグを起動してください。
 
@@ -1477,7 +1489,7 @@ DW3720 の OTP アドレス `0x0B` は "Antenna Delay – RFLoop" とされて�
 
 | 項目 | 内容 |
 |---|---|
-| **IRQ の極性が実機未検証（既定は無効）** | アンカー側の IRQ 経路は**実装済み**です（`UWB_ENABLE_IRQ`、[`docs/IRQ_POLICY.md`](IRQ_POLICY.md)）。ただし **IRQ がアクティブ HIGH という前提を実機で確認していない**ため既定は無効で、既定ビルドは従来どおり 1ms 粒度のポーリングで動きます。その場合の折り返し遅延は 3,077µs（Qorvo 公式 DS-TWR responder の 900µs に対して約 3.4 倍）で、**1 リンクあたりの時間＝更新レートの上限**になります。IRQ を有効にすると 31 Hz → 59 Hz。手順は [`docs/EXPERIMENT_PLAN.md`](EXPERIMENT_PLAN.md) 実験7・8。遅延値の追い込み（R5）は実機検証が前提のため未実施 |
+| **IRQ は既定で有効（2026-08-30 に実機で確認済み）** | アンカー側の IRQ 経路は実装済み（`UWB_ENABLE_IRQ`、[`docs/IRQ_POLICY.md`](IRQ_POLICY.md)）。従来はここに「極性が実機未検証なので既定は無効」と書いてあったが、2026-08-30 の v2 アーキテクチャ実機検証（`docs/HANDOFF.md` §0-D）で IRQ 経路とポーリング経路が同等の成功率で動くことを確認できたため、**既定を有効へ変更した**（未配線・極性不一致の場合は自動でポーリングへフォールバックする）。本番既定 PHY（850 kbps・プリアンブル 256・`PollingBoth`、`docs/HANDOFF.md` §0-D「6.8 Mbps の切り分けと本番既定の決定（§G）」）での 1 台あたりの所要時間は DS ≈9 ms・SS ≈6 ms（旧記載の「3,077µs・31→59 Hz」は 6.8 Mbps 前提の数字で、現在の既定 PHY には当てはまらない）。手順は [`docs/EXPERIMENT_PLAN.md`](EXPERIMENT_PLAN.md) 実験7・8 |
 | **ch9 の PLL 再校正が未実装** | M5Stamp UWB Module は ch9 固定です。ユーザマニュアル §10.4 によれば **ch9 では温度が 20°C 変化したら PLL の再校正が必要**です（ch5 では不要）。アンカーは連続受信でダイ温度が周囲 +20〜30°C まで上がるため**確実に該当します**。長時間運用で受信性能が落ちる可能性があります（R10） |
 | **診断情報（NLOS 判定）を取っていない** | SDK には受信電力（RSL）と第一波電力（FP_RSL）を出す関数が揃っていますが未使用です。`RSL − FP_RSL > 6dB` は Qorvo 標準の見通し外（壁越し）指標で、これを `uwb_loc` の重み付けに渡せば NLOS 環境の精度が直接改善するはずですが未実装（R12） |
 | **アンテナ遅延が未校正** | 初期値は APS014 の典型値であって M5Stamp UWB Module 用ではありません（[9](#antenna-delay)） |

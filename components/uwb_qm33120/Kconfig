@@ -20,25 +20,28 @@ menu "UWB PHY (uwb_qm33120)"
 
     choice UWB_PHY_DATA_RATE
         prompt "Data rate"
-        default UWB_PHY_DATA_RATE_6M8
+        default UWB_PHY_DATA_RATE_850K
         help
-            uwb::PhyConfig::dataRate。本番既定は 6.8 Mbps（M5Stamp UWB Module
-            の既定値、uwb_qm33120_types.hpp PhyConfig::dataRate 参照）。
-            850 kbps は firmware/twr の実験（docs/HANDOFF.md）で誤り率が
-            大きく下がることが分かっている代替値。タグ・アンカー双方を
+            uwb::PhyConfig::dataRate。既定は 850 kbps（2026-08-30 の実機比較で
+            選定: 約 1.2 m 卓上で DS の素の成功率が 6.8 Mbps/128 の 40%、
+            6.8 Mbps/1024 の 75% に対し 850 kbps/256 で 86〜90%。6.8 Mbps は
+            プリアンブルを伸ばさないと捕捉できず、伸ばすと周期が 850 kbps/256
+            より遅くなるため、この機材では速度の利点が無い。docs/HANDOFF.md
+            §0-C「§G」参照）。6.8 Mbps は M5Stamp UWB Module の出荷時既定値
+            （uwb_qm33120_types.hpp PhyConfig::dataRate）。タグ・アンカー双方を
             同じ値で焼くこと（片側だけ変えると測距が成立しない）。
 
         config UWB_PHY_DATA_RATE_6M8
-            bool "6.8 Mbps (既定)"
+            bool "6.8 Mbps (モジュール出荷時の値)"
 
         config UWB_PHY_DATA_RATE_850K
-            bool "850 kbps"
+            bool "850 kbps (既定、2026-08-30 実測で選定)"
 
     endchoice
 
     config UWB_PHY_PREAMBLE_LEN
         int "Preamble length (symbols): 64 / 128 / 256 / 512 / 1024"
-        default 128
+        default 256
         help
             uwb::PhyConfig::preambleLength。有効な値は 64 / 128 / 256 / 512 /
             1024 のみ（Kconfig の int 型は離散値の列挙を表現できないため、
@@ -76,26 +79,66 @@ menu "UWB PHY (uwb_qm33120)"
             リファレンス設計の ch9 既定値。firmware/twr の
             UWB_TWR_DIAG_PGDELAY と同じ意味。
 
+    choice UWB_PHY_PLL_COARSE_MODE
+        prompt "Ch9 PLL VCO coarse-tune code source"
+        default UWB_PHY_PLL_COARSE_MODE_OTP
+        help
+            2026-08-30 実機結果: 本番既定 (850kbps/256, PollingBoth, IRQ) +
+            UWB_PHY_PLL_COARSE_CH9=0（チップの自動校正まかせ）のベンチ実行
+            (e66) は初回試行成功率 p=50.1%（周期成功率86.8%）だったのに対し、
+            同一構成で PLL 粗調整コードを 0x23 に固定した実行 (e56) は
+            p=90%（周期成功率99.0%）だった。docs/HANDOFF.md §0-B の実測:
+            チップの自動 PLL 粗調整はブート時のダイ温度に応じて 0x23 または
+            0x24 のどちらかに着地し、OTP にはこの基板向けに書き込まれた値
+            0x0B001F23（ch9 粗調整フィールド bits[6:0] = 0x23）が入っている
+            （firmware/twr の起動ログ otp_pll_cc= と同じ値、
+            uwb::Qm33120::logCal() 参照）。0x23 固定はこの2枚の基板では
+            効いたが、他基板では OTP の値が違いうるためハードコードは
+            危険 - 個体ごとに正しい値を機械的に選べる OTP モードを既定にする。
+
+            Real-hardware finding (2026-08-30): production defaults
+            (850kbps/256, PollingBoth, IRQ) with UWB_PHY_PLL_COARSE_CH9=0
+            (chip auto-calibration) measured first-attempt p=50.1% (cycle
+            86.8%); the identical config with the coarse code forced to
+            0x23 measured p=90% (cycle 99.0%). docs/HANDOFF.md §0-B: the
+            chip's auto PLL coarse calibration lands on 0x23 or 0x24
+            depending on boot-time die temperature, while OTP holds the
+            board-programmed value (0x0B001F23 on these two boards, i.e.
+            ch9 coarse-tune field bits[6:0] = 0x23). A hard-coded 0x23 is
+            board-specific and unsafe for other units, so the default here
+            reads the per-board OTP value instead.
+
+        config UWB_PHY_PLL_COARSE_MODE_AUTO
+            bool "Auto (chip's own hardware PLL calibration - old default)"
+
+        config UWB_PHY_PLL_COARSE_MODE_OTP
+            bool "OTP (read this board's coarse code from OTP - default)"
+
+        config UWB_PHY_PLL_COARSE_MODE_FIXED
+            bool "Fixed (force UWB_PHY_PLL_COARSE_CH9 below - single-board diagnostics only)"
+
+    endchoice
+
     config UWB_PHY_PLL_COARSE_CH9
-        hex "Force ch9 PLL VCO coarse-tune code after init (0x00 = 自動/無効)"
+        hex "Force ch9 PLL VCO coarse-tune code (only used when Fixed is selected above)"
+        depends on UWB_PHY_PLL_COARSE_MODE_FIXED
         range 0x00 0x7F
         default 0x00
         help
-            0（既定）なら何もしない（通常のハードウェア PLL 校正のまま）。
+            UWB_PHY_PLL_COARSE_MODE=Fixed のときだけ使う、ch9 の PLL VCO
+            粗調整コード（PLL_COARSE_CODE レジスタの ch9 フィールド、
+            bits[6:0]）の直接指定値。begin() 成功直後に
+            uwb::Qm33120::forcePllCoarse() を呼び、生レジスタ操作で PLL を
+            再ロックする。個体ごとに OTP の値が違いうるため、通常は Fixed
+            ではなく既定の OTP モードを使うこと - Fixed は特定の1台だけを
+            狙った切り分け（例: OTP が壊れている個体の代替、他コードでの
+            実験）向け。
 
-            非ゼロを指定すると、begin() 成功直後に
-            uwb::Qm33120::forcePllCoarse() を呼び、ch9 の PLL VCO 粗調整
-            コード（PLL_COARSE_CODE レジスタの ch9 フィールド、bits[6:0]）を
-            この値へ強制し、生レジスタ操作で PLL を再ロックする。
-
-            firmware/twr の診断オプション UWB_TWR_DIAG_PLL_COARSE_CH9 で
-            見つかった「SS-TWR の成功率がタグの init() 時点のダイ温度で
-            決まる（コールドブートでは 0x23、ウォームブートでは 0x24 になり
-            後者は成功率が落ちる）」という現象（docs/HANDOFF.md）への対策を
-            本番機でも使えるようにした共通版。手順そのものは
-            uwb::Qm33120::forcePllCoarse()（components/uwb_qm33120/src/
-            uwb_qm33120_phy_kconfig.cpp）に移植してあり、firmware/twr は
-            引き続き自前のコピー（main.cpp の diagForcePllCoarseCh9()）を
-            使う（本オプションを有効にしても firmware/twr の挙動は変わらない）。
+            手順そのものは uwb::Qm33120::forcePllCoarse()
+            （components/uwb_qm33120/src/uwb_qm33120_phy_kconfig.cpp）に
+            移植してあり、firmware/twr は引き続き自前のコピー（main.cpp の
+            diagForcePllCoarseCh9()、Kconfig オプション
+            UWB_TWR_DIAG_PLL_COARSE_CH9）を使う（本メニューの選択は
+            firmware/twr の挙動に影響しない）。
 
 endmenu

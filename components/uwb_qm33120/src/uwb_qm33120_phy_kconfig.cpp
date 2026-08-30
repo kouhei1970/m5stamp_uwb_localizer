@@ -277,6 +277,32 @@ bool Qm33120::forcePllCoarse(uint8_t code)
     return ok;
 }
 
+bool Qm33120::forcePllCoarseFromOtp()
+{
+    // OTP address 0x35 = PLL_CC_ADDRESS, a file-local #define in
+    // components/qm33120w_sdk/dw3720/dw3720_device.c (not exported by any
+    // public header) - same address firmware/twr's boot-log dump reads
+    // (main.cpp logCalibrationDump(), `dwt_otpread(0x35U, &otpPllCc, 1)`).
+    // dwt_otpread() itself is public (deca_device_api.h).
+    uint32_t otpPllCc = 0;
+    dwt_otpread(0x35U, &otpPllCc, 1);
+
+    if (otpPllCc == 0) {
+        // Unprogrammed/erased OTP field - forcing code 0 would be worse
+        // than leaving the chip's own hardware calibration alone.
+        ESP_LOGW(kPhyTag,
+                 "forcePllCoarseFromOtp: otp_pll_cc=0x%08lX looks unprogrammed; leaving auto-cal in place",
+                 (unsigned long)otpPllCc);
+        return false;
+    }
+
+    // Ch9 VCO coarse-tune field is bits[6:0] (PLL_COARSE_CODE_CH9_VCO_COARSE_TUNE_BIT_MASK,
+    // dw3720_deca_regs.h) - same mask forcePllCoarse() itself applies.
+    const uint8_t code = static_cast<uint8_t>(otpPllCc & PLL_COARSE_CODE_CH9_VCO_COARSE_TUNE_BIT_MASK);
+    ESP_LOGI(kPhyTag, "forcePllCoarseFromOtp: otp_pll_cc=0x%08lX -> code=0x%02X", (unsigned long)otpPllCc, code);
+    return forcePllCoarse(code);
+}
+
 void Qm33120::logPhy(const char* tag) const
 {
     const PhyConfig& phy = _impl->applied_phy;
@@ -286,6 +312,27 @@ void Qm33120::logPhy(const char* tag) const
              (phy.dataRate == DataRate::Rate850K) ? "850kbps" : "6.8Mbps", static_cast<unsigned>(phy.channel),
              phy.txPreambleCode, phy.rxPreambleCode, static_cast<unsigned>(phy.sfdType), (unsigned long)phy.txPower,
              phy.pgDelay);
+}
+
+void Qm33120::logCal(const char* tag) const
+{
+    // firmware/twr/main/main.cpp の logCalibrationDump() の PLL 部分と
+    // 一字一句同じ書式（scripts が grep する - コーディネータの指示）。
+    // calReadReg32/8 はこのファイル上の forcePllCoarse() と同じ
+    // ローカルヘルパを再利用する。
+    const uint32_t pllCoarse = calReadReg32(PLL_COARSE_CODE_ID);
+    const uint32_t pllCfg    = calReadReg32(PLL_CFG_ID);
+    const uint32_t pllCal    = calReadReg32(PLL_CAL_ID);
+    const uint32_t pllStatus = calReadReg32(PLL_STATUS_ID);
+    const int pllLock        = ((pllStatus & PLL_STATUS_PLL_LOCK_FLAG_BIT_MASK) != 0U) ? 1 : 0;
+    uint32_t otpPllCc        = 0;
+    dwt_otpread(0x35U, &otpPllCc, 1); // PLL_CC_ADDRESS - see forcePllCoarseFromOtp()'s comment for provenance.
+    const uint8_t xtalReg = calReadReg8(XTAL_ID);
+    ESP_LOGI(tag,
+             "cal: pll_coarse=0x%08lX pll_cfg=0x%08lX pll_cal=0x%08lX pll_status=0x%08lX pll_lock=%d "
+             "otp_pll_cc=0x%08lX xtal_reg=0x%02X",
+             (unsigned long)pllCoarse, (unsigned long)pllCfg, (unsigned long)pllCal, (unsigned long)pllStatus,
+             pllLock, (unsigned long)otpPllCc, xtalReg);
 }
 
 } // namespace uwb

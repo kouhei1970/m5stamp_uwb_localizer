@@ -105,7 +105,7 @@ menu "UWB Anchor Configuration"
 
     choice UWB_TIMING_PROFILE
         prompt "TWR 遅延プリセット"
-        default UWB_TIMING_PROFILE_BOTH_IRQ
+        default UWB_TIMING_PROFILE_POLLING_BOTH
         help
             docs/TIMING_PRESETS.md で確定した、役割(タグ/アンカー) × IRQ有無の
             組み合わせごとの遅延パラメータ一式（応答遅延・受信タイムアウト等）
@@ -123,13 +123,13 @@ menu "UWB Anchor Configuration"
             （docs/TIMING_PRESETS.md §4(b)）。
 
         config UWB_TIMING_PROFILE_POLLING_BOTH
-            bool "両側ポーリング（約31Hz。IRQ が使えないときのフォールバック）"
+            bool "両側ポーリング（**既定**。850kbps向けに実機で検証済み。docs/HANDOFF.md §0-D）"
 
         config UWB_TIMING_PROFILE_ANCHOR_IRQ
-            bool "アンカーのみ IRQ（約59Hz。タグ側の IRQ だけ落とすとき）"
+            bool "アンカーのみ IRQ（約59Hz、6.8Mbps/128前提。850kbpsでは未検証・未再導出）"
 
         config UWB_TIMING_PROFILE_BOTH_IRQ
-            bool "両側 IRQ（約90Hz。**既定**。全ボードで IRQ が取れる）"
+            bool "両側 IRQ（約90Hz、6.8Mbps/128前提。850kbpsでは未検証・未再導出）"
 
     endchoice
 
