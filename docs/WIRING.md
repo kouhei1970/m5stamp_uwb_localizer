@@ -89,6 +89,12 @@ device." と明記している。
 ホスト側のピン番号は `boards/stamps3.h` と一致させてある。**`5V` には絶対に
 繋がないこと**（§5.1）。
 
+![FPC-DIP変換基板とStampS3 BreakOutの配線図](../assets/wiring_fpc_breakout.png)
+
+*上表を実物写真に重ねた配線図（赤=3.3V、黒=GND、黄=信号線）。1〜2番は変換基板内で
+ブリッジ、3番は配線不要。インタラクティブ版・最新版は
+[こちら（Artifact）](https://claude.ai/code/artifact/8d72be3d-e3eb-4c30-ad1a-1160d19e13b4)。*
+
 ### 2.4 16MHz で走らせるための注意
 
 **この経路は FPC ケーブル + 変換基板 + ジャンパを挟む。** §3.4 が

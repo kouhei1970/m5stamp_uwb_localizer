@@ -363,6 +363,12 @@ idf.py build
 **合計 10 本**（信号 8 本 + GND 2 本）。ホスト側のピン番号は `boards/stamps3.h` の
 **暫定値**です。**実配線前に必ず現物と照合してください。**
 
+![FPC-DIP変換基板とStampS3 BreakOutの配線図](../assets/wiring_fpc_breakout.png)
+
+*上表を実物写真に重ねた配線図（赤=3.3V、黒=GND、黄=信号線）。1〜2番は変換基板内で
+ブリッジ、3番は配線不要。インタラクティブ版・最新版は
+[こちら（Artifact）](https://claude.ai/code/artifact/8d72be3d-e3eb-4c30-ad1a-1160d19e13b4)。*
+
 > **`5V` ピンには絶対に繋がないこと。** VCC_3V3 は QM33120W の電源レールに
 > 直結しており、公式仕様 3.3V・絶対最大定格 4.0V（3.6V 超は仕様外）です。
 > 5V を入れると壊れます。詳細は [`WIRING.md` §5.1](WIRING.md)。
