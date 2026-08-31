@@ -11,7 +11,9 @@
  *
  * JSON Lines の形式は third_party/uwb_localizer/docs/UWB_PROTOCOL.md の
  * 「方法B」（JsonLinesHal）に寄せてある:
- *   - 起動時に1回、"type":"anchors" 行を出す（Anchor.from_dict がそのまま読める形）
+ *   - 起動時に1回 + stats と同じ周期で、"type":"anchors" 行を出す
+ *     （Anchor.from_dict がそのまま読める形。周期再送は後から接続した
+ *     ブラウザ等の購読者にアンカー座標を届けるため）
  *   - 毎エポック、"type":"meas" 行を出す（Measurement.from_dict がそのまま読める形。
  *     欠測したアンカーは単に含めない＝JsonLinesHal 側は「その周は測距が少なかった」
  *     として扱える）
@@ -639,9 +641,10 @@ static constexpr UBaseType_t kLogTaskPrio = 10;
  * @brief JSON Lines 出力・診断ログ用タスク（コア0、docs/ARCHITECTURE_V2.md §3.2）。
  *
  * uwb::RangingService::resultQueue() をブロッキング受信し、"meas"/"fix" 行を
- * 出す。CONFIG_UWB_TAG_STATS_INTERVAL_MS ごとに "stats" 行、コンソールが
- * アンカー表を書き換えるたび（tableGeneration() の変化を検知）に "anchors"
- * 行を出し直す。「測位不能」警告の間引きと、起動5秒後のスタック残量ログも
+ * 出す。CONFIG_UWB_TAG_STATS_INTERVAL_MS ごとに "stats" 行と "anchors" 行
+ * （後から接続した購読者への座標の再周知）、コンソールがアンカー表を
+ * 書き換えるたび（tableGeneration() の変化を検知）にも "anchors" 行を
+ * 出し直す。「測位不能」警告の間引きと、起動5秒後のスタック残量ログも
  * ここで行う。
  */
 static void uwbLogTask(void* argRaw)
@@ -716,6 +719,15 @@ static void uwbLogTask(void* argRaw)
             if ((nowUs - lastStatsUs) >= static_cast<int64_t>(CONFIG_UWB_TAG_STATS_INTERVAL_MS) * 1000) {
                 xSemaphoreTake(tableMtx, portMAX_DELAY);
                 printStatsLine(t, table, service, result.cycleMs);
+                // "anchors" 行も stats と同じ周期で再送する。起動時の1回は
+                // uwb::net::start() より前なので配信に乗らず、後から繋いだ
+                // ブラウザはアンカー座標を知る術がない（ダッシュボードの
+                // 平面図はこの行が無いとアンカー点も測距円も描けない）。
+                // Re-send the "anchors" line at the stats cadence: the one-shot
+                // at boot happens before uwb::net::start() and never reaches the
+                // sink, so late-joining browsers would otherwise never learn the
+                // anchor coordinates (the plan view draws nothing without them).
+                printAnchorsLine(table);
                 xSemaphoreGive(tableMtx);
                 lastStatsUs = nowUs;
             }
