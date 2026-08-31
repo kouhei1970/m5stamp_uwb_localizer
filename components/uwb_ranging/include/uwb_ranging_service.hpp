@@ -25,7 +25,7 @@
  *
  *   1. tableMutex() を取る（アンカー表の読み取り中はコンソールからの
  *      table.set()/update() を止める。詳しくは tableMutex() のコメント）
- *   2. runCycle() → solve(Lv0) → solve(Lv2) → (enableEkf なら) updateEkf()
+ *   2. runCycle() → solve(Lv0) → solve(Lv2)
  *   3. アンカーごとの成功率統計（scheduler の内部状態）をこの周期の
  *      スナップショットへコピーする（stats() 用。tableMutex 保持中に行う
  *      ことで scheduler 側の書き込みと競合しないようにする）
@@ -34,6 +34,21 @@
  *      上書き・resultQueue()（長さ4、満杯なら最古を捨てて再送）へ投入・
  *      getLatest() 用のメールボックスへコピー
  *   6. cycleIntervalMs > 0 なら vTaskDelayUntil() で周期を刻む
+ *
+ * **EKF（Lv3）は上の手順2にはもう出てこない。** enableEkf のときは
+ * RangingScheduler::setSampleHook() で登録した onRangingSample() が、
+ * runCycle() の内側・測距1本が成功するたびに（rangeOne() の直後、同じ
+ * タスク文脈のまま同期的に）呼ばれ、その場で
+ * PositioningPipeline::updateEkf(sample.t_us由来の秒, &sample, 1) を実行する
+ * （測距1本ごとの逐次観測更新）。手順1でtableMutex()を取ってから手順2の
+ * runCycle()を呼ぶので、onRangingSample()もその内側＝**tableMutex()保持中に
+ * 実行される**（新しいロックは増やしていない。手順2の一部として同じ規律に
+ * 収まる）。周期末尾では、その周期中に得た最後のEKF結果（lastEkfFix_）と
+ * 逐次更新の合計所要時間（ekfUsThisCycle_）をCycleResult::lv3/solveUsLv3へ
+ * 詰めるだけで、この専用タスクからのupdateEkf()呼び出し自体は手順2の中
+ * （runCycle()の内側）で完結している。旧実装（周期末尾で全サンプルを
+ * まとめて1回updateEkf()する方式）は廃止した — 同じ測距をuwb_ekfへ二重に
+ * 入れないための変更（詳しくはonRangingSample()のコメント参照）。
  *
  * この処理タスクは **ホットループ中に ESP_LOG を一切呼ばない**（エラー
  * 経路を除く。docs/ARCHITECTURE_V2.md §1「電波を触るタスクは1つ」の精神を
@@ -337,13 +352,21 @@ public:
     /**
      * @brief アンカー登録テーブルを保護するミューテックス。
      *
-     * **処理タスクは1周期の間（runCycle() の開始から solve()/updateEkf()
-     * の終了まで）ずっとこれを保持する。** AnchorTable::set() は「ソルバから
-     * 読まれている最中に呼んではいけない」（uwb_ranging_anchor_table.hpp
-     * の同クラス冒頭コメント）ため、周期の一部だけ保持する方式だと
-     * table.set() との競合を防げない。コンソール等がアンカー表を編集する
-     * ときは、必ずこれを取ってから table.set()/update() を呼び、
-     * 編集が終わったら離すこと（tag_console.cpp 参照）。
+     * **処理タスクは1周期の間（runCycle() の開始から solve() の終了まで、
+     * enableEkf のときはさらに逐次EKF更新も含めて）ずっとこれを保持する。**
+     * AnchorTable::set() は「ソルバから読まれている最中に呼んではいけない」
+     * （uwb_ranging_anchor_table.hpp の同クラス冒頭コメント）ため、周期の
+     * 一部だけ保持する方式だと table.set() との競合を防げない。コンソール等
+     * がアンカー表を編集するときは、必ずこれを取ってから table.set()/
+     * update() を呼び、編集が終わったら離すこと（tag_console.cpp 参照）。
+     *
+     * **逐次EKF更新のロック規律**: enableEkf のときに呼ばれる
+     * onRangingSample()（RangingScheduler::setSampleHook() で登録）は
+     * runCycle() の内側から同期的に呼ばれるので、新しいロックを増やさず
+     * このtableMutex_の保持区間にそのまま収まる（table_->modeDecision() の
+     * 参照も pipeline_->updateEkf() の呼び出しも、他タスクによる
+     * table.set()/update() と競合しない。uwb_ranging_service.hpp 冒頭の
+     * タスク・キュー構成コメント参照）。
      *
      * この設計の代償: table.set()/update() を伴う編集コマンドは、
      * 実行中の1周期（DS-TWR・再試行込みで最大で数百ms程度）ぶん待たされる
@@ -441,6 +464,42 @@ private:
     static void taskTrampoline(void* arg);
     void taskMain();
 
+    /**
+     * @brief RangingScheduler::setSampleHook() へ渡すトランポリン。
+     *
+     * uwb::RangingScheduler は uwb::RangingService（本クラス）を知らない
+     * （ハード依存/ハード非依存の分離を保つため）ので、C形式の関数ポインタ
+     * から this を復元して onRangingSample() へ渡すだけの薄い橋渡し。
+     * taskTrampoline() と同じ作法。
+     */
+    static void sampleHookTrampoline(const RangingSample& sample, void* user);
+
+    /**
+     * @brief 測距1本ごとの逐次EKF観測更新（本体）。
+     *
+     * RangingScheduler::runCycle() の内側、rangeOne() が成功を返した直後に
+     * **同じタスク文脈で同期的に**呼ばれる（taskMain() が tableMutex_ を
+     * 保持したまま runCycle() を呼んでいる区間の内側 = tableMutex_ 保持中。
+     * uwb_ranging_service.hpp 冒頭のタスク・キュー構成コメントと
+     * tableMutex() のコメント参照）。
+     *
+     * enableEkf==false、または現在の測位モードが RangingOnly
+     * （有効アンカー2台以下）のときは何もしない（78d7cfa で入った測位モード
+     * 自動切替の規律をここでも守る。taskMain() の rangingOnly 判定と
+     * 同じ条件）。
+     *
+     * サンプル1本ぶんだけを渡す（updateEkf(tS, &sample, 1)）ことが本改修の
+     * 要— サンプルごとの実際の測距時刻（RangingSample::t_us）で処理される
+     * ようにするため、周期末尾でまとめて渡す旧実装を廃止した。周期末尾で
+     * まとめて呼ぶ旧実装と違い、**同じ測距を二重にEKFへ入れないよう**、
+     * taskMain() 側は周期末尾で改めて updateEkf() を呼ばない（このメソッドの
+     * 呼び出しだけが唯一の入口になる）。結果は lastEkfFix_ に保持し、
+     * ekfUpdatedThisCycle_/ekfUsThisCycle_ で「この周期に更新があったか」
+     * 「逐次更新の合計所要時間」を taskMain() へ伝える（taskMain() が
+     * runCycle() 呼び出し前にこの3つをリセットする）。
+     */
+    void onRangingSample(const RangingSample& sample);
+
     Qm33120* radio_       = nullptr;
     AnchorTable* table_    = nullptr;
     ServiceConfig cfg_;
@@ -450,6 +509,22 @@ private:
     // - new/delete による所有）。
     RangingScheduler* scheduler_  = nullptr;
     PositioningPipeline* pipeline_ = nullptr;
+
+    /** 逐次EKF更新（onRangingSample()）の状態。処理タスクからしか
+     *  触らない（他タスクと共有しないので排他不要。CycleResult へ詰める
+     *  ためだけの一時的な集計置き場）。
+     *
+     *  lastEkfFix_: 直近に成功したupdateEkf(...,1)の結果。この周期に1本も
+     *  成功しなかった場合、taskMain()は前の周期のこの値をそのまま使い、
+     *  ok=falseだけ上書きして返す（Lv0/Lv2が欠測時にsolvable=false,ok=false
+     *  を返すのと意味論を揃えるため。onRangingSample()と対になるコメント
+     *  参照）。
+     *  ekfUpdatedThisCycle_/ekfUsThisCycle_: 今の周期でonRangingSample()が
+     *  実際にupdateEkf()を呼んだか、その合計所要時間[us]。taskMain()が
+     *  runCycle()を呼ぶ直前に両方リセットする。 */
+    PositionResult lastEkfFix_{};
+    bool ekfUpdatedThisCycle_ = false;
+    uint32_t ekfUsThisCycle_    = 0;
 
     TaskHandle_t taskHandle_ = nullptr;
     volatile bool running_    = false;

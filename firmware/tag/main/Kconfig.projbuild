@@ -242,15 +242,28 @@ menu "UWB Tag Configuration"
             コンソールを無効にしたファームを焼く」運用もできる。
 
     config UWB_TAG_ENABLE_EKF
-        bool "毎周期 Lv3 EKF (uwb_ekf) も呼ぶ"
-        default n
+        bool "測距1本ごとに逐次 Lv3 EKF (uwb_ekf) を更新する"
+        default y
         help
-            有効にすると、Lv0/Lv2の呼び出しと同じ単一タスクから
-            uwb::PositioningPipeline::updateEkf() を毎周期呼ぶ
-            （uwb_ekf はスレッド安全でないため。uwb_ranging_pipeline.hpp
-            参照）。JSON LinesのfixログにLv3のセクションと計算時間
-            (solve_us_lv3) が追加される。既定は無効
-            （Lv0/Lv2の本番経路の検証にはEKFの状態管理までは不要なため）。
+            有効にすると、Lv0/Lv2の呼び出しと同じ単一タスク（測距を回す
+            uwb_ranging_svcタスク）から uwb::PositioningPipeline::updateEkf()
+            を呼ぶ（uwb_ekf はスレッド安全でないため。
+            uwb_ranging_pipeline.hpp 参照）。
+
+            呼び出しは周期末尾でまとめて1回ではなく、**測距1本が成功する
+            たびに逐次**行う（uwb::RangingScheduler::setSampleHook() で
+            登録したフックが runCycle() の内側で同期的に呼ぶ。
+            uwb_ranging_scheduler.hpp の RangingSampleHook / uwb_ranging_
+            service.hpp の onRangingSample() 参照）。各距離をその距離が
+            実際に測られた時刻（RangingSample::t_us）で処理できるため、
+            1周期の間に台数ぶん測距時刻がずれる（同一周でも台ごとに
+            最大で1周の所要時間ぶん差が出る）動くタグでの追従精度が
+            向上する。
+
+            JSON Linesのfixログには従来どおりLv3のセクションと計算時間
+            (solve_us_lv3、逐次更新の合計) が追加される。既定は有効
+            （逐次更新方式への切り替えに伴い、本番運用でのLv3有効化を
+            既定にした）。
 
     config UWB_TAG_FIXED_Z_MM
         int "2D測位（dim=2固定）で使う高さの既定値 [mm]"

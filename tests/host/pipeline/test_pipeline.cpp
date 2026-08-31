@@ -1625,6 +1625,273 @@ static void scenario24_cfgstore_positioning_mode()
           "AnchorTableブロブを測位モードとして読んでもBadKindにならなかった");
 }
 
+/* ==================================================================== *
+ * 25. EKF逐次更新: 静止タグで「一括更新」と「1本ずつn=1の逐次更新」の
+ *     最終位置がほぼ一致すること
+ *
+ * uwb::RangingService は78d7cfaまで、1周期分の測距をまとめて
+ * PositioningPipeline::updateEkf(tS, samples, n) を1回だけ呼んでいたが、
+ * 本改修で「測距1本が成功するたびにn=1で逐次呼ぶ」方式に変えた
+ * （uwb_ranging_scheduler.hpp RangingSampleHook /
+ * uwb_ranging_service.hpp onRangingSample() 参照）。数学的には
+ * uwb_ekf_update()（components/uwb_loc/src/uwb_ekf.c）はスカラー逐次更新
+ * （観測1本ずつをKalman gainで取り込む）で書かれているので、同じ観測集合を
+ * 「まとめて1回」渡しても「1本ずつ」渡しても、同じ時刻に到着したとみなせる
+ * 限り最終推定は一致するはず。ここではその等価性を、静止タグ（真の距離が
+ * 時刻に依存しない）で確認する。
+ * ==================================================================== */
+static void scenario25_ekf_sequential_matches_batch_static()
+{
+    std::printf("--- 25. EKF逐次更新: 静止タグで一括更新と逐次更新(n=1)の最終位置が一致 ---\n");
+
+    // dim=3のEKF bootstrap（components/uwb_loc/src/uwb_ekf.cのbootstrap()）は
+    // dim+2=5本の異なるアンカーの観測が集まるまで初期化できない
+    // （4本しかない配置では原理上いつまで待っても初期化できない —
+    // pendingの年齢トリム後は必ず age<=max_dtになり、m<dim+1+2にとどまる
+    // 限り「窓を超えたら妥協する」分岐に到達しないため）。よってシナリオ2/3/4
+    // と同じ5台配置を使う。
+    static const AnchorEntry entries[5] = {
+        {0x0001, {0.0f, 0.0f, 2.4f}, 0.0f, true}, {0x0002, {5.0f, 0.0f, 0.2f}, 0.0f, true},
+        {0x0003, {5.0f, 5.0f, 2.4f}, 0.0f, true}, {0x0004, {0.0f, 5.0f, 0.2f}, 0.0f, true},
+        {0x0005, {2.5f, 2.5f, 2.4f}, 0.0f, true},
+    };
+    const float truth[3] = {2.0f, 3.0f, 1.2f};
+
+    RangingSample samples[5];
+    makeSamples(entries, 5, truth, samples);
+
+    const double dtCycle = 0.128; // 1周期 [s]（docs/HANDOFF.md §5 Fが挙げる32ms x 4台相当の桁）
+    const int numCycles   = 40;
+
+    // --- 一括: 同じ周期分をn=5でまとめて渡す（旧実装の再現） ---
+    AnchorTable tableBatch;
+    CHECK(tableBatch.set(entries, 5), "tableBatch.set() 失敗");
+    PositioningPipeline batch(tableBatch);
+    batch.initEkf();
+
+    PositionResult batchFix;
+    double t = 0.0;
+    for (int cycle = 0; cycle < numCycles; ++cycle) {
+        t += dtCycle;
+        batchFix = batch.updateEkf(t, samples, 5);
+    }
+
+    // --- 逐次: 同じ測距値を1本ずつn=1で渡す（新実装の再現）。静止タグなので
+    // 各アンカーの真の距離自体は時刻によらず一定。 ---
+    AnchorTable tableSeq;
+    CHECK(tableSeq.set(entries, 5), "tableSeq.set() 失敗");
+    PositioningPipeline seq(tableSeq);
+    seq.initEkf();
+
+    PositionResult seqFix;
+    double ts             = 0.0;
+    const double dtAnchor = dtCycle / 5.0;
+    for (int cycle = 0; cycle < numCycles; ++cycle) {
+        for (int a = 0; a < 5; ++a) {
+            ts += dtAnchor;
+            seqFix = seq.updateEkf(ts, &samples[a], 1);
+        }
+    }
+
+    CHECK(batchFix.ok, "一括更新がok=0のまま終わった");
+    CHECK(seqFix.ok, "逐次更新がok=0のまま終わった");
+    CHECK(dist3(batchFix.p, truth) < 0.01f, "一括更新の最終位置が真値と一致しない (誤差=%.6f)",
+          static_cast<double>(dist3(batchFix.p, truth)));
+    CHECK(dist3(seqFix.p, truth) < 0.01f, "逐次更新の最終位置が真値と一致しない (誤差=%.6f)",
+          static_cast<double>(dist3(seqFix.p, truth)));
+    CHECK(dist3(batchFix.p, seqFix.p) < 0.005f,
+          "静止タグで一括更新と逐次更新(n=1)の最終位置が大きく食い違う (差=%.6f)",
+          static_cast<double>(dist3(batchFix.p, seqFix.p)));
+}
+
+/* ==================================================================== *
+ * 26. EKF逐次更新: 移動タグで実測定時刻を使うと一括更新より位置誤差が
+ *     小さいこと（本改修の効果の実証）
+ *
+ * 動くタグでは、1周期内でアンカーを順に測るため台ごとに測距時刻が
+ * ずれる（RangingSample::t_us、uwb_ranging_types.hppのフィールドコメント。
+ * 実測: 1周32msで5台を順に測ると同一周でも台ごとに最大32msの差があり、
+ * 1m/sなら32mmの歪みになる。docs/HANDOFF.md §5 F）。旧実装は周期末尾で
+ * 全アンカー分をまとめて「周期開始時刻」1個だけを付けてupdateEkf()して
+ * いたため、後の方に測った距離ほど実際の測定時刻とのズレが大きい状態で
+ * EKFに渡っていた。本改修（測距1本ごとに、その距離が実際に測られた時刻
+ * RangingSample::t_usでn=1更新する）はこのズレを解消する。
+ *
+ * ここでは同一の合成軌道・合成距離に対し、
+ *   (a) 旧実装相当: 各周期、アンカーごとの真の測定時刻で計算した距離を
+ *       「周期開始時刻」1個にまとめてn=5で一括更新
+ *   (b) 新実装相当: 各アンカーの真の測定時刻でn=1ずつ逐次更新
+ * を行い、周期末（最後のアンカーの測定時刻＝次周期の開始時刻）での推定
+ * 位置と真値との誤差を比較する。(a)は一括更新後にupdateEkf(tRef,nullptr,0)
+ * （観測0本＝予測のみ）で比較時刻をそろえる（(b)は最後のn=1更新自体が
+ * ちょうどその時刻なのでそのまま使える）。
+ * ==================================================================== */
+static void scenario26_ekf_sequential_reduces_moving_tag_error()
+{
+    std::printf("--- 26. EKF逐次更新: 移動タグで実測定時刻を使うと一括更新より誤差が小さい ---\n");
+
+    // シナリオ25と同じ理由（dim=3 bootstrapにはdim+2=5本が要る）で5台配置。
+    // 高さ方向にも段差があり、シナリオ2/3/4と同じ「立体配置」。
+    static const AnchorEntry entries[5] = {
+        {0x0001, {0.0f, 0.0f, 2.4f}, 0.0f, true}, {0x0002, {5.0f, 0.0f, 0.2f}, 0.0f, true},
+        {0x0003, {5.0f, 5.0f, 2.4f}, 0.0f, true}, {0x0004, {0.0f, 5.0f, 0.2f}, 0.0f, true},
+        {0x0005, {2.5f, 2.5f, 2.4f}, 0.0f, true},
+    };
+
+    const float p0[3] = {0.5f, 2.5f, 1.2f};
+    const float v[3]  = {0.75f, 0.0f, 0.0f}; // 等速直線 0.75 m/s（指定の0.5〜1 m/s帯の中央）
+
+    const double dtAnchor      = 0.032; // 1台あたりの測距間隔 [s]（docs/HANDOFF.md §5 Fの32ms）
+    const size_t numAnchors    = 5;
+    const double cyclePeriod  = dtAnchor * static_cast<double>(numAnchors);
+    const int numCycles         = 100;
+    const int warmupCycles     = 20; // bootstrap直後の過渡応答を比較から除く
+
+    AnchorTable tableBatch;
+    CHECK(tableBatch.set(entries, 5), "tableBatch.set() 失敗");
+    PositioningPipeline batch(tableBatch);
+    batch.initEkf();
+
+    AnchorTable tableSeq;
+    CHECK(tableSeq.set(entries, 5), "tableSeq.set() 失敗");
+    PositioningPipeline seq(tableSeq);
+    seq.initEkf();
+
+    double sumSqBatch = 0.0, sumSqSeq = 0.0;
+    float maxErrBatch = 0.0f, maxErrSeq = 0.0f;
+    int nCompared        = 0;
+    double tCycleStart = 0.0;
+
+    for (int cycle = 0; cycle < numCycles; ++cycle) {
+        RangingSample samples[5];
+        for (size_t a = 0; a < numAnchors; ++a) {
+            const double tAnchor = tCycleStart + static_cast<double>(a + 1) * dtAnchor;
+            const float pos[3]    = {
+                p0[0] + static_cast<float>(v[0] * tAnchor),
+                p0[1] + static_cast<float>(v[1] * tAnchor),
+                p0[2] + static_cast<float>(v[2] * tAnchor),
+            };
+            samples[a].anchor_index = a;
+            samples[a].ok             = true;
+            samples[a].distance_m     = dist3(pos, entries[a].pos);
+            samples[a].elapsed_ms     = 5;
+        }
+
+        // (a) 旧実装相当: 「周期開始時刻」1個にまとめてn=5で一括更新。
+        const PositionResult batchFixRaw = batch.updateEkf(tCycleStart, samples, 5);
+        (void)batchFixRaw;
+        const double tRef = tCycleStart + cyclePeriod;
+        // 予測のみ(n=0)で比較時刻tRefへそろえる（新しい観測は追加しない）。
+        const PositionResult batchFix = batch.updateEkf(tRef, nullptr, 0);
+
+        // (b) 新実装相当: 各アンカーの実測定時刻でn=1ずつ逐次更新。
+        PositionResult seqFix;
+        for (size_t a = 0; a < numAnchors; ++a) {
+            const double tAnchor = tCycleStart + static_cast<double>(a + 1) * dtAnchor;
+            seqFix                  = seq.updateEkf(tAnchor, &samples[a], 1);
+        }
+
+        const float truthRef[3] = {
+            p0[0] + static_cast<float>(v[0] * tRef),
+            p0[1] + static_cast<float>(v[1] * tRef),
+            p0[2] + static_cast<float>(v[2] * tRef),
+        };
+
+        if (cycle >= warmupCycles) {
+            CHECK(batchFix.ok, "一括更新がbootstrap後にok=0になった (cycle=%d)", cycle);
+            CHECK(seqFix.ok, "逐次更新がbootstrap後にok=0になった (cycle=%d)", cycle);
+            const float errBatch = dist3(batchFix.p, truthRef);
+            const float errSeq    = dist3(seqFix.p, truthRef);
+            sumSqBatch += static_cast<double>(errBatch) * static_cast<double>(errBatch);
+            sumSqSeq    += static_cast<double>(errSeq) * static_cast<double>(errSeq);
+            if (errBatch > maxErrBatch) maxErrBatch = errBatch;
+            if (errSeq > maxErrSeq) maxErrSeq = errSeq;
+            ++nCompared;
+        }
+
+        tCycleStart += cyclePeriod;
+    }
+
+    CHECK(nCompared > 0, "比較対象の周期が無い（warmupCycles設定を確認）");
+    const double rmsBatch = std::sqrt(sumSqBatch / nCompared);
+    const double rmsSeq    = std::sqrt(sumSqSeq / nCompared);
+    std::printf(
+        "    速度%.2fm/s、%d周期分(周期=%.0fms): 一括更新RMS誤差=%.4fm(最大%.4fm) / "
+        "逐次更新RMS誤差=%.5fm(最大%.5fm)\n",
+        static_cast<double>(v[0]), nCompared, cyclePeriod * 1000.0, rmsBatch, static_cast<double>(maxErrBatch),
+        rmsSeq, static_cast<double>(maxErrSeq));
+
+    // 本改修の効果そのもの: 実測定時刻を使う逐次更新の方が、周期開始時刻に
+    // まとめる一括更新より明確に誤差が小さいこと。
+    CHECK(rmsSeq < rmsBatch,
+          "逐次更新の方が一括更新よりRMS誤差が小さいはず (一括=%.5f 逐次=%.5f)", rmsBatch, rmsSeq);
+    // 具体的な水準も確認しておく（0.75m/s・32ms間隔なら理論上ずれは
+    // 数cm〜十数cmのオーダーになるはず。プローブ実測: 一括 RMS≈0.095m、
+    // 逐次 RMS≈1e-5m）。
+    CHECK(rmsBatch > 0.05, "一括更新のRMS誤差が想定より小さすぎる（テスト設定を確認）: %.5f", rmsBatch);
+    CHECK(rmsSeq < 0.01, "逐次更新のRMS誤差が想定より大きい: %.5f", rmsSeq);
+}
+
+/* ==================================================================== *
+ * 27. EKF逐次更新: 1本だけの周期でも更新が通ること（bootstrap中・bootstrap後）
+ *
+ * uwb::RangingService::onRangingSample() は測距が1本成功するたびに
+ * updateEkf(tS, &sample, 1) を呼ぶ。1周期に1本しか成功しない（他は欠測）
+ * ケースでも、EKF側（uwb_ekf_update()）が例外なく動くことを、
+ * bootstrap（立ち上げ）の最中と完了後の両方で確認する。
+ * ==================================================================== */
+static void scenario27_ekf_single_sample_cycle()
+{
+    std::printf("--- 27. EKF逐次更新: 1本だけの周期でも更新が通る（bootstrap中/後） ---\n");
+
+    static const AnchorEntry entries[5] = {
+        {0x0001, {0.0f, 0.0f, 2.4f}, 0.0f, true}, {0x0002, {5.0f, 0.0f, 0.2f}, 0.0f, true},
+        {0x0003, {5.0f, 5.0f, 2.4f}, 0.0f, true}, {0x0004, {0.0f, 5.0f, 0.2f}, 0.0f, true},
+        {0x0005, {2.5f, 2.5f, 2.4f}, 0.0f, true},
+    };
+    const float truth[3] = {2.0f, 3.0f, 1.2f};
+
+    AnchorTable table;
+    CHECK(table.set(entries, 5), "AnchorTable::set() 失敗");
+    PositioningPipeline pipeline(table);
+    pipeline.initEkf();
+
+    RangingSample full[5];
+    makeSamples(entries, 5, truth, full);
+
+    double t                = 0.0;
+    const double dtStep = 0.01; // 10ms間隔（1周期=1本のイメージ）
+
+    // --- bootstrap中: 4本目まではdim+2=5本に届かず初期化未完了のまま
+    // （components/uwb_loc/src/uwb_ekf.c bootstrap()）。n=1で呼んでも
+    // クラッシュせず、solvable=1・ok=0の妥当な値が返ること。 ---
+    for (int a = 0; a < 4; ++a) {
+        t += dtStep;
+        const PositionResult r = pipeline.updateEkf(t, &full[a], 1);
+        CHECK(r.solvable, "bootstrap中でもsolvable=0になった（initEkf済みのはず。i=%d）", a);
+        CHECK(!r.ok, "5本そろう前なのにok=1になった（bootstrap未完了のはず。i=%d）", a);
+    }
+
+    // --- 5本目のn=1更新でbootstrapが完了すること。 ---
+    t += dtStep;
+    const PositionResult r5 = pipeline.updateEkf(t, &full[4], 1);
+    CHECK(r5.ok, "5本目のn=1更新でbootstrapが完了しなかった (ok=%d)", r5.ok);
+    CHECK(dist3(r5.p, truth) < 1e-3f, "bootstrap直後の位置が真値と一致しない (誤差=%.6f)",
+          static_cast<double>(dist3(r5.p, truth)));
+
+    // --- bootstrap後: 1本だけの周期を何度繰り返しても正しく更新が通ること。 ---
+    bool allOkAfterBootstrap = true;
+    for (int i = 0; i < 20; ++i) {
+        t += dtStep;
+        const size_t a           = static_cast<size_t>(i % 5);
+        const PositionResult r = pipeline.updateEkf(t, &full[a], 1);
+        if (!r.ok) {
+            allOkAfterBootstrap = false;
+        }
+    }
+    CHECK(allOkAfterBootstrap, "bootstrap後、1本だけの周期(n=1)の連続更新のどこかでok=0になった");
+}
+
 int main()
 {
     std::printf("=== tests/host/pipeline: uwb_ranging 測位パイプライン 合成データ検証 ===\n");
@@ -1655,6 +1922,9 @@ int main()
     scenario22_mode_manual_override();
     scenario23_mode_zfixed_reflected_in_fix();
     scenario24_cfgstore_positioning_mode();
+    scenario25_ekf_sequential_matches_batch_static();
+    scenario26_ekf_sequential_reduces_moving_tag_error();
+    scenario27_ekf_single_sample_cycle();
 
     std::printf("\n=== %d 件中 %d 件失敗 ===\n", g_run, g_fail);
     return (g_fail == 0) ? 0 : 1;

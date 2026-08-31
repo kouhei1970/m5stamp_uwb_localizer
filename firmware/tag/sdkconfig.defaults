@@ -63,3 +63,6 @@ CONFIG_LWIP_MAX_SOCKETS=16
 CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU0=y
 # Wi-Fiドライバの内部タスクもコア0に固定する（同上の理由）。
 CONFIG_ESP_WIFI_TASK_PINNED_TO_CORE_0=y
+
+# 測距1本ごとの逐次EKF更新 (Lv3) を既定で有効にする / enable sequential EKF by default
+CONFIG_UWB_TAG_ENABLE_EKF=y

@@ -182,6 +182,15 @@ size_t RangingScheduler::runCycle(RangingSample* samplesOut, size_t maxSamples)
             stats_[i].rescued++;
         }
 
+        // 測距1本ごとのフック（逐次EKF観測更新用）。成功した測距だけに絞って
+        // 呼ぶ（欠測ではEKFへ渡す観測が無いので呼ばない）。rangeOne() を
+        // 呼んでいるこのタスクの文脈のまま**同期的に**呼ぶ — 新しいタスクや
+        // キューは作らない（RangingSampleHook のコメント参照。uwb_ekf が
+        // スレッド非安全なため）。
+        if (sample.ok && sampleHook_ != nullptr) {
+            sampleHook_(sample, sampleHookUser_);
+        }
+
         if (n < maxSamples) {
             samplesOut[n++] = sample;
         }

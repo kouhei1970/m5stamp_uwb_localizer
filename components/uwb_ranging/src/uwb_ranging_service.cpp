@@ -197,12 +197,56 @@ void RangingService::taskTrampoline(void* arg)
     static_cast<RangingService*>(arg)->taskMain();
 }
 
+void RangingService::sampleHookTrampoline(const RangingSample& sample, void* user)
+{
+    static_cast<RangingService*>(user)->onRangingSample(sample);
+}
+
+void RangingService::onRangingSample(const RangingSample& sample)
+{
+    // taskMain() の手順2（runCycle()呼び出し）の内側から同期的に呼ばれる。
+    // その手順は手順1でtableMutex_を取った後なので、ここもtableMutex_保持中
+    // （table_->modeDecision()の参照・pipeline_->updateEkf()の呼び出しとも、
+    // 他タスクによる table.set()/update() と競合しない。uwb_ranging_service.hpp
+    // tableMutex() コメント参照）。
+    //
+    // 78d7cfa で入った測位モード自動切替の規律をここでも守る:
+    // RangingOnly（有効アンカー2台以下）のときはソルバ・EKFを一切呼ばない
+    // （taskMain() のrangingOnly判定と同じ条件）。
+    if (!cfg_.enableEkf || table_->modeDecision().mode == PositioningMode::RangingOnly) {
+        return;
+    }
+
+    // updateEkf() の tS は「単調増加の秒」であればよい（uwb_ranging_pipeline.hpp
+    // のコメント）。サンプル自身の測距時刻（RangingSample::t_us、rangeOne()が
+    // 測距開始直前に埋めた実測値）をそのまま使う — これが本改修の狙い
+    // （周期末尾のtUsではなく、各距離が実際に測られた時刻で処理される）。
+    const double tS  = static_cast<double>(sample.t_us) / 1e6;
+    const int64_t t0 = esp_timer_get_time();
+    // サンプル1本だけを渡す（n=1）。uwb_ekf_update()はスカラー逐次更新
+    // 設計なので1本ずつ呼んでも正しい（components/uwb_loc/src/uwb_ekf.c
+    // 冒頭コメント）。同じ測距を周期末尾でもう一度渡すと二重更新になるため、
+    // taskMain() はこの呼び出し以外でupdateEkf()を呼ばない。
+    lastEkfFix_ = pipeline_->updateEkf(tS, &sample, 1);
+    const int64_t t1 = esp_timer_get_time();
+
+    ekfUsThisCycle_ += static_cast<uint32_t>(t1 - t0);
+    ekfUpdatedThisCycle_ = true;
+}
+
 void RangingService::taskMain()
 {
     // タスク自身のスタック上ではなく heap に置く（components/uwb_qm33120/src/
     // uwb_qm33120.cpp の Impl と同じ new/delete による PImpl 的所有）。
     scheduler_ = new RangingScheduler(*radio_, *table_, cfg_.scheduler);
     pipeline_   = new PositioningPipeline(*table_, cfg_.pipeline);
+
+    // 測距1本ごとの逐次EKF観測更新フック（onRangingSample()）を登録する。
+    // enableEkf==falseのときもフック自体は常に登録しておき、no-opの判定は
+    // onRangingSample()側に持たせる（設定変更のたびに付け外しする必要が
+    // なく単純）。runCycle()の内側から同じタスク文脈で同期的に呼ばれるので、
+    // 新しいタスク・キューは増えない（RangingSampleHookのコメント参照）。
+    scheduler_->setSampleHook(&RangingService::sampleHookTrampoline, this);
 
     if (cfg_.enableEkf) {
         // 起動直後の1回だけ組む。以後はアンカー表の構成が変わるたびに
@@ -223,6 +267,14 @@ void RangingService::taskMain()
         xSemaphoreTake(tableMutex_, portMAX_DELAY);
 
         result.tUs      = esp_timer_get_time();
+
+        // 逐次EKF更新（onRangingSample()）の今周期ぶんの集計をリセットして
+        // から回す。onRangingSample()はrunCycle()の内側、測距1本が成功する
+        // たびに同期的に呼ばれる（uwb_ranging_scheduler.hpp
+        // RangingSampleHook / onRangingSample() のコメント参照）。
+        ekfUpdatedThisCycle_ = false;
+        ekfUsThisCycle_        = 0;
+
         result.n         = scheduler_->runCycle(result.samples, kMaxAnchors);
         result.cycleMs  = scheduler_->lastCycleMs();
 
@@ -250,19 +302,43 @@ void RangingService::taskMain()
         const int64_t t2 = esp_timer_get_time();
         result.solveUsLv2 = static_cast<uint32_t>(t2 - t1);
 
+        // Lv3（EKF）は上のLv0/Lv2と違い、ここではもう呼ばない。
+        // onRangingSample()がrunCycle()の内側で測距1本ごとに逐次
+        // updateEkf(...,1)を呼び済みなので、ここで改めてまとめて呼ぶと
+        // 同じ測距を二重にEKFへ入れてしまう（uwb_ranging_service.hpp
+        // 冒頭のタスク・キュー構成コメント参照）。ここでは、その周期中に
+        // 得られた結果（lastEkfFix_/ekfUpdatedThisCycle_/ekfUsThisCycle_）を
+        // CycleResultへ詰め替えるだけ。
         result.haveLv3 = cfg_.enableEkf;
         if (cfg_.enableEkf) {
             if (rangingOnly) {
+                // RangingOnlyの間はonRangingSample()も何もしていないので
+                // （同じ条件判定）、lastEkfFix_は古いモードのときの値の
+                // ままにせず、Lv0/Lv2と同様に既定値（ok=false,solvable=false）
+                // を見せる。
                 result.lv3.levelUsed = SolverLevel::Lv3;
+            } else if (ekfUpdatedThisCycle_) {
+                // この周期に1本以上成功し、onRangingSample()が実際に
+                // updateEkf()を呼んだ。その最後の結果をそのまま使う。
+                result.lv3 = lastEkfFix_;
             } else {
-                // updateEkf() の tS は「単調増加の秒」であればよい
-                // （uwb_ranging_pipeline.hpp のコメント）。esp_timer の us値を
-                // そのまま秒に直したものを使う（旧main.cppの t と同じ量）。
-                const double tS = static_cast<double>(result.tUs) / 1e6;
-                result.lv3        = pipeline_->updateEkf(tS, result.samples, result.n);
+                // この周期は1本も測距成功しなかった（欠測）。EKFの内部状態
+                // （e->t含む）は前回成功時のまま保持されている——次に成功
+                // した時刻からのdtで uwb_ekf_update() 内部の予測が正しく
+                // 繋がる設計なので（components/uwb_loc/src/uwb_ekf.c）、
+                // ここで0本のupdateEkf()呼び出しを追加する必要はない
+                // （追加すると、周期開始時刻という実測に基づかない時刻を
+                // 使う羽目になるだけで、しかも「呼び出した」という点で
+                // 二重更新の一種になる）。呼び出し側には「この周期に新しい
+                // 推定は無い」ことだけ伝えるため、保持している最後の推定を
+                // 見せつつ ok=false にする（Lv0/Lv2が欠測時にsolvable=false,
+                // ok=falseを返すのと意味論を揃えた）。
+                result.lv3        = lastEkfFix_;
+                result.lv3.ok      = false;
+                result.lv3.levelUsed = SolverLevel::Lv3;
             }
-            const int64_t t3 = esp_timer_get_time();
-            result.solveUsLv3 = static_cast<uint32_t>(t3 - t2);
+            // 逐次更新の合計所要時間（1本も成功しなければ0のまま）。
+            result.solveUsLv3 = ekfUsThisCycle_;
         }
 
         // stats() 用のスナップショットをこの周期のうちに更新する

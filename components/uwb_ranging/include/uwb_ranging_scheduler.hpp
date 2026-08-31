@@ -75,6 +75,24 @@ struct SchedulerConfig {
 };
 
 /**
+ * @brief 測距1本が成功するたびに呼ばれるフック（逐次EKF観測更新のための
+ * 差し込み口）。
+ *
+ * runCycle() が rangeOne() から RangingSample::ok==true を受け取った
+ * **直後、同じタスク文脈で同期的に**呼ぶ（新しいタスク・キューは作らない）。
+ * uwb_ekf（Lv3）はスレッド安全でないため（uwb_ranging_pipeline.hpp
+ * PositioningPipeline冒頭コメント参照）、測距を回すタスクの外へ非同期に
+ * 持ち出さずにこの場で処理し切る設計にしてある。失敗した測距
+ * （RangingSample::ok==false）では呼ばれない。
+ *
+ * uwb_net.hpp の StatusJsonFn と同じ「関数ポインタ + void* コンテキスト」の
+ * 作法（std::function は使わない。ハード依存側は組み込み向けに軽量な
+ * 呼び出し規約で揃えてある）。user には setSampleHook() に渡したポインタが
+ * そのまま渡る。
+ */
+using RangingSampleHook = void (*)(const RangingSample& sample, void* user);
+
+/**
  * @brief アンカー登録テーブルを順にポーリングする測距スケジューラ。
  *
  * 欠測（応答なし/タイムアウト）は常態として扱う: 最初の試行が失敗した
@@ -92,6 +110,21 @@ public:
 
     void setConfig(const SchedulerConfig& cfg) { cfg_ = cfg; }
     const SchedulerConfig& config() const { return cfg_; }
+
+    /**
+     * @brief 測距1本ごとのフック（RangingSampleHook）を登録する。
+     *
+     * fn==nullptr なら解除（既定は未登録＝呼ばれない）。呼び出し側
+     * （uwb::RangingService）が起動時に1回だけ登録する想定。フック自体は
+     * runCycle() を呼んでいるタスクからしか呼ばれないので、登録・解除も
+     * 同じタスクから行うこと（他タスクから触るなら呼び出し側で排他すること。
+     * 本クラス自体は排他しない）。
+     */
+    void setSampleHook(RangingSampleHook fn, void* user = nullptr)
+    {
+        sampleHook_     = fn;
+        sampleHookUser_ = user;
+    }
 
     /**
      * @brief アンカー登録テーブルを1周し、各アンカーへ測距する。
@@ -128,6 +161,9 @@ private:
     uint32_t lastCycleMs_       = 0;
     uint32_t lastCycleStartMs_  = 0;
     bool hasLastCycleStart_      = false;
+
+    RangingSampleHook sampleHook_     = nullptr; //!< setSampleHook() 参照。既定は未登録
+    void* sampleHookUser_               = nullptr;
 
     /** 1台ぶんの測距を実行し、RangingSample を埋める。cfg_.retryMax回までは
      *  内部で再試行し（cfg_.retryDelayMsぶん待ってから）、最初に成功した
