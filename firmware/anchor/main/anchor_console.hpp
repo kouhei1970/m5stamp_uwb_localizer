@@ -52,7 +52,7 @@ struct Stats {
 
 /** 起動時に確定していて、以後変わらない表示用の情報。 */
 struct StaticInfo {
-    const char* boardName  = "";  //!< "AtomS3" 等
+    const char* boardName  = "";  //!< "M5StampS3A" 等
     const char* methodName = "";  //!< "DS-TWR" 等
     const char* chipName   = "";  //!< uwb::Qm33120::chipName()
     uint32_t deviceId      = 0;   //!< uwb::Qm33120::deviceId()

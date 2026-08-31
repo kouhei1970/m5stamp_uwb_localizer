@@ -19,8 +19,8 @@ idf_component_register(
     INCLUDE_DIRS
         "."
         # Repo root, three levels up from firmware/anchor/main/, so that
-        # #include "boards/stamps3.h" / "boards/atoms3.h" resolves (same
-        # convention as firmware/twr, firmware/probe, firmware/devtest).
+        # #include "boards/stamps3.h" resolves (same convention as
+        # firmware/twr, firmware/probe, firmware/devtest).
         "../../.."
     REQUIRES
         # 役割別ハートビート LED (タグ=緑 / アンカー=赤)

@@ -39,7 +39,7 @@ if bad: fail.append(f"リンク切れ {bad} 件")
 print("== 2) 削除済み文書への言及（archive 以外） ==")
 gone=['SOLDER_PADS.md','BRINGUP.md','UNITS.md','PLATFORM_TUNING.md']
 n=0
-for p in md_files(False)+['boards/atoms3.h','boards/stamps3.h','boards/stampfly.h']:
+for p in md_files(False)+['boards/stamps3.h','boards/stampfly.h']:
     if not os.path.exists(p): continue
     s=open(p,encoding='utf-8').read()
     for g in gone:
@@ -81,7 +81,7 @@ print("  （参考）12ピン信号名を含む文書:", hosts)
 
 # 4) boards/*.h のピン値と文書の一致
 print("== 4) boards/*.h のピン値 ==")
-for b in ['boards/stamps3.h','boards/stampfly.h','boards/atoms3.h']:
+for b in ['boards/stamps3.h','boards/stampfly.h']:
     s=open(b,encoding='utf-8').read()
     pins=dict(re.findall(r'\.(pin_\w+)\s*=\s*(\-?\d+|UWB_PORT_PIN_UNUSED)',s))
     print(f"  {b}: {pins}")

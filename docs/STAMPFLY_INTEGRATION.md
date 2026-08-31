@@ -857,7 +857,7 @@ UWB 統合に進むこと**（§6 の Step 0）。
 
 ## Step 1: 地上、機体から独立して UWB スタックを立ち上げる
 
-本リポジトリの `firmware/tag`（M5StampS3A）+ `firmware/anchor`（AtomS3 ×5）で完結。**StampFly は触らない。**
+本リポジトリの `firmware/tag`（M5StampS3A）+ `firmware/anchor`（M5StampS3A ×5）で完結。**StampFly は触らない。**
 
 | # | やること | 合格条件 |
 |---|---|---|

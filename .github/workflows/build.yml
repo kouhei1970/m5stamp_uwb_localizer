@@ -61,16 +61,6 @@ jobs:
             app: probe
             kconfig: |
               CONFIG_UWB_PROBE_BOARD_STAMPS3=y
-          - name: probe-atoms3-pinoutA
-            app: probe
-            kconfig: |
-              CONFIG_UWB_PROBE_BOARD_ATOMS3=y
-              CONFIG_UWB_BOARD_ATOMS3_PINOUT_A=y
-          - name: probe-atoms3-pinoutB
-            app: probe
-            kconfig: |
-              CONFIG_UWB_PROBE_BOARD_ATOMS3=y
-              CONFIG_UWB_BOARD_ATOMS3_PINOUT_B=y
           - name: probe-stampfly
             app: probe
             kconfig: |
@@ -108,18 +98,6 @@ jobs:
             app: anchor
             kconfig: |
               CONFIG_UWB_ANCHOR_BOARD_STAMPS3=y
-              CONFIG_UWB_ANCHOR_METHOD_DS=y
-          - name: anchor-atoms3-pinoutA-ds
-            app: anchor
-            kconfig: |
-              CONFIG_UWB_ANCHOR_BOARD_ATOMS3=y
-              CONFIG_UWB_BOARD_ATOMS3_PINOUT_A=y
-              CONFIG_UWB_ANCHOR_METHOD_DS=y
-          - name: anchor-atoms3-pinoutB-ds
-            app: anchor
-            kconfig: |
-              CONFIG_UWB_ANCHOR_BOARD_ATOMS3=y
-              CONFIG_UWB_BOARD_ATOMS3_PINOUT_B=y
               CONFIG_UWB_ANCHOR_METHOD_DS=y
           - name: tag-stamps3-ds
             app: tag

@@ -2233,7 +2233,7 @@ W ... SS_RESP_STAT ok=.. fail=.. last=FAIL error=TxStartFailed ... tx_margin_us=
 既定を切り替えた:
 
 - **アンカー5台＋据置タグ1台を M5StampS3A + StampS3 BreakOut に統一**（`UWB_ANCHOR_BOARD_STAMPS3` /
-  `UWB_TAG_BOARD_STAMPS3` が既定）。**AtomS3(R) は削除せず代替として残す。**
+  `UWB_TAG_BOARD_STAMPS3` が既定）。
   UWB モジュールは S017-F を 0.5mm 12P FPC + FPC→DIP 変換基板で接続する（`docs/WIRING.md` 経路A）
 - **StampFly 搭載タグは M5StampS3A 背面の 12P FPC 経由に切り替え**（`UWB_TAG_BOARD_STAMPFLY`、
   `boards/stampfly.h` 全面改訂）。**旧 GROVE 2系統4本構成は廃案**（RST/IRQ/WAKEUP が取れず、
@@ -2259,7 +2259,7 @@ W ... SS_RESP_STAT ok=.. fail=.. last=FAIL error=TxStartFailed ... tx_margin_us=
    実機では未検証なので後回しにする
 3. `firmware/anchor` × 5 + `firmware/tag` × 1 — フル測位
 
-**起動直後に必ず確認するログ3行**（`docs/EXPERIMENT_PLAN.md` §10 #12 にも記載。
+**起動直後に必ず確認するログ3行**（`docs/EXPERIMENT_PLAN.md` §10 #9 にも記載。
 出なければ即座に切り分けへ）:
 
 1. `... spi: slow=... fast=... active=16000000` — SPI が 2MHz に張り付いていないか
@@ -2273,9 +2273,9 @@ W ... SS_RESP_STAT ok=.. fail=.. last=FAIL error=TxStartFailed ... tx_margin_us=
 （`dffcde5`、main、CI green）。その後 `feat/stamps3-fpc-migration` ブランチでハードウェア構成の
 既定を切り替えたことで、**実機を待たずに進められる作業が新たに生まれている**:
 
-- **FPC→DIP 変換基板の型番選定と接点面（同面／異面）の確認**（`docs/EXPERIMENT_PLAN.md` §10 #13）
+- **FPC→DIP 変換基板の型番選定と接点面（同面／異面）の確認**（`docs/EXPERIMENT_PLAN.md` §10 #10）
 - **M5StampS3A 背面 12P FPC コネクタの入手**（HDGC/0.5K-HX-12PWB。出荷時は未実装で後付けが要る）
-- **StampS3 BreakOut の PinMap 確認**（3V3/GND のヘッダ位置。同 §10 #15）
+- **StampS3 BreakOut の PinMap 確認**（3V3/GND のヘッダ位置。同 §10 #12）
 
 配線図（`docs/WIRING.md`）とピン定義（`boards/stamps3.h` / `boards/stampfly.h`）はすでに
 確定しているので、部材さえ揃えばこれらは実機（UWB モジュール本体）の到着を待たずに進められる。
@@ -2435,7 +2435,7 @@ docs/archive/     経緯文書（PROGRESS / REIMPL_PLAN / CRITICAL_REVIEW / SURV
 |---|---|---|
 | 対象 | **ESP32-S3 + M5Stamp UWB Module 専用**。プラットフォーム最適化してよい。ただし StampFly には非依存 | `docs/PLAN.md` |
 | **ハード方針** | **StampFly 非依存。ただしタグの配線だけは StampFly 互換を維持する**（GROVE 2系統4本で成立 ＝ IRQ/RST 不要）。想定利用者は本リポジトリを単体で試す人 | `docs/PLAN.md` §1 |
-| 役割 | **タグ = M5StampS3A ×1（既定は据置＝StampS3 BreakOut 経由。StampFly 搭載時は機体の M5StampS3A を背面 12P FPC 経由で流用） / アンカー = M5StampS3A + StampS3 BreakOut ×5（既定、`UWB_ANCHOR_BOARD_STAMPS3`）。AtomS3(R) は代替として残る** | `docs/archive/PROGRESS.md`、本ブランチ `feat/stamps3-fpc-migration`（§0・§1） |
+| 役割 | **タグ = M5StampS3A ×1（既定は据置＝StampS3 BreakOut 経由。StampFly 搭載時は機体の M5StampS3A を背面 12P FPC 経由で流用） / アンカー = M5StampS3A + StampS3 BreakOut ×5（既定かつ唯一の構成、`UWB_ANCHOR_BOARD_STAMPS3`）** | `docs/archive/PROGRESS.md`、本ブランチ `feat/stamps3-fpc-migration`（§0・§1） |
 | 接続 | **標準は FPC**（経路A: `S017-F` + 0.5mm 12P FPC + FPC→DIP 変換基板 + StampS3 BreakOut。モジュール側の半田付け不要）。**2026-08-27 に実機で疎通確認済み**。半田パッド直付け（経路B）は代替として残すが今後は使わない方針。J1（FPC 用番号）と PINMAP（パッド用番号）は**別の番号体系**で両方正しい | `docs/WIRING.md` §7.3 |
 | 電源 | パッド2（VCC_3V3）は QM33120W の VDD1/VDD2 に直結。動作上限 3.6V・絶対最大 4.0V。5V や StampFly GROVE（満充電 ~4.35V）は不可 | `docs/WIRING.md` §5.1 |
 | **IRQ** | **アンカーは積極使用。タグは不使用。StampFly の別配線可能性は残す** | **`docs/IRQ_POLICY.md`** |

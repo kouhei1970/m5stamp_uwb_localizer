@@ -30,7 +30,7 @@ CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 
 # --- コンソールを USB-Serial/JTAG にする ---
-# M5StampS3A / M5 AtomS3 は USB-UART ブリッジを持たず、USB-C は ESP32-S3 内蔵の
+# M5StampS3A は USB-UART ブリッジを持たず、USB-C は ESP32-S3 内蔵の
 # USB-Serial/JTAG に直結している。ESP-IDF の既定（UART0 が一次コンソール、
 # USB-Serial/JTAG は出力専用の二次コンソール）のままだと、ログは USB から見えるが
 # **キー入力を受け取れない**ためシリアルコンソールが機能しない。

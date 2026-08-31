@@ -44,7 +44,7 @@ StampFly への統合はその成果物を利用する下流作業。
 |---|---|
 | **想定利用者** | **このリポジトリを手元の ESP32-S3 + M5Stamp UWB Module で実際に試す人**。ドキュメントも実装もこの人に向けて書く。**StampFly を持っていることは前提にしない** |
 | **タグのハード** | **StampFly 互換を維持する**（意図的な制約）。本スタックの成果をそのまま StampFly の位置制御へ移植したいため（`docs/STAMPFLY_INTEGRATION.md` 案B-2） |
-| **アンカーのハード** | **この制約は無い**。据置きなので AtomS3(R) の IRQ を積極利用してよい（`docs/IRQ_POLICY.md`） |
+| **アンカーのハード** | **この制約は無い**。据置きなので IRQ を積極利用してよい（`docs/IRQ_POLICY.md`） |
 
 「タグのハードを StampFly 互換に保つ」の具体的な中身:
 
@@ -73,7 +73,7 @@ StampFly への統合はその成果物を利用する下流作業。
 | # | 成果物 | 内容 | 状態 |
 |---|---|---|---|
 | D1 | ESP-IDF コンポーネント群 | 他プロジェクトへ丸ごと持ち込める。StampFly 依存ゼロ | **実装済み**（`components/` 8個） |
-| D2 | タグ側ファームウェア | M5StampS3A / AtomS3 + M5Stamp UWB Module で測距→測位まで完結 | **実装済み**（`firmware/tag`、CI ビルド済み、実機未検証） |
+| D2 | タグ側ファームウェア | M5StampS3A + M5Stamp UWB Module で測距→測位まで完結 | **実装済み**（`firmware/tag`、CI ビルド済み、実機未検証） |
 | D3 | アンカー側ファームウェア | 同上ハードでレスポンダ動作。アドレス/座標設定可 | **実装済み**（`firmware/anchor`、同上） |
 | D4 | ホスト側ツール | 測位結果の可視化・ログ・アンテナ遅延キャリブレーション | **一部**（`tools/bench_loc` のみ。JSON Lines は上流 Python 可視化と互換。校正ツールは未） |
 | D5 | ドキュメント | 配線図、ボード別ピン定義、立ち上げ手順、キャリブレーション手順 | **実装済み**（`docs/` 22本。`WIRING.md` / `GETTING_STARTED.md` / `GETTING_STARTED.md` / `EXPERIMENT_PLAN.md`） |
@@ -111,17 +111,13 @@ StampFly への統合はその成果物を利用する下流作業。
   インターバル短縮が Phase 4-5 の主要課題（→ R6）
   → **試算 31.3 Hz**（5アンカー DS-TWR）、**アンカー IRQ 化で 59.4 Hz** 試算
   （`docs/TIMING_PRESETS.md`, `docs/STAMPFLY_INTEGRATION.md`）。実測は実機待ち
-- ~~ホストボードが6台あるかは未確認。不足する場合はアンカー台数を減らして段階的に検証する~~
-  ~~確定構成（`docs/archive/PROGRESS.md`）: タグ = M5StampS3A ×1、アンカー = AtomS3(R) ×5~~
+- ~~ホストボードが6台あるかは未確認。不足する場合はアンカー台数を減らして段階的に検証する~~ → **解決済み**
   **確定構成: タグ = StampFly（M5StampS3A 搭載機体、背面 12P FPC 経由）×1、
-  アンカー = M5StampS3A + StampS3 BreakOut ×5（既定 Kconfig `UWB_ANCHOR_BOARD_STAMPS3`）。
-  AtomS3(R) はアンカーの代替構成として引き続き選択できる（`docs/IRQ_POLICY.md`）**
+  アンカー = M5StampS3A + StampS3 BreakOut ×5（既定 Kconfig `UWB_ANCHOR_BOARD_STAMPS3`）**
 
 ### 対応ホストボード
 - **M5StampS3A + StampS3 BreakOut**（ESP32-S3、GPIO 露出多い。アンカーの既定構成であり、
   タグ単体構成（StampFly を持たない場合）にも使う。`boards/stamps3.h`）
-- **M5 AtomS3 / AtomS3R**（ESP32-S3、GROVE 1系統 + 内部で LCD/ボタンが GPIO 消費。
-  **アンカーの代替構成**。構成A/B の Kconfig は現役のまま残す。`boards/atoms3.h`）
 - （下流）**StampFly**（M5StampS3A を搭載したドローン機体本体。タグとして背面 12P FPC
   経由で接続する。`boards/stampfly.h`）
 
@@ -143,7 +139,7 @@ StampFly への統合はその成果物を利用する下流作業。
 |  uwb_port : プラットフォーム抽象 (SPI / GPIO / 時刻 / ログ)     |  ← 新規
 |             uwb_port_espidf.c  |  uwb_port_arduino.c (任意)    |
 +---------------------------------------------------------------+
-|  boards/ : stamps3.h  atoms3.h  stampfly.h  (ピン定義のみ)      |
+|  boards/ : stamps3.h  stampfly.h  (ピン定義のみ)              |
 +---------------------------------------------------------------+
 ```
 
@@ -225,7 +221,7 @@ m5stamp_uwb_localizer/
 ├── tests/host/           ホストテスト4スイート (loc / math / pipeline / survey、全通過)
 ├── tools/
 │   └── bench_loc/        測位ソルバのマイクロベンチ（可視化・校正ツールは無し）
-├── boards/               stamps3.h  atoms3.h  stampfly.h
+├── boards/               stamps3.h  stampfly.h
 └── third_party/          M5Stamp-UWB / uwb_localizer / stampfly_ecosystem（読み取り専用）
                           ※ Qorvo SDK は components/qm33120w_sdk/ に vendoring
 ```
@@ -250,7 +246,6 @@ m5stamp_uwb_localizer/
 ### 開発機（M5StampS3A + StampS3 BreakOut）
 GPIO に余裕があるので **SPI4線 + IRQ + RSTn + WAKEUP をフル配線**して開発する。
 ピン番号は `boards/stamps3.h` で定義。3.3V はボードから直接取れる。
-AtomS3 は空き GPIO が少ないため WAKEUP を諦める（代替構成）。
 
 ### StampFly（下流・Phase 6）
 **M5StampS3A 背面の 12P FPC 経由（`boards/stampfly.h`）に確定している。**
@@ -274,7 +269,6 @@ DC-DC 出力の下流）から直接給電でき、GROVE 経由で必要だっ�
 - リポジトリ雛形、ESP-IDF プロジェクト、`uwb_port` 抽象定義
 - `uwb_qm33120` の最小実装（レジスタ read/write、ソフトリセット）
 - **受入条件: M5StampS3A で Device ID `0xDECA0314` を読み出せる**
-- 併せて AtomS3 でも同じことを確認（ピン定義の差し替えだけで通ること）
 
 ### Phase 2: 単一リンクの測距
 **実装済み。受入は実機待ち**（SS/DS-TWR は `uwb_qm33120_twr.cpp`、`firmware/twr`）
@@ -419,7 +413,7 @@ CI/Release 整備（`docs/PREBUILT_BINARIES.md`、Release zip への LICENSE 同
 1. ~~R1（Qorvo SDK ライセンス）の確認~~ → **完了・クリア**
 2. ~~M5Stamp-UWB の移植量見積もり~~ → **完了（実質 wrapper 1,946行のみ）**
 3. ~~リポジトリ雛形 + ESP-IDF プロジェクト骨格 + `uwb_port` I/F 設計~~ → **完了**
-4. ~~Phase 1 実装（M5StampS3A / AtomS3 で Device ID `0xDECA0314` 読み出し）~~ → **実装済み・実機受入は未**
+4. ~~Phase 1 実装（M5StampS3A で Device ID `0xDECA0314` 読み出し）~~ → **実装済み・実機受入は未**
 5. 実機検証（`docs/EXPERIMENT_PLAN.md` の順で probe → twr → anchor×5 + tag）← **いまここ**
 
 ### 確定した前提

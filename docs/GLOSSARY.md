@@ -31,7 +31,7 @@
 |---|---|---|
 | **UWB** | **U**ltra-**W**ide**b**and（超広帯域無線） | 500 MHz 以上の広い帯域に極短パルスを撒く無線方式。帯域が広い＝時間分解能が高いので、**電波の飛行時間から距離を cm 級で測れる**。本プロジェクトが使う理由がこれ |
 | **タグ** (tag) | — | **位置を知りたい側**。動く。本プロジェクトでは 1 台（M5StampS3A / StampFly）。測距シーケンスを開始する側なので **initiator（イニシエータ）** とも呼ぶ |
-| **アンカー** (anchor) | — | **座標が既知の基準局**。動かさない。本プロジェクトでは 5 台（**既定は M5StampS3A + StampS3 BreakOut**。`UWB_ANCHOR_BOARD_STAMPS3` が既定。AtomS3(R) は代替として選択可）。タグからの問い合わせに応える側なので **responder（レスポンダ）** とも呼ぶ |
+| **アンカー** (anchor) | — | **座標が既知の基準局**。動かさない。本プロジェクトでは 5 台（**M5StampS3A + StampS3 BreakOut**。`UWB_ANCHOR_BOARD_STAMPS3` が既定かつ唯一の選択肢）。タグからの問い合わせに応える側なので **responder（レスポンダ）** とも呼ぶ |
 
 3次元の位置を解くにはアンカーが最低4台要る（`docs/ANCHOR_PLACEMENT.md`）。
 
@@ -150,8 +150,7 @@
 | **M5Stamp UWB Module** | M5Stack の UWB モジュール（**通称 M5Stamp UWB**）。中身は Qorvo QM33120W。**本プロジェクトの対象**。FPC コネクタ付きの品種（**M5Stamp UWB Module with FPC**）もある |
 | **QM33120W** | Qorvo の UWB トランシーバ IC（WLCSP52 パッケージ、PDoA［Phase Difference of Arrival、到来波の位相差から角度を測る方式］対応）。**本モジュールに搭載されているチップ本体**。Device ID = `0xDECA0314`（`DWT_QM33120_PDOA_DEV_ID`）。**DW3720** は同じシリコンの Decawave 時代のコードネームで、Qorvo 改称後の QM33120W データシートには登場しないが、ドライバのファイル名（`dw3720_device.c` 等）に今も残る。PDoA 非対応の姉妹品番は **QM33110W** |
 | **DW3000 系 / DW1000** | Decawave（現 Qorvo）の UWB IC の世代。DW1000 が旧世代、**DW3000 系**が現行世代（本モジュール搭載の QM33120W もこの系列）。DW3720 は DW3000 系の中の QM33120W 固有のコードネームであり、系列名ではない（→ 上の「QM33120W」の行）。**単位系の定数が世代で違うので混同注意**（`docs/GLOSSARY.md`） |
-| **M5StampS3A** | ESP32-S3 の小型ボード。**既定のホスト（タグ・アンカーとも）**。据置機は **StampS3 BreakOut** に載せて使う（`UWB_*_BOARD_STAMPS3` が既定）。StampFly 搭載タグは背面 12P FPC 経由（`UWB_TAG_BOARD_STAMPFLY`）。旧 M5StampS3 と互換 |
-| **AtomS3 / AtomS3R** | ESP32-S3 の小型ボード（LCD 付き）。**アンカーホストの代替**（`UWB_ANCHOR_BOARD_ATOMS3`。既定は M5StampS3A + StampS3 BreakOut に切り替わったが、削除はされていない）。R が現行版で、IMU が G0/G45 に移っている分 G38/G39 が空く |
+| **M5StampS3A** | ESP32-S3 の小型ボード。**唯一のホスト（タグ・アンカーとも）**。据置機は **StampS3 BreakOut** に載せて使う（`UWB_*_BOARD_STAMPS3` が既定）。StampFly 搭載タグは背面 12P FPC 経由（`UWB_TAG_BOARD_STAMPFLY`）。旧 M5StampS3 と互換 |
 | **StampS3 BreakOut** | M5StampS3A の 1.27mm ピンを 2.54mm へ変換する M5Stack 純正の拡張基板。露出 IO 23本（G0-G15, G39-G44, G46）は M5StampS3A 単体と同じで、BreakOut を使っても使わなくてもピン定義は同一。Grove ポートは **G13/G15** に配線されており、**G13 は UWB の SPI MISO と衝突する**ので ToF 増設等は Grove に挿すだけでは済まない（`boards/stamps3.h`、`docs/SURVEY_SPEC.md` §3.5）。G0/EN のタクトスイッチ付きで書き込みモードに入りやすい |
 | **StampFly** | M5StampS3A を積んだマルチコプター機体。**本リポジトリは非依存だが、タグの配線だけ互換を保つ**（`docs/PLAN.md` §1） |
 | **ESP-IDF** | Espressif **I**o**T** **D**evelopment **F**ramework。ESP32 系の公式 SDK。本プロジェクトのビルド環境 |

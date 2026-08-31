@@ -84,16 +84,12 @@
 // #include と下の呼び出しは常に有効にしてよい（uwb_net.hpp 冒頭コメント）。
 #include "uwb_net.hpp"
 
-#if CONFIG_UWB_ANCHOR_BOARD_ATOMS3
-#include "boards/atoms3.h"
-#define BOARD_UWB_PORT_CONFIG BOARD_ATOMS3_UWB_PORT_CONFIG
-#define BOARD_NAME            "AtomS3(pinout " BOARD_ATOMS3_PINOUT_NAME ")"
-#else
+// この本番アンカーファームが対応するホストボードは M5StampS3A のみ
+// (firmware/anchor/main/Kconfig.projbuild の UWB_ANCHOR_BOARD choice)。
 #include "boards/stamps3.h"
 #define BOARD_UWB_PORT_CONFIG BOARD_STAMPS3_UWB_PORT_CONFIG
 #define BOARD_NAME            "M5StampS3A"
 #define BOARD_STATUS_LED_GPIO BOARD_STAMPS3_STATUS_LED_GPIO
-#endif
 
 #if CONFIG_UWB_ANCHOR_METHOD_DS
 #define METHOD_NAME "DS-TWR"
@@ -507,11 +503,11 @@ extern "C" void app_main(void)
 #ifdef BOARD_STATUS_LED_GPIO
 /* Heartbeat colour tells the role apart once the boards are placed and no
  * serial monitor is attached: TAG = green, ANCHOR = red (components/
- * uwb_status_led). Only the M5StampS3A carries a WS2812 on a known GPIO -
- * the AtomS3 has an LCD instead - so the heartbeat compiles out there.
+ * uwb_status_led). This firmware only supports the M5StampS3A, which
+ * carries a WS2812 on a known GPIO, so the heartbeat always compiles in.
  * 設置後にシリアルを繋がない状態でも役割が分かるよう、ハートビートの色で
- * タグ(緑)とアンカー(赤)を見分ける。フルカラー LED を持つのは M5StampS3A
- * だけ(AtomS3 は LCD)なので、それ以外ではハートビートごと消える。 */
+ * タグ(緑)とアンカー(赤)を見分ける。本ファームが対応するのは M5StampS3A
+ * のみで、フルカラー LED を持つため、ハートビートは常にコンパイルされる。 */
     (void)uwb_status_led_start_role_heartbeat(BOARD_STATUS_LED_GPIO, UWB_STATUS_LED_ROLE_ANCHOR);
 #endif
     /* --- NVS からショートアドレスを読む（無ければKconfig既定値） ---

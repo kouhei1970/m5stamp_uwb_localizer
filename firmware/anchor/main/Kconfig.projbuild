@@ -4,42 +4,15 @@ menu "UWB Anchor Configuration"
         prompt "Target host board"
         default UWB_ANCHOR_BOARD_STAMPS3
         help
-            Select which host board's pin definitions (boards/stamps3.h or
-            boards/atoms3.h, at the repo root) main.cpp uses to configure
-            uwb::Qm33120. The standard anchor build is M5StampS3A on a
-            StampS3 BreakOut with the UWB module attached through a
-            0.5mm 12P FPC to DIP adapter; AtomS3 is kept as an alternative
-            for anyone who already has one. StampFly is a tag-only
-            configuration (docs/IRQ_POLICY.md) and is intentionally not
-            offered here.
+            Select which host board's pin definitions (boards/stamps3.h at
+            the repo root) main.cpp uses to configure uwb::Qm33120. The
+            standard anchor build is M5StampS3A on a StampS3 BreakOut with
+            the UWB module attached through a 0.5mm 12P FPC to DIP adapter.
+            StampFly is a tag-only configuration (docs/IRQ_POLICY.md) and is
+            intentionally not offered here.
 
         config UWB_ANCHOR_BOARD_STAMPS3
             bool "M5StampS3A (+ StampS3 BreakOut)"
-
-        config UWB_ANCHOR_BOARD_ATOMS3
-            bool "M5 AtomS3 (alternative)"
-
-    endchoice
-
-    choice UWB_BOARD_ATOMS3_PINOUT
-        prompt "AtomS3 pin layout"
-        depends on UWB_ANCHOR_BOARD_ATOMS3
-        default UWB_BOARD_ATOMS3_PINOUT_A
-        help
-            Selects which of the two AtomS3 pin layouts boards/atoms3.h
-            builds (docs/IRQ_POLICY.md). Layout A repurposes the Grove port
-            (G1/G2) for RST/IRQ and wires a ToF sensor to the bottom header
-            (G38/G39); recommended for the plain AtomS3, whose G38/G39 are
-            shared with the onboard MPU6886 IMU. Layout B instead uses the
-            bottom header (G38/G39) for RST/IRQ and plugs the ToF sensor
-            straight into the Grove port; recommended for AtomS3R, whose
-            G38/G39 have nothing else attached.
-
-        config UWB_BOARD_ATOMS3_PINOUT_A
-            bool "Layout A: RST/IRQ=Grove(G1/G2), ToF I2C=G38/G39 (hand-wired to bottom header)"
-
-        config UWB_BOARD_ATOMS3_PINOUT_B
-            bool "Layout B: RST/IRQ=G38/G39, ToF I2C=Grove(G1/G2) (plug-and-play)"
 
     endchoice
 
@@ -143,9 +116,9 @@ menu "UWB Anchor Configuration"
             （dwt_setcallbacks()/dwt_isr()は使わない。docs/IRQ_POLICY.md）。
 
             **2026-08-22 に既定を y（有効）へ変更した。** 全ボード
-            （M5StampS3A の G7、StampFly 背面 FPC の G16、AtomS3 の G2 または
-            G38/G39）で pin_irq が配線されるようになり、IRQ を使わない構成が
-            例外になったため。**ただし実機での極性検証はまだ済んでいない。**
+            （M5StampS3A の G7、StampFly 背面 FPC の G16）で pin_irq が
+            配線されるようになり、IRQ を使わない構成が例外になったため。
+            **ただし実機での極性検証はまだ済んでいない。**
             測距が全く成立しない場合は、まずこれを n に、遅延プリセットを
             PollingBoth に落として切り分けること（docs/IRQ_POLICY.md）。
 

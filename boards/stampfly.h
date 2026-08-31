@@ -99,8 +99,6 @@
  *  connected to SPIIO4 ~ SPIIO7 and SPIDQS. Therefore, on boards embedded
  *  with ESP32-S3R8 / ESP32-S3R8V chip, GPIO33 ~ GPIO37 are also not
  *  recommended for other uses.」
- * 傍証: M5 AtomS3 は同じ ESP32-S3FN8 で G33/G34 をオンボード LCD に使って
- * いる（boards/atoms3.h の冒頭コメント）。
  *
  * **G16 / G17 / G18 は M5StampS3A の側面 23 ピン (G0-G15, G39-G44, G46) に
  * 出ておらず、この背面 12P FPC でしか掴めない完全な空き GPIO である。**

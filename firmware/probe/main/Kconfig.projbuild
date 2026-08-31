@@ -4,15 +4,12 @@ menu "UWB Probe Configuration"
         prompt "Target host board"
         default UWB_PROBE_BOARD_STAMPS3
         help
-            Select which host board's pin definitions (boards/stamps3.h,
-            boards/atoms3.h, or boards/stampfly.h, at the repo root) main.c
-            uses to configure uwb_port.
+            Select which host board's pin definitions (boards/stamps3.h or
+            boards/stampfly.h, at the repo root) main.c uses to configure
+            uwb_port.
 
         config UWB_PROBE_BOARD_STAMPS3
             bool "M5StampS3A"
-
-        config UWB_PROBE_BOARD_ATOMS3
-            bool "M5 AtomS3"
 
         config UWB_PROBE_BOARD_STAMPFLY
             bool "StampFly (M5StampS3A on drone, rear 12P FPC)"
@@ -22,28 +19,6 @@ menu "UWB Probe Configuration"
                 取れる (boards/stampfly.h)。電源も同じコネクタの VDD_3V3
                 から取るので降圧回路は要らない。
                 旧 GROVE 4線構成は廃案 (2026-08-22)。
-
-    endchoice
-
-    choice UWB_BOARD_ATOMS3_PINOUT
-        prompt "AtomS3 pin layout"
-        depends on UWB_PROBE_BOARD_ATOMS3
-        default UWB_BOARD_ATOMS3_PINOUT_A
-        help
-            Selects which of the two AtomS3 pin layouts boards/atoms3.h
-            builds (docs/IRQ_POLICY.md). Layout A repurposes the Grove port
-            (G1/G2) for RST/IRQ and wires a ToF sensor to the bottom header
-            (G38/G39); recommended for the plain AtomS3, whose G38/G39 are
-            shared with the onboard MPU6886 IMU. Layout B instead uses the
-            bottom header (G38/G39) for RST/IRQ and plugs the ToF sensor
-            straight into the Grove port; recommended for AtomS3R, whose
-            G38/G39 have nothing else attached.
-
-        config UWB_BOARD_ATOMS3_PINOUT_A
-            bool "Layout A: RST/IRQ=Grove(G1/G2), ToF I2C=G38/G39 (hand-wired to bottom header)"
-
-        config UWB_BOARD_ATOMS3_PINOUT_B
-            bool "Layout B: RST/IRQ=G38/G39, ToF I2C=Grove(G1/G2) (plug-and-play)"
 
     endchoice
 

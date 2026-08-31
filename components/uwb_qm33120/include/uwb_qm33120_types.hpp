@@ -59,7 +59,7 @@ static constexpr uint32_t kQm33120DeviceId = 0xDECA0314UL;
  *
  * All pin numbers default to UWB_PORT_PIN_UNUSED (no board-specific default,
  * unlike the original which defaulted to the M5Stack Stamp C5 wiring): this
- * project supplies concrete pin sets via boards/stamps3.h / boards/atoms3.h
+ * project supplies concrete pin sets via boards/stamps3.h / boards/stampfly.h
  * instead, so an un-overridden Config is intentionally invalid (begin()
  * rejects it with Error::InvalidConfig) rather than silently matching
  * hardware this repo does not target.

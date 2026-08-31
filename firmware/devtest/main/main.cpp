@@ -5,8 +5,8 @@
  * application, and sendFrame()/receiveFrame() over-the-air connectivity.
  *
  * Mirrors firmware/probe/main/main.c's structure (board selection via
- * Kconfig choice, boards/stamps3.h / boards/atoms3.h at the repo root for
- * pin numbers), but drives the new uwb::Qm33120 C++ class instead of the raw
+ * Kconfig choice, boards/stamps3.h at the repo root for pin numbers), but
+ * drives the new uwb::Qm33120 C++ class instead of the raw
  * uwb_port + Qorvo SDK calls that firmware/probe exercises directly.
  *
  * Two-board bring-up: flash one board with UWB_DEVTEST_ROLE_SENDER and a
@@ -23,11 +23,7 @@
 #include "uwb_status_led.h"
 #include "uwb_qm33120.hpp"
 
-#if CONFIG_UWB_DEVTEST_BOARD_ATOMS3
-#include "boards/atoms3.h"
-#define BOARD_UWB_PORT_CONFIG BOARD_ATOMS3_UWB_PORT_CONFIG
-#define BOARD_NAME            "AtomS3(pinout " BOARD_ATOMS3_PINOUT_NAME ")"
-#elif CONFIG_UWB_DEVTEST_BOARD_STAMPFLY
+#if CONFIG_UWB_DEVTEST_BOARD_STAMPFLY
 #include "boards/stampfly.h"
 #define BOARD_UWB_PORT_CONFIG BOARD_STAMPFLY_UWB_PORT_CONFIG
 #define BOARD_NAME            "StampFly"
@@ -151,11 +147,13 @@ extern "C" void app_main(void)
 #ifdef BOARD_STATUS_LED_GPIO
 /* Heartbeat colour tells the role apart once the boards are placed and no
  * serial monitor is attached: TAG = green, ANCHOR = red (components/
- * uwb_status_led). Only the M5StampS3A carries a WS2812 on a known GPIO -
- * the AtomS3 has an LCD instead - so the heartbeat compiles out there.
+ * uwb_status_led). Both boards this firmware supports (M5StampS3A,
+ * StampFly) define BOARD_STATUS_LED_GPIO, so the heartbeat always compiles
+ * in.
  * 設置後にシリアルを繋がない状態でも役割が分かるよう、ハートビートの色で
- * タグ(緑)とアンカー(赤)を見分ける。フルカラー LED を持つのは M5StampS3A
- * だけ(AtomS3 は LCD)なので、それ以外ではハートビートごと消える。 */
+ * タグ(緑)とアンカー(赤)を見分ける。本ファームが対応する両ボード
+ * (M5StampS3A・StampFly)とも BOARD_STATUS_LED_GPIO を定義しているため、
+ * ハートビートは常にコンパイルされる。 */
     (void)uwb_status_led_start_role_heartbeat(BOARD_STATUS_LED_GPIO, UWB_STATUS_LED_ROLE_NONE);
 #endif
     ESP_LOGI(TAG, "Phase 2 Step 1 uwb_qm33120 devtest, board=%s role=%s", BOARD_NAME, ROLE_NAME);

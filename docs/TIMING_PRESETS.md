@@ -523,7 +523,7 @@ W (1234) Qm33120: timing profile AnchorIrq requires IRQ but the wait is polling;
 
 ## 5. 設定の入口
 
-`Kconfig`（5アプリ共通のシンボル名。`boards/atoms3.h` のピン構成と同じ方式）:
+`Kconfig`（5アプリ共通のシンボル名。`boards/stamps3.h` のピン構成と同じ方式）:
 
 ```
 choice UWB_TIMING_PROFILE

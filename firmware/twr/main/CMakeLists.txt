@@ -4,7 +4,7 @@ idf_component_register(
     INCLUDE_DIRS
         "."
         # Repo root, three levels up from firmware/twr/main/, so that
-        # #include "boards/stamps3.h" / "boards/atoms3.h" / "boards/stampfly.h"
+        # #include "boards/stamps3.h" / "boards/stampfly.h"
         # resolves (same convention as firmware/probe and firmware/devtest).
         "../../.."
     REQUIRES

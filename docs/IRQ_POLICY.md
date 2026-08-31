@@ -15,12 +15,10 @@
 | 役割 | ボード | IRQ ピン |
 |---|---|---|
 | **アンカー**（標準） | M5StampS3A + StampS3 BreakOut | **G7** |
-| アンカー（代替） | AtomS3 / AtomS3R | G2（構成A）/ G38・G39（構成B） |
 | **タグ**（StampFly 搭載） | M5StampS3A 背面 12P FPC | **G16** |
 | タグ（単体） | M5StampS3A | **G7** |
 
-ピン定義は `boards/stamps3.h` / `boards/stampfly.h` / `boards/atoms3.h`、
-配線は `docs/WIRING.md`。
+ピン定義は `boards/stamps3.h` / `boards/stampfly.h`、配線は `docs/WIRING.md`。
 
 **ポーリング経路は残すが、位置づけは「フォールバック」である。**
 消さない理由:

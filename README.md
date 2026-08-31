@@ -65,10 +65,10 @@ esptool.py --chip esp32s3 -p /dev/cu.usbmodemXXXX write_flash 0x0 merged-firmwar
 ```
 
 ブラウザからでも書けます（<https://espressif.github.io/esptool-js/> でオフセット `0x0`）。
-14 通りの構成を用意してあります → **[`docs/PREBUILT_BINARIES.md`](docs/PREBUILT_BINARIES.md)**
+11 通りの構成を用意してあります → **[`docs/PREBUILT_BINARIES.md`](docs/PREBUILT_BINARIES.md)**
 
 > **⚠ 実機確認済みのピン定義は M5StampS3A（`boards/stamps3.h`）のみ**です
-> （SPI 4 本・RST・IRQ まで実機確認済み。WAKEUP と AtomS3 / StampFly 用の定義は未検証の暫定値）。
+> （SPI 4 本・RST・IRQ まで実機確認済み。WAKEUP と StampFly 用の定義は未検証の暫定値）。
 > 配線が [`docs/GETTING_STARTED.md` §3](docs/GETTING_STARTED.md#wiring) と違えば動きません。
 
 配布 zip には Qorvo ライセンスの条件（Qorvo 製 IC 限定）が適用されます →
@@ -127,10 +127,6 @@ I (xxx) uwb_probe: === PROBE SUMMARY L1=PASS L2=PASS L3=PASS L4=PASS(RSTn ok) L5
 **`0xDECA0314` が読めれば最初の関門は突破**です。
 読めないときの切り分けは
 [`docs/GETTING_STARTED.md` §4.3](docs/GETTING_STARTED.md#probe-troubleshoot)。
-
-> **M5 AtomS3 で動かす場合**（手元にある場合の代替ホスト）は `idf.py menuconfig` →
-> `UWB Probe Configuration` → `Target host board` → `M5 AtomS3` に切り替えてください
-> （`firmware/probe` の既定は M5StampS3A）。
 
 **→ ここから先の完全な手順は [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md) へ。**
 配線・5 台への書き込み・座標入力・測位・アンテナ遅延の校正まで通しで書いてあります。
@@ -199,11 +195,6 @@ I (xxx) uwb_probe: === PROBE SUMMARY L1=PASS L2=PASS L3=PASS L4=PASS(RSTn ok) L5
 無印 `S017` しか無い場合や変換基板が手元に無い場合は、1.27mm ピッチの
 キャステレーションホールへ直付けする代替経路もあります → [`docs/WIRING.md`](docs/WIRING.md) §0.1。
 
-> **アンカーのホストは [M5 AtomS3](https://docs.m5stack.com/en/core/AtomS3) でも代替できます。**
-> 手元にある場合はそのまま使えます（AtomS3R（現行）/ 無印 AtomS3（在庫限り）のどちらでも可。
-> IMU/地磁気を使わないため互換と推定。**実機未検証**）。上表は M5StampS3A に統一した
-> 標準構成です。
-
 ### 工具・材料
 
 **BreakOut への 2.54mm ピンヘッダの半田付け**（通常のはんだごて・はんだで可。
@@ -262,8 +253,7 @@ m5stamp_uwb_localizer/
 ├── assets/                  製品写真・公式ピンマップ・SNS カード
 │
 ├── boards/                  ホストボードのピン定義（※ 暫定値。実配線で要検証）
-│   ├── stamps3.h            M5StampS3A（タグ単体構成）
-│   ├── atoms3.h             M5 AtomS3 / AtomS3R（アンカー。構成 A/B を Kconfig で切替）
+│   ├── stamps3.h            M5StampS3A（アンカー・タグ単体構成に共通）
 │   └── stampfly.h           StampFly 搭載時のタグ（M5StampS3A 背面の 12P FPC 経由）
 │
 ├── components/

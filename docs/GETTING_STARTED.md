@@ -53,11 +53,6 @@ UWB（Ultra-Wideband、超広帯域無線）測位を動かすまでの完全手
 > 経路Aでは背面をベタ貼りしないので支障ありません。
 > （出典: `docs/WIRING.md` §7.2, §1.6）
 
-> **M5 AtomS3 は「手元にあるならアンカーに使える代替」として残っています。** 標準 BOM
-> からは外しましたが、`boards/atoms3.h` のピン定義と `menuconfig` の切り替え（[6.1](#anchors5)）
-> はそのまま使えます。AtomS3 を使う場合は半田パッド（経路B、[`WIRING.md` §3.3](WIRING.md)）
-> での配線になります（AtomS3 向けの StampS3 BreakOut 相当品は本リポジトリでは確認していません）。
-
 ### 1.2 工具・材料
 
 **経路A（標準）ではモジュール側の半田付けが不要**です。必要なのは BreakOut への
@@ -371,21 +366,11 @@ idf.py build
 
 #### 経路Bを選ぶ場合
 
-半田パッドで配線する場合、`WIRING.md` に**タグ用（§3.1）とアンカー用（§3.2）が
-別々の表**があります（§3.2 はアンカーに AtomS3 を使う場合の表で、空き GPIO が実質 6 本しか
-ないため WAKEUP と GP7 は未配線になります）。パッド番号の使い方・向きの確認は
+半田パッドで配線する場合の配線表は [`WIRING.md` §3.3](WIRING.md) を参照してください
+（タグ・アンカー共通の 1 枚です）。パッド番号の使い方・向きの確認は
 [3.1「経路Bを選ぶ場合」](#orientation) を参照してください。**この場合は半田付けが
 恒久的な接続になるので、IRQ を配線するかどうかは最初に決めておくこと**
-（AtomS3 では pin 4 → G2、`WIRING.md` §3.3）。
-
-#### AtomS3 を代替に使う場合
-
-AtomS3 を持っているなら、経路B（半田パッド、[`WIRING.md` §3.3](WIRING.md)）の配線で
-アンカーとして使えます。ホスト側の menuconfig 切り替えは [6.1](#anchors5) を参照してください。
-
-> **ホスト側のピン番号は暫定値です。** `boards/stamps3.h` / `boards/atoms3.h` の
-> 冒頭にも同じ注意書きがあります。**基板のシルクと照合してから配線**してください。
-> 実配線を変えた場合は、この 2 ファイルの値も必ず合わせて直します。
+（pin 4 → G7、`WIRING.md` §3.3）。
 
 ### 3.3 アンテナ禁止領域（測距距離に効く）
 
@@ -452,7 +437,7 @@ AtomS3 を持っているなら、経路B（半田パッド、[`WIRING.md` §3.3
 - **配線長は 10cm 以内**を目安に。SPI を 16MHz で走らせます。
 - すべての線をできるだけ同じ長さに揃え、**GND 線を SPI 線と束ねる**。
 - **途中にブレッドボードを挟まない。** 接触抵抗と容量が 16MHz に効きます。
-- 16MHz で不安定なら、`boards/stamps3.h` / `boards/atoms3.h` の
+- 16MHz で不安定なら、`boards/stamps3.h` の
   `spi_fast_hz` を **8000000 → 4000000** と落として切り分けます
   （`spi_slow_hz`（初期化時 2MHz）は変えない）。
 
@@ -503,7 +488,7 @@ AtomS3 を持っているなら、経路B（半田パッド、[`WIRING.md` §3.3
 
 ### 4.1 書き込み
 
-M5StampS3A / AtomS3 はどちらも ESP32-S3 のネイティブ USB でつながります。
+M5StampS3A は ESP32-S3 のネイティブ USB でつながります。
 
 ```sh
 . ~/esp/esp-idf/export.sh
@@ -523,15 +508,6 @@ idf.py build
 idf.py -p /dev/cu.usbmodemXXXX flash monitor
 ```
 
-**M5 AtomS3 の場合**は、ボード選択を切り替えます。
-
-```sh
-idf.py menuconfig
-# → UWB Probe Configuration → Target host board → M5 AtomS3
-idf.py build
-idf.py -p /dev/cu.usbmodemXXXX flash monitor
-```
-
 > **書き込みモードに入れないとき**: 通常は `idf.py flash` が自動でリセットして
 > 書き込めますが、失敗する場合は手動でダウンロードモードに入れます。
 >
@@ -541,7 +517,6 @@ idf.py -p /dev/cu.usbmodemXXXX flash monitor
 >   USB の抜き挿しをせずに毎回確実にダウンロードモードへ入れます。
 > - **BreakOut を使わず M5StampS3A 単体の場合**: 中央のボタン（G0）を押しながら
 >   USB を挿します。
-> - **AtomS3 の場合**: 側面のリセットボタンを 2 秒ほど長押しします。
 >
 > （**これらの操作は本リポジトリでは実機確認していません**。M5Stack の各製品ページを参照）
 
@@ -780,14 +755,6 @@ Kconfig の `UWB_ANCHOR_SHORT_ADDR` も引き続きありますが、これは
 ビルドへ効くファイル）は Git 管理外（`.gitignore`）です。古い `sdkconfig` が残っていると
 `Kconfig.projbuild` の既定値を変更しても反映されず、**古い PHY 設定のままビルドされます**。
 該当ファイルを削除するか `idf.py fullclean` を実行してから `idf.py build` してください。
-
-> **AtomS3 を代替に使う場合**は、ビルド前に `idf.py menuconfig` →
-> `UWB Anchor Configuration` → `Target host board` を **`M5 AtomS3 (alternative)`**
-> に切り替えてからビルドしてください（`CONFIG_UWB_ANCHOR_BOARD_ATOMS3`）。
-> 配線は経路B（半田パッド、[`WIRING.md` §3.3](WIRING.md)）になります。
-> AtomS3 には無印と AtomS3R の 2 系統があり、ピン配置をさらに
-> `AtomS3 pin layout`（`CONFIG_UWB_BOARD_ATOMS3_PINOUT_A` / `_B`）で選べます
-> （`docs/IRQ_POLICY.md`）。
 
 <a id="anchors5-console"></a>
 
@@ -1530,7 +1497,7 @@ DW3720 の OTP アドレス `0x0B` は "Antenna Delay – RFLoop" とされて�
 | 基板シルクにピン番号の印刷があるか | 未確認 |
 | **DW_RSTn の High 側の駆動** | データシート上は IC 内蔵の POR 回路が駆動する設計（外部プルアップ禁止、[3.6](#extra-parts)）。本リポジトリの実装（Hi-Z + リセット時のみ Low）はこれに沿っている。回路図が未入手のため実機波形は未確認 |
 | VCC_3V3 直近のバイパスコンデンサ | 未確認 |
-| `boards/*.h` のホスト側ピン番号 | **`boards/stamps3.h` の SPI 4 本（SCK=G12 / MOSI=G11 / MISO=G13 / CS=G10）は実機で確認済み**（2026-08-27。値を変えずに PASS）。**RST=G6 は 2026-08-29 の拡張 probe（L4: RSTn 機能検査）で、IRQ=G7 は同 probe（L5: IRQ 自己診断）と 2026-08-30 の測距試験で実機確認済み**（[11.3](#limitations)、`docs/HANDOFF.md`）。**WAKEUP=G8 のみ未確認**。`boards/atoms3.h` は全ピン未確認 |
+| `boards/stamps3.h` のホスト側ピン番号 | **SPI 4 本（SCK=G12 / MOSI=G11 / MISO=G13 / CS=G10）は実機で確認済み**（2026-08-27。値を変えずに PASS）。**RST=G6 は 2026-08-29 の拡張 probe（L4: RSTn 機能検査）で、IRQ=G7 は同 probe（L5: IRQ 自己診断）と 2026-08-30 の測距試験で実機確認済み**（[11.3](#limitations)、`docs/HANDOFF.md`）。**WAKEUP=G8 のみ未確認** |
 | **RSTn / WAKEUP が実際に効いているか** | **RSTn は確認済み**（2026-08-29。拡張 probe の L4 が RSTn をパルスし、書き込んだレジスタ値が既定へ戻ることを 2 台とも確認）。**WAKEUP は未確認**（L10 は既定で SKIP）。**IRQ は 2026-08-30 に実機で動作確認済み**（[11.3](#limitations)、`docs/HANDOFF.md` §0-D）で、既定を有効へ変更済み |
 | 16MHz SPI が実際に通るか | **確認済み**（2026-08-29。拡張 probe の L6 が `begin()` 成功後の 16MHz で DEV_ID を 1,000 回連続読み出しし、2 台とも不一致 0 件。probe は L5 で `begin()` を呼ぶ検査へ拡張済み） |
 | **FPC→DIP 変換基板の型番** | **未定。** 経路A（[3](#wiring)）で使う 0.5mm 12P FPC→DIP 変換基板の具体的な型番・購入先は本リポジトリでは確定していない |

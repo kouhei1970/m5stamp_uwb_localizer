@@ -67,11 +67,11 @@ typedef enum {
  *
  * Convenience wrapper around uwb_status_led_init() +
  * uwb_status_led_start_blink(). Returns the init error without starting the
- * blink if the LED could not be set up, so a board with no RGB LED (the
- * AtomS3 has an LCD instead) simply carries on without one.
+ * blink if the LED could not be set up, so a board with no RGB LED simply
+ * carries on without one.
  * init と start_blink をまとめただけのもの。LED を初期化できなければ
- * 点滅を始めずにそのエラーを返すので、フルカラー LED を持たない基板
- * (AtomS3 は LCD) でもそのまま動き続ける。
+ * 点滅を始めずにそのエラーを返すので、フルカラー LED を持たない基板でも
+ * そのまま動き続ける。
  *
  * @param gpio_num GPIO the LED data line is on / LED のデータ線の GPIO
  * @param role     TAG -> green, ANCHOR -> red, NONE -> amber

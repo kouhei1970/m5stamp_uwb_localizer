@@ -15,7 +15,7 @@
  *
  * Board selection: Kconfig choice UWB_PROBE_BOARD (see
  * main/Kconfig.projbuild), default M5StampS3A. Pin definitions live in
- * boards/stamps3.h / boards/atoms3.h / boards/stampfly.h at the repo root.
+ * boards/stamps3.h / boards/stampfly.h at the repo root.
  *
  * --- Test order and why (L1 -> L11 in the order they run, NOT in numeric
  *     order - L11 runs before L10 because L10 puts the chip to sleep and
@@ -101,11 +101,7 @@ extern "C" {
 extern const struct dwt_driver_s dw3720_driver;
 }
 
-#if CONFIG_UWB_PROBE_BOARD_ATOMS3
-#include "boards/atoms3.h"
-#define BOARD_UWB_PORT_CONFIG BOARD_ATOMS3_UWB_PORT_CONFIG
-#define BOARD_NAME            "AtomS3(pinout " BOARD_ATOMS3_PINOUT_NAME ")"
-#elif CONFIG_UWB_PROBE_BOARD_STAMPFLY
+#if CONFIG_UWB_PROBE_BOARD_STAMPFLY
 #include "boards/stampfly.h"
 #define BOARD_UWB_PORT_CONFIG BOARD_STAMPFLY_UWB_PORT_CONFIG
 #define BOARD_NAME            "StampFly"
@@ -113,10 +109,10 @@ extern const struct dwt_driver_s dw3720_driver;
 #include "boards/stamps3.h"
 #define BOARD_UWB_PORT_CONFIG BOARD_STAMPS3_UWB_PORT_CONFIG
 #define BOARD_NAME            "M5StampS3A"
-/* Only the M5StampS3A carries a WS2812 on a known GPIO; the AtomS3 has an
- * LCD instead, so the heartbeat is compiled out there.
- * 内蔵フルカラー LED を持つのは M5StampS3A のみ（AtomS3 は LCD）。
- * それ以外のボードではハートビート表示ごとコンパイルから外れる。 */
+/* Only the M5StampS3A branch defines BOARD_STATUS_LED_GPIO here; the
+ * StampFly branch above does not enable the heartbeat.
+ * ハートビート表示を有効にしているのは M5StampS3A 分岐のみ
+ * （上の StampFly 分岐では有効にしていない）。 */
 #define BOARD_STATUS_LED_GPIO BOARD_STAMPS3_STATUS_LED_GPIO
 #endif
 

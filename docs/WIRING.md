@@ -150,15 +150,15 @@ device." と明記している。
 
 ### 3.3 配線表（パッド番号 ↔ ホスト）
 
-ホスト側ピン番号は `boards/stamps3.h` / `boards/atoms3.h` と一致させてある。
+ホスト側ピン番号は `boards/stamps3.h` と一致させてある。
 
 **`boards/stamps3.h` の SPI 4 本（SCK=G12 / MOSI=G11 / MISO=G13 / CS=G10）は
 2026-08-27 に実機で確認済み**（M5StampS3A + StampS3 BreakOut + FPC、1 台。値を
 変えずに `firmware/probe` が PASS。→ [`GETTING_STARTED.md` §4.2.1](GETTING_STARTED.md#probe-result)）。
 **RST=G6 / IRQ=G7 も 2026-08-29〜30 に実機で確認済み**（拡張 probe の L4=RSTn 機能
 検査・L5=IRQ 自己診断、および IRQ 有効構成での測距成立。→ `docs/HANDOFF.md`）。
-**WAKEUP=G8 のみ未確認**で、`boards/atoms3.h` は全ピン未確認。
-**未確認のピンは実配線前に現物と照合すること**（両ファイルの冒頭コメント参照）。
+**WAKEUP=G8 のみ未確認**。
+**未確認のピンは実配線前に現物と照合すること**（同ファイルの冒頭コメント参照）。
 
 **M5StampS3A（標準構成。BreakOut の有無によらず同じ）**
 
@@ -174,25 +174,6 @@ device." と明記している。
 | 5 | DW_GP7 | **（未配線 / boards/stamps3.h は UWB_PORT_PIN_UNUSED）** | 未使用。配線不要 |
 | 2 | VCC_3V3 | **3V3** | **公式 3.3V。チップ直結、絶対最大定格 4.0V。5V 不可（§5.1）** |
 | 8, 12, 1 | GND | **GND** | 最低 8 と 12 の 2 本を GND へ |
-
-**M5 AtomS3（代替）**
-
-| UWB パッド | 信号 | AtomS3 | 備考 |
-|---:|---|---|---|
-| 11 | DW_CLK | **G7** | 底面ヘッダ |
-| 9 | DW_CDI | **G6** | 底面ヘッダ |
-| 7 | DW_CDO | **G5** | 底面ヘッダ |
-| 10 | DW_CSn | **G8** | 底面ヘッダ |
-| 6 | DW_RSTn | **G1** | Grove SDA を転用（Grove I2C は使えなくなる） |
-| 4 | DW_IRQ | **G2** | Grove SCL を転用 |
-| 3 | DW_WAKEUP | — | **未配線**（CS パルスでのウェイクにフォールバック） |
-| 5 | DW_GP7 | — | 未配線 |
-| 2 | VCC_3V3 | **3V3** | **公式 3.3V。チップ直結、絶対最大定格 4.0V。5V 不可（§5.1）** |
-| 8, 12, 1 | GND | **GND** | |
-
-> AtomS3 は空き GPIO が少ないため WAKEUP/GP7 は未配線。
-> `components/uwb_port` は `UWB_PORT_PIN_UNUSED` を扱えるので追加対応は不要
-> （`boards/atoms3.h` のコメント参照）。
 
 **配線しないパッドの扱い（`boards/*.h` の設定）**
 
@@ -415,9 +396,9 @@ SPI2 とバスを共有しないので、UWB ドライバが SPI をハングさ
 - [ ] アンテナの実体（チップアンテナかパターンアンテナか）と、§5.2 の
       keepout 領域が実物の見た目と合っているか
 - [ ] 3.3V 供給時の実消費電流（アイドル / レンジング中 / TX 時ピーク）
-- [ ] M5StampS3A / AtomS3 の 3V3 レールの電圧降下
+- [ ] M5StampS3A の 3V3 レールの電圧降下
 - [ ] 実際に通った `spi_fast_hz`（16MHz が通るか）と、そのときの配線長
-- [ ] ホスト側ピン番号（`boards/stamps3.h` / `boards/atoms3.h`）が
+- [ ] ホスト側ピン番号（`boards/stamps3.h`）が
       現物のシルクと一致しているか
 
 ---
@@ -620,10 +601,7 @@ H に張り付く**。QM33120W データシートには「sleep するには IRQ
 （ホスト側ピン割当の確認状況は §3.3 と `boards/*.h` の冒頭コメントにある。
 本節はハードウェアそのものについて残っている疑問点のみ）
 
-- **AtomS3R と無印 AtomS3 の底面ヘッダのピン配置が同じか**
-  （AtomS3R が現行版。IMU が MPU6886@G38/G39 から BMI270@G0/G45 へ移り、
-   G0/G45 は拡張ピンに出ていない。本リポジトリは IMU を使わないので
-   **互換と推定**しているが未検証。G5/G6/G7/G8/G38/G39 が出ていることを確認）
+現時点でハードウェアそのものについての未解決の疑問点はない。
 
 ---
 
@@ -633,6 +611,6 @@ H に張り付く**。QM33120W データシートには「sleep するには IRQ
   （§3 配線、§4 に SPI 疎通の受入確認手順、FPC / 半田パッドの選択も）。
   買ってから測位が出るまでの通し手順はこちら**
 - `docs/archive/SURVEY_m5stamp_uwb_module.md` … モジュール全体の仕様調査（FPC ピンアサインの出典）
-- `boards/stamps3.h` / `boards/atoms3.h` … ホスト側ピン割当。
+- `boards/stamps3.h` … ホスト側ピン割当。
   冒頭コメントに実機での確認状況（どのピンが確定でどれが未確認か）がある
 - `docs/refs/m5_hardware/` … 本調査で取得した M5_Hardware の原本（gitignore 済み）

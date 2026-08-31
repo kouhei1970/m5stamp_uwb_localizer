@@ -5,14 +5,10 @@ menu "UWB Tag Configuration"
         default UWB_TAG_BOARD_STAMPS3
         help
             main.cpp が uwb::Qm33120 の設定に使うピン定義
-            （リポジトリ直下の boards/stamps3.h / boards/atoms3.h /
-            boards/stampfly.h）を選ぶ。
+            （リポジトリ直下の boards/stamps3.h / boards/stampfly.h）を選ぶ。
 
         config UWB_TAG_BOARD_STAMPS3
             bool "M5StampS3A"
-
-        config UWB_TAG_BOARD_ATOMS3
-            bool "M5 AtomS3"
 
         config UWB_TAG_BOARD_STAMPFLY
             bool "StampFly (M5StampS3A on drone, rear 12P FPC)"
@@ -22,26 +18,6 @@ menu "UWB Tag Configuration"
                 取れる (boards/stampfly.h)。電源も同じコネクタの VDD_3V3
                 から取るので降圧回路は要らない。
                 旧 GROVE 4線構成は廃案 (2026-08-22)。
-
-    endchoice
-
-    choice UWB_BOARD_ATOMS3_PINOUT
-        prompt "AtomS3 のピン構成"
-        depends on UWB_TAG_BOARD_ATOMS3
-        default UWB_BOARD_ATOMS3_PINOUT_A
-        help
-            boards/atoms3.h が生成するピン構成を2通りから選ぶ
-            (docs/IRQ_POLICY.md)。構成Aは Grove ポート(G1/G2)を RST/IRQ に
-            転用し、ToF は底面ヘッダ(G38/G39)へ手配線する構成で、G38/G39が
-            オンボードの MPU6886 IMU と共用になる無印 AtomS3 向け。
-            構成Bは底面ヘッダ(G38/G39)を RST/IRQ に使い、ToF は Grove に
-            挿すだけで済む構成で、G38/G39 に何も繋がっていない AtomS3R 向け。
-
-        config UWB_BOARD_ATOMS3_PINOUT_A
-            bool "構成A: RST/IRQ=Grove(G1/G2), ToF I2C=G38/G39（底面へ手配線）"
-
-        config UWB_BOARD_ATOMS3_PINOUT_B
-            bool "構成B: RST/IRQ=G38/G39, ToF I2C=Grove(G1/G2)（Grove に挿すだけ）"
 
     endchoice
 
@@ -328,7 +304,7 @@ menu "UWB Tag Configuration"
 
             タグは標準構成（StampFly、GROVE 4本をSPIに使い切る）では
             IRQ 線が残らずポーリングで成立させる方針であり、単体
-            M5StampS3A/AtomS3 でタグを組む場合のみ pin_irq が配線される。
+            M5StampS3A でタグを組む場合のみ pin_irq が配線される。
             いずれの場合も実機での極性検証がまだ済んでいないため既定は
             n（無効）にしてある。
 
