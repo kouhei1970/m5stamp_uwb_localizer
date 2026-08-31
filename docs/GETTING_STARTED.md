@@ -1363,6 +1363,11 @@ I (xxx) uwb_net_wifi: net: mode=sta ssid=... ip=192.168.2.50 url=http://192.168.
 シリアルの記録がフルレートの一次資料）・既知の制約は
 **[`docs/NET_DASHBOARD.md`](NET_DASHBOARD.md) に完全な説明があります。**
 
+測距が始まった後は USB を抜いて構いません。充電器やモバイルバッテリからの給電
+だけ（PC 接続なし）でも起動して Wi-Fi に繋がり、ブラウザから見られることを
+実機で確認済みです（2026-08-31）。給電のみ運用時のトラブルシュートは
+[`docs/NET_DASHBOARD.md`](NET_DASHBOARD.md) を参照してください。
+
 ---
 
 <a id="antenna-delay"></a>

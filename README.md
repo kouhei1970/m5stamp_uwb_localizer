@@ -51,7 +51,7 @@
 | **シリアルコンソールによる実行時設定**（アンカーのアドレス・座標を NVS に保存。再ビルド不要） | 実装済み（実機未検証） |
 | **IRQ 駆動**（アンカー側。既定は無効） | 実装済み（**極性が実機未検証**。[`docs/IRQ_POLICY.md`](docs/IRQ_POLICY.md)） |
 | **TWR 遅延プリセットと版不一致の自動検出** | 実装済み（[`docs/TIMING_PRESETS.md`](docs/TIMING_PRESETS.md)） |
-| **Wi-Fi ブラウザダッシュボード + 無線コンソール**（HTTP/WebSocket、TCP コンソール） | 実装済み（実機確認: UWB 測距への悪影響なし。ブラウザ側の動作確認は保留。[`docs/NET_DASHBOARD.md`](docs/NET_DASHBOARD.md)） |
+| **Wi-Fi ブラウザダッシュボード + 無線コンソール**（HTTP/WebSocket、TCP コンソール） | 実装済み（実機確認: UWB 測距への悪影響なし・ブラウザ実表示・**PC を繋がない給電のみ運用（充電器/モバイルバッテリ）**も確認済み〈2026-08-31〉。[`docs/NET_DASHBOARD.md`](docs/NET_DASHBOARD.md)） |
 | ch9 PLL 再校正 / NLOS 判定 | **未実装**（[§既知の制約](docs/GETTING_STARTED.md#limitations)） |
 
 ---
@@ -137,6 +137,9 @@ I (xxx) uwb_probe: === L1: PASS / L2: PASS ===
 
 **→ ここから先の完全な手順は [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md) へ。**
 配線・5 台への書き込み・座標入力・測位・アンテナ遅延の校正まで通しで書いてあります。
+測位まで動いたら、USB を挿さずに Wi-Fi 経由でブラウザから見ることもできます。
+入口は [`docs/GETTING_STARTED.md` §8.7](docs/GETTING_STARTED.md#net-dashboard)、
+完全版は [`docs/NET_DASHBOARD.md`](docs/NET_DASHBOARD.md) です。
 
 ---
 
