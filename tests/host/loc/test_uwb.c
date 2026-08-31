@@ -408,6 +408,178 @@ static void test_ekf_bootstraps_from_one_range_at_a_time(void)
     CHECK(ok_count > 0, "1 本ずつでは立ち上がらなかった");
 }
 
+static void test_ekf_bootstrap_dim_plus2_fires_immediately(void)
+{
+    /* 経路1 (m >= dim+2): 登録アンカー全部 (6台) が揃っていなくても、
+     * 同一エポックで dim+2=5 本届けば待たずに即座に立ち上がるべき
+     * (退行防止 — この経路は今回の修正前から存在していた)。 */
+    uwb_config cfg;
+    uwb_ekf ekf;
+    uwb_meas m[5];
+    uwb_fix fix;
+    uwb_real truth[3] = {(uwb_real)3.1, (uwb_real)2.4, (uwb_real)1.2};
+    int ret;
+
+    uwb_config_init(&cfg, ANCH, 6);
+    uwb_ekf_init(&ekf, &cfg, UWB_MOTION_CV, (uwb_real)1.0);
+    make_meas(&cfg, truth, m, 5, 0.0); /* A0-A4 の 5 本。A5 は含めない */
+
+    ret = uwb_ekf_update(&ekf, (uwb_real)0.1, m, 5, &fix);
+    CHECK(ret && fix.ok, "6台中5本が同一エポックで届いても即座にbootstrapしない (経路1の退行)");
+    CHECK(dist3(fix.p, truth) < TOL_EXACT, "経路1 bootstrap直後の位置が違う (%.4f m)",
+          dist3(fix.p, truth));
+}
+
+static void test_ekf_bootstraps_three_anchor_2d_one_cycle(void)
+{
+    /* 実機の主構成 (3台×2D、モード自動切替の既定動作)。dim+2=4本には
+     * 届かないが、登録された enabled アンカーは3台しかないので、経路2
+     * (m >= dim+1 かつ m >= enabled アンカー台数) で1周期(3本)そろった
+     * 時点で立ち上がるべき (本テストが検証する退行修正の本体)。 */
+    static uwb_anchor a3[3] = {
+        {"B0", {0.0, 0.0, 2.4}, 1, 0.0, 0.08, 0.0},
+        {"B1", {5.0, 0.0, 0.2}, 1, 0.0, 0.08, 0.0},
+        {"B2", {5.0, 5.0, 2.4}, 1, 0.0, 0.08, 0.0}
+    };
+    uwb_config cfg;
+    uwb_ekf ekf;
+    uwb_fix fix;
+    uwb_real truth[3] = {(uwb_real)2.0, (uwb_real)3.0, (uwb_real)1.2};
+    int i;
+
+    uwb_config_init(&cfg, a3, 3);
+    cfg.dim = 2;
+    cfg.z_fixed = (uwb_real)1.2;
+    uwb_ekf_init(&ekf, &cfg, UWB_MOTION_CV, (uwb_real)1.0);
+    memset(&fix, 0, sizeof(fix));
+
+    for (i = 0; i < 3; ++i) {
+        uwb_real t = (uwb_real)((i + 1) * 0.01);
+        uwb_meas one;
+        one.anchor = i;
+        one.value = (uwb_real)dist3(truth, a3[i].p);
+        one.sigma = (uwb_real)0;
+        one.quality = (uwb_real)-1;
+        uwb_ekf_update(&ekf, t, &one, 1, &fix);
+    }
+    CHECK(fix.ok, "3台・2Dモードで1周期(3本)そろってもbootstrapしない");
+    CHECK(dist3(fix.p, truth) < TOL_EXACT, "3台bootstrap直後の位置が違う (%.4f m)",
+          dist3(fix.p, truth));
+}
+
+static void test_ekf_bootstraps_four_anchor_3d_one_cycle(void)
+{
+    /* 4台×3D (dim+1構成)。3台×2Dと同じ経路2で、1周期(4本)そろった
+     * 時点で立ち上がるべき。 */
+    static uwb_anchor a4[4] = {
+        {"C0", {0.0, 0.0, 2.4}, 1, 0.0, 0.08, 0.0},
+        {"C1", {5.0, 0.0, 0.2}, 1, 0.0, 0.08, 0.0},
+        {"C2", {5.0, 5.0, 2.4}, 1, 0.0, 0.08, 0.0},
+        {"C3", {0.0, 5.0, 0.2}, 1, 0.0, 0.08, 0.0}
+    };
+    uwb_config cfg;
+    uwb_ekf ekf;
+    uwb_fix fix;
+    uwb_real truth[3] = {(uwb_real)2.0, (uwb_real)3.0, (uwb_real)1.2};
+    int i;
+
+    uwb_config_init(&cfg, a4, 4);
+    uwb_ekf_init(&ekf, &cfg, UWB_MOTION_CV, (uwb_real)1.0);
+    memset(&fix, 0, sizeof(fix));
+
+    for (i = 0; i < 4; ++i) {
+        uwb_real t = (uwb_real)((i + 1) * 0.01);
+        uwb_meas one;
+        one.anchor = i;
+        one.value = (uwb_real)dist3(truth, a4[i].p);
+        one.sigma = (uwb_real)0;
+        one.quality = (uwb_real)-1;
+        uwb_ekf_update(&ekf, t, &one, 1, &fix);
+    }
+    CHECK(fix.ok, "4台・3Dモードで1周期(4本)そろってもbootstrapしない");
+    CHECK(dist3(fix.p, truth) < TOL_EXACT, "4台bootstrap直後の位置が違う (%.4f m)",
+          dist3(fix.p, truth));
+}
+
+static void test_ekf_bootstrap_rescues_with_one_anchor_occluded(void)
+{
+    /* 5台登録 (dim=3, want=dim+2=5) だが1台 (D4) が遮蔽されて測距が
+     * 一切届かない。残り4台 (=dim+1) は届き続けるが、揃うのは dim+1
+     * 止まりなので経路2 (m >= enabled台数=5) には届かない。待ち始めて
+     * から max_dt 秒経てば経路3 (救済) で立ち上がるべき。 */
+    static uwb_anchor a5[5] = {
+        {"D0", {0.0, 0.0, 2.4}, 1, 0.0, 0.08, 0.0},
+        {"D1", {5.0, 0.0, 0.2}, 1, 0.0, 0.08, 0.0},
+        {"D2", {5.0, 5.0, 2.4}, 1, 0.0, 0.08, 0.0},
+        {"D3", {0.0, 5.0, 0.2}, 1, 0.0, 0.08, 0.0},
+        {"D4", {2.5, 2.5, 2.4}, 1, 0.0, 0.08, 0.0}  /* 遮蔽されて届かない */
+    };
+    uwb_config cfg;
+    uwb_ekf ekf;
+    uwb_fix fix;
+    uwb_real truth[3] = {(uwb_real)2.0, (uwb_real)3.0, (uwb_real)1.2};
+    int i;
+
+    uwb_config_init(&cfg, a5, 5);
+    uwb_ekf_init(&ekf, &cfg, UWB_MOTION_CV, (uwb_real)1.0);
+    memset(&fix, 0, sizeof(fix));
+
+    for (i = 0; i < 20; ++i) {
+        uwb_real t = (uwb_real)((i + 1) * 0.2); /* 20 x 0.2s = 4s > max_dt(2s) */
+        uwb_meas one;
+        int a = i % 4; /* D0-D3 だけを繰り返す。D4 (添字4) は送らない */
+        one.anchor = a;
+        one.value = (uwb_real)dist3(truth, a5[a].p);
+        one.sigma = (uwb_real)0;
+        one.quality = (uwb_real)-1;
+        uwb_ekf_update(&ekf, t, &one, 1, &fix);
+        if (i < 9) {
+            /* t <= 1.8s はまだ待ち始め(0.2s)から max_dt(2s) 未満 */
+            CHECK(!fix.ok, "max_dt経過前(t=%.1f)に救済が働いてしまった (早すぎる)", (double)t);
+        }
+    }
+    CHECK(fix.ok, "1台遮蔽でもmax_dt経過後にbootstrapしない (救済経路が働いていない)");
+    CHECK(dist3(fix.p, truth) < TOL_EXACT, "救済経路bootstrap直後の位置が違う (%.4f m)",
+          dist3(fix.p, truth));
+}
+
+static void test_ekf_bootstrap_stays_uninitialized_with_only_two_anchors(void)
+{
+    /* dim+1 (= 3D なら4本、2Dなら3本) に満たない本数は、経路2/3どちらの
+     * 条件 (m >= dim+1) も満たさないので、いくら待っても立ち上がっては
+     * いけない (安全側)。5台登録・dim=3のうち2台しか届かない状況を
+     * max_dt を大きく超えて続けても bootstrap しないことを確認する。 */
+    static uwb_anchor a5[5] = {
+        {"E0", {0.0, 0.0, 2.4}, 1, 0.0, 0.08, 0.0},
+        {"E1", {5.0, 0.0, 0.2}, 1, 0.0, 0.08, 0.0},
+        {"E2", {5.0, 5.0, 2.4}, 1, 0.0, 0.08, 0.0},
+        {"E3", {0.0, 5.0, 0.2}, 1, 0.0, 0.08, 0.0},
+        {"E4", {2.5, 2.5, 2.4}, 1, 0.0, 0.08, 0.0}
+    };
+    uwb_config cfg;
+    uwb_ekf ekf;
+    uwb_fix fix;
+    uwb_real truth[3] = {(uwb_real)2.0, (uwb_real)3.0, (uwb_real)1.2};
+    int i;
+
+    uwb_config_init(&cfg, a5, 5);
+    uwb_ekf_init(&ekf, &cfg, UWB_MOTION_CV, (uwb_real)1.0);
+    memset(&fix, 0, sizeof(fix));
+
+    for (i = 0; i < 60; ++i) {          /* 60 x 0.2s = 12s >> max_dt(2s) */
+        uwb_real t = (uwb_real)((i + 1) * 0.2);
+        uwb_meas one;
+        int a = i % 2; /* E0, E1 だけを繰り返す */
+        one.anchor = a;
+        one.value = (uwb_real)dist3(truth, a5[a].p);
+        one.sigma = (uwb_real)0;
+        one.quality = (uwb_real)-1;
+        uwb_ekf_update(&ekf, t, &one, 1, &fix);
+    }
+    CHECK(!fix.ok, "2台しか届かないのにbootstrapしてしまった (安全条件違反)");
+    CHECK(!ekf.initialized, "初期化フラグが立ってしまった (2台のみ)");
+}
+
 static void test_ekf_recovers_from_gate_lockout(void)
 {
     /* ゲートが自分の誤りを守り続ける「棺桶問題」からの復帰。 */
@@ -529,6 +701,11 @@ int main(void)
     test_sym_eig_vectors();
     test_ekf_tracks_a_moving_tag();
     test_ekf_bootstraps_from_one_range_at_a_time();
+    test_ekf_bootstrap_dim_plus2_fires_immediately();
+    test_ekf_bootstraps_three_anchor_2d_one_cycle();
+    test_ekf_bootstraps_four_anchor_3d_one_cycle();
+    test_ekf_bootstrap_rescues_with_one_anchor_occluded();
+    test_ekf_bootstrap_stays_uninitialized_with_only_two_anchors();
     test_ekf_recovers_from_gate_lockout();
     test_no_nan_on_degenerate_input();
     test_antenna_delay_and_quality();

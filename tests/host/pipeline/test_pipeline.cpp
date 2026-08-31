@@ -1892,6 +1892,59 @@ static void scenario27_ekf_single_sample_cycle()
     CHECK(allOkAfterBootstrap, "bootstrap後、1本だけの周期(n=1)の連続更新のどこかでok=0になった");
 }
 
+/* ==================================================================== *
+ * 28. EKF bootstrap: 3台・2Dモード (実機の主構成) でn=1逐次更新1周期後に
+ *     lv3のfixがokになること
+ *
+ * components/uwb_loc/src/uwb_ekf.c の bootstrap() は、以前は dim+2 本の
+ * 異なるアンカーの測距が揃うまで初期化しなかった。3台×2D（78d7cfaのモード
+ * 自動判定で有効アンカー3台のときの既定動作）はdim+1=3台しか無いため、
+ * dim+2=4本には原理上決して届かず、EKFが永遠に初期化されない不具合が
+ * あった（本シナリオが検証する修正の本体）。修正後は bootstrap() の経路2
+ * (m >= dim+1 かつ m >= 登録enabledアンカー台数) により、1周期(3本)が
+ * そろった時点で立ち上がる。
+ * ==================================================================== */
+static void scenario28_ekf_bootstrap_three_anchor_2d_mode()
+{
+    std::printf("--- 28. EKF bootstrap: 3台・2Dモードでn=1逐次更新1周期後にok=1になる ---\n");
+
+    static const AnchorEntry entries[3] = {
+        {0x0001, {0.0f, 0.0f, 2.4f}, 0.0f, true},
+        {0x0002, {5.0f, 0.0f, 0.2f}, 0.0f, true},
+        {0x0003, {5.0f, 5.0f, 2.4f}, 0.0f, true},
+    };
+    const float zFixed    = 1.2f;
+    const float truth[3] = {2.0f, 3.0f, zFixed};
+
+    AnchorTable table;
+    CHECK(table.set(entries, 3), "set()に失敗");
+    table.setZFixedM(zFixed);
+    const ModeDecision d = table.evaluateMode();
+    CHECK(d.mode == PositioningMode::Mode2D, "3台なのに2Dにならなかった");
+    CHECK(table.isDimension2D(), "dimが2に反映されていない");
+
+    RangingSample samples[3];
+    makeSamples(entries, 3, truth, samples);
+
+    PositioningPipeline pipeline(table);
+    pipeline.initEkf();
+
+    double t             = 0.0;
+    const double dtStep = 0.01; // 1台あたり10ms間隔（1周期=3本のイメージ）
+    PositionResult r{};
+
+    for (int a = 0; a < 3; ++a) {
+        t += dtStep;
+        r = pipeline.updateEkf(t, &samples[a], 1);
+        CHECK(r.solvable, "updateEkfがsolvable=0を返した (a=%d)", a);
+    }
+    CHECK(r.ok, "3台・2Dモードで1周期(3本)そろってもLv3のfixがokにならない");
+    CHECK(dist3(r.p, truth) < 1e-2f, "bootstrap直後の位置が真値と一致しない (誤差=%.6f)",
+          static_cast<double>(dist3(r.p, truth)));
+    CHECK(std::fabs(r.p[2] - zFixed) < 1e-3f, "bootstrap直後のzがz_fixedと一致しない (z=%.6f)",
+          static_cast<double>(r.p[2]));
+}
+
 int main()
 {
     std::printf("=== tests/host/pipeline: uwb_ranging 測位パイプライン 合成データ検証 ===\n");
@@ -1925,6 +1978,7 @@ int main()
     scenario25_ekf_sequential_matches_batch_static();
     scenario26_ekf_sequential_reduces_moving_tag_error();
     scenario27_ekf_single_sample_cycle();
+    scenario28_ekf_bootstrap_three_anchor_2d_mode();
 
     std::printf("\n=== %d 件中 %d 件失敗 ===\n", g_run, g_fail);
     return (g_fail == 0) ? 0 : 1;

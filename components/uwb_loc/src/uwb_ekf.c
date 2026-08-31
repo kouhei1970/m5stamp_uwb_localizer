@@ -2,7 +2,9 @@
  *
  * 「密結合」= 位置に直したものではなく**測距値そのもの**で更新する。
  * だから 1 本しか届かないエポックでも情報を使える (立ち上げだけは
- * 球面 1 枚では位置が決まらないので dim+2 本たまるのを待つ)。
+ * 球面 1 枚では位置が決まらないので複数本たまるのを待つ。理想は dim+2 本
+ * だが、登録アンカーが dim+1 台しかない構成ではそこまで待たず立ち上げる。
+ * 受理条件の詳細は bootstrap() のコメント参照)。
  *
  * 更新はスカラー逐次。S がスカラーなので**行列の逆行列が要らない**。
  * P の更新は対称 rank-1 ダウンデート P −= u uᵀ/s (uwb_symn_rank1_downdate)。
@@ -37,6 +39,8 @@ void uwb_ekf_reset(uwb_ekf *e)
     e->rejects = 0;
     e->ambiguous = 0;
     e->n_pending = 0;
+    e->boot_wait_t0 = (uwb_real)0;
+    e->has_boot_wait_t0 = 0;
     e->side_known = 0;
     e->side = 0;
 }
@@ -151,23 +155,50 @@ static void ekf_position(const uwb_ekf *e, uwb_real *p)
     if (e->nd == 2) p[2] = e->cfg->z_fixed;
 }
 
+/* cfg に登録されている enabled なアンカー台数。plane_compute()
+ * (uwb_model.c) と同じく cfg->anchors[i].enabled を直接見る。
+ * bootstrap() が「これ以上待っても増えない上限」として使う。 */
+static int n_enabled_anchors(const uwb_config *cfg)
+{
+    int i, n = 0;
+    for (i = 0; i < cfg->n_anchors; ++i)
+        if (cfg->anchors[i].enabled) ++n;
+    return n;
+}
+
 /* スナップショット測位で立ち上げる。
  * **立ち上げだけは 1 本では足りない** — 測距 1 本は球面 1 枚でしかない。
  * 走り出したあとは 1 本ずつでも更新できるので、非同期に届く経路のために
- * 直近の測距を貯めておいて、揃った時点で立ち上げる。 */
+ * 直近の測距を貯めておいて、揃った時点で立ち上げる。
+ *
+ * 受理条件は次の 3 経路 (優先順、いずれか 1 つで可):
+ *   1. m >= dim+2                                   … 理想本数が揃った。即立ち上げ
+ *   2. m >= dim+1 かつ m >= 登録 enabled アンカー台数 … これ以上待っても
+ *      新しいアンカーは増えない (3台×2D・4台×3D の主構成はここで
+ *      最初の1周期に立ち上がる)
+ *   3. m >= dim+1 かつ「待ち始めてから max_dt 経過」 … 一部のアンカーが
+ *      遮蔽されていて m が dim+1 止まりのままの救済
+ * 経路 2/3 が無いと、有効アンカーが dim+1 台しかない構成では m が
+ * 決して want (=dim+2) に届かず永遠に立ち上がらない。 */
 static int bootstrap(uwb_ekf *e, uwb_real t, const uwb_meas *meas, int n)
 {
     uwb_meas seed[UWB_MAX_MEAS];
     uwb_fix snap;
     uwb_real cutoff = t - e->max_dt;
+    int was_empty = (e->n_pending == 0);
     int i, j, m = 0, want = e->cfg->dim + 2;
 
-    /* 届いた分を貯める */
+    /* 届いた分を貯める。pending が空からの立ち上がりなら、それを
+     * 「待ち始めた時刻」として記録する (刈り込みでは消さない)。 */
     for (i = 0; i < n && e->n_pending < UWB_MAX_MEAS; ++i) {
         if (!uwb_meas_usable(e->cfg, &meas[i])) continue;
         e->pending[e->n_pending] = meas[i];
         e->pending_t[e->n_pending] = t;
         ++e->n_pending;
+    }
+    if (was_empty && e->n_pending > 0) {
+        e->boot_wait_t0 = t;
+        e->has_boot_wait_t0 = 1;
     }
     /* 古いものを捨てる */
     {
@@ -180,6 +211,8 @@ static int bootstrap(uwb_ekf *e, uwb_real t, const uwb_meas *meas, int n)
         }
         e->n_pending = m2;
     }
+    /* 全部刈り込まれて空に戻ったら、次に積む 1 本が新しい「待ち始め」になる */
+    if (e->n_pending == 0) e->has_boot_wait_t0 = 0;
     /* アンカーごとに最新の 1 本だけ採る */
     for (i = e->n_pending - 1; i >= 0 && m < UWB_MAX_MEAS; --i) {
         int dup = 0;
@@ -189,12 +222,9 @@ static int bootstrap(uwb_ekf *e, uwb_real t, const uwb_meas *meas, int n)
     }
 
     if (m < want) {
-        /* 最低本数にも届かないうちは待つ。届いているのに窓が浅いだけなら
-         * もう少し待ち、窓を超えたら最低本数で妥協する。 */
-        uwb_real oldest = t;
-        for (i = 0; i < e->n_pending; ++i)
-            if (e->pending_t[i] < oldest) oldest = e->pending_t[i];
-        if (m < e->cfg->dim + 1 || (t - oldest) < e->max_dt) return 0;
+        int have_all_anchors = m >= n_enabled_anchors(e->cfg);
+        int waited_out = e->has_boot_wait_t0 && (t - e->boot_wait_t0) >= e->max_dt;
+        if (m < e->cfg->dim + 1 || !(have_all_anchors || waited_out)) return 0;
     }
 
     if (!uwb_solve_lv2(e->cfg, seed, m, &snap) || !snap.ok) return 0;
@@ -239,6 +269,7 @@ static int bootstrap(uwb_ekf *e, uwb_real t, const uwb_meas *meas, int n)
 
     e->initialized = 1;
     e->n_pending = 0;
+    e->has_boot_wait_t0 = 0;
     e->ambiguous = snap.ambiguous;
     if (!snap.ambiguous) {
         int s = uwb_mirror_side(e->cfg, snap.p);

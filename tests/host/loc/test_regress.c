@@ -42,6 +42,17 @@
  *     フィルタは過去に依存するので、それ以降の一致は期待できない。
  *     double では分岐は起きない (diverged_traj = 0)。分岐後に真値へ近いのが
  *     新旧どちらかは p_fail_new_closer / p_fail_ref_closer に数える。
+ *   - enabled なアンカーが dim+1 台しかない配置の軌跡 (EKF/starved)。
+ *     参照実装 (ref/uwb_ekf.c) の bootstrap() には「dim+2 本に届かないとき
+ *     の救済」に旧来からの不具合があり、毎エポック全アンカーをまとめて
+ *     渡す既定の観測パターンでは pending の最古時刻が常に「今」に更新され
+ *     続けて (t-oldest) が max_dt に届かず、enabled 台数が dim+1 のときは
+ *     永遠に初期化できない (浮動小数の等号一致を除く)。新実装はこれを
+ *     修正し (bootstrap() 経路2: m >= dim+1 かつ m >= enabled 台数なら
+ *     即座に立ち上げる)。この配置では「新は立ち上がるが旧は立ち上がらない」
+ *     のが意図した挙動なので、ok 等の不一致は失敗にせず報告のみにする
+ *     (starved_traj = 該当した軌跡数。旧が失敗し続けるのに新が成功する
+ *     ことは EKF/starved の ok 欄の不一致件数で確認できる)。
  *
  * 環境変数 REGRESS_DUMP=<試行番号> でその試行の入力を印字する (原因調査用)。
  */
@@ -977,6 +988,11 @@ static void run_ekf_trials(int trajectories, int steps)
     /* EKF~: 同一平面判定が立つ配置の軌跡。立ち上げの Lv2 が鏡像・平面上の
      * 退化解になりうるので報告のみ */
     FixMetrics fml = make_fix_metrics("EKF~");
+    /* EKF/starved: enabled アンカーが dim+1 台しかない配置。ref の
+     * bootstrap() 不具合により旧は初期化できず、新は初期化できるのが
+     * 意図した差分なので報告のみ (ファイル冒頭コメント参照)。 */
+    FixMetrics fms = make_fix_metrics_tol("EKF/starved", TOL_P_EKF);
+    Metric *starved_traj = metric("EKF", "starved_traj", NAN); /* fail 欄 = 該当した軌跡の数 */
     Metric *state_x  = metric("EKF", "state_x", NAN);
     Metric *state_P  = metric("EKF", "state_P", NAN);
     Metric *predict_x = metric("EKF", "predict_x", NAN);
@@ -999,7 +1015,7 @@ static void run_ekf_trials(int trajectories, int steps)
         int teleport_step = -1;
         double teleport_to[3];
         double t = 0.0;
-        int i, cop, diverged = 0;
+        int i, cop, diverged = 0, starved;
 
         gen_anchors(&scn);
         gen_traj(&tr);
@@ -1016,6 +1032,17 @@ static void run_ekf_trials(int trajectories, int steps)
         cop = uwb_anchors_coplanar(&ncfg, 0, 0);
         uwb_ekf_init(&nek, &ncfg, (uwb_motion)tr.motion, (uwb_real)tr.sigma_a);
         (void)ref_ekf_init(0, &rcfg, ra, scn.n_anchors, tr.motion, tr.sigma_a);
+
+        /* enabled アンカーが dim+1 台しかない配置か (ファイル冒頭コメント
+         * 「EKF/starved」参照)。この配置では ref は bootstrap の不具合で
+         * 初期化できず、新は修正後の経路2で初期化できるのが意図した差分。 */
+        {
+            int k, n_enabled = 0;
+            for (k = 0; k < scn.n_anchors; ++k)
+                if (scn.enabled[k]) ++n_enabled;
+            starved = (n_enabled <= cg.dim + 1);
+        }
+        if (starved) m_mismatch(starved_traj, 0, 1);
 
         if (urand() < 0.30 && steps > 30) {
             nlos_start = 10 + (int)(urand() * (steps - 30));
@@ -1119,15 +1146,16 @@ static void run_ekf_trials(int trajectories, int steps)
                 if (nf.ok && rf.ok) { en = dist3d(dn, truth); er = dist3d(dr, truth); }
                 snprintf(ctx, sizeof(ctx), "traj %d step %d cop=%d nd=%d mo=%d n=%d e_new=%.3f e_ref=%.3f",
                          trial, i, cop, tr.nd, tr.motion, n_meas, en, er);
-                if (!cop && !diverged && nf.ok && rf.ok && dist3d(dn, dr) > TOL_P_EKF) {
+                if (!cop && !starved && !diverged && nf.ok && rf.ok && dist3d(dn, dr) > TOL_P_EKF) {
                     diverged = 1;
                     m_mismatch(diverged_traj, 0, 1);
                 }
-                compare_fix(cop ? &fml : (diverged ? &fmp : &fm), &nf, &rf, !cop && !diverged, 0, ctx);
+                compare_fix(cop ? &fml : (starved ? &fms : (diverged ? &fmp : &fm)), &nf, &rf,
+                            !cop && !starved && !diverged, 0, ctx);
                 if (nf.ok && rf.ok) {
                     m_num(err_new, en, 0, ctx);
                     m_num(err_ref, er, 0, ctx);
-                    if (!cop && dist3d(dn, dr) > TOL_P_EKF) {
+                    if (!cop && !starved && dist3d(dn, dr) > TOL_P_EKF) {
                         if (en < er) m_mismatch(closer_new, 0, 1);
                         else         m_mismatch(closer_ref, 0, 1);
                     }

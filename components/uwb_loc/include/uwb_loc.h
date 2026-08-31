@@ -240,6 +240,16 @@ typedef struct {
     uwb_real pending_t[UWB_MAX_MEAS];
     int      n_pending;
 
+    /* 立ち上げ待ちを「開始した時刻」。pending が空から最初の 1 本を
+     * 積んだ時刻を覚えておく (has_boot_wait_t0 が 1 のとき有効)。
+     * pending_t と違って古い観測の刈り込み (cutoff) では消えない —
+     * 「待ち始めてから max_dt 経ったら妥協する」救済判定の基準に使うため、
+     * 刈り込みで毎回リセットされてしまうと救済が働かなくなる。
+     * pending が全部刈り込まれて空に戻ったとき、および bootstrap 成功時に
+     * リセットする (uwb_ekf_init/uwb_ekf_reset でも 0 に戻す)。 */
+    uwb_real boot_wait_t0;
+    int      has_boot_wait_t0;
+
     /* 鏡像解の「どちら側か」の記憶 */
     int      side_known;
     int      side;
