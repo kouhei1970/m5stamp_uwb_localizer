@@ -226,6 +226,7 @@ menu "UWB Tag Configuration"
                 anchor count <n>
                 mode [auto|2d|3d]   （測位モードの表示・手動切替）
                 height [<meters>]   （2D測位の固定高さの表示・変更）
+                survey dist/z/show/apply/clear （メジャー実測からの座標計算）
                 output <on|off>   （JSON Lines 出力の一時停止）
                 save / reset-config / info / reboot
 
