@@ -40,4 +40,9 @@ idf_component_register(
         console
         # Wi-Fi + ブラウザダッシュボード + 無線コンソール（scratchpad/NET_SPEC.md）。
         uwb_net
+        # IP_EVENT/IP_EVENT_STA_GOT_IP + esp_event_handler_register()。
+        # 起動パンくずのstage4 (got_ip) 用ハンドラ登録（main.cpp）。
+        # uwb_net 経由でも透過的に付いてくるが、直接使うので明示しておく。
+        esp_event
+        esp_netif
 )

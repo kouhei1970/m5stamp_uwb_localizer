@@ -26,4 +26,8 @@ idf_component_register(
         "heap"
         # esp_log_set_vprintf() for the console guard.
         "log"
+        # linenoise/linenoise.h + linenoiseSetReadFunction() for
+        # uwb_port_console_read_guard_install() (uwb_port_console_guard.c).
+        # ホスト不在時の REPL busy loop 対策 (uwb_port.h 参照)。
+        "console"
 )

@@ -45,7 +45,9 @@
 #include <cstdio>
 #include <cstring>
 
+#include "esp_event.h"
 #include "esp_log.h"
+#include "esp_netif.h" // IP_EVENT/IP_EVENT_STA_GOT_IP（起動パンくずのstage4用）
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -744,9 +746,91 @@ static void uwbLogTask(void* argRaw)
  * Boot breadcrumbs for diagnosing the standalone-power freeze: persist a
  * boot counter and the last reached stage in NVS so the previous run's
  * fate can be read back after a power cycle.
+ *
+ * 【2026-08-31 追記】以下を追加した:
+ *   1. 履歴リング（NVS blob "hist"）: stage==0 のたびに「前回の記録
+ *      (boot_n, stage)」を1件追記する。電源投入を繰り返すたびに積み上がる
+ *      ので、bootlog コマンド（tag_console.cpp）で「毎回同じ段階で
+ *      止まっていないか」を後から見返せる。
+ *   2. +8秒の再表示: 挿し直し直後にログを取り逃した場合の対策として、
+ *      stage==0 のときに一発 (one-shot) の esp_timer を仕掛け、8秒後に
+ *      前回記録と現在stageを再度 ESP_LOGW で出す。タイマコールバックは
+ *      esp_timer タスク上で動きブロッキング禁止なので、NVSは読まず
+ *      static 変数だけを見る。
+ *   3. stage 4 (got_ip): IP_EVENT_STA_GOT_IP のハンドラから呼ぶ
+ *      （app_main、uwb::net::start() の後で登録）。
  * ==================================================================== */
+
+namespace {
+
+constexpr size_t kBreadcrumbHistCapacity = 16;
+
+/** NVS blob "hist" の1要素。tag_console.cpp の bootlog コマンドも同じ
+ *  レイアウト（キー名・この構造体・容量）を前提に独立して読むので、
+ *  変更する場合は両方を揃えること。
+ *  One element of the "hist" NVS blob. tag_console.cpp's `bootlog` command
+ *  independently assumes this same layout (key names, this struct,
+ *  capacity) - keep both in sync if this changes. */
+struct BreadcrumbEntry {
+    uint32_t bootN;
+    uint8_t stage;
+} __attribute__((packed));
+
+/** 前回記録（stage==0で読んだ直後の値）と現在stageを、+8秒タイマの
+ *  コールバックがNVSを読まずに使えるよう static に持つ。 */
+uint32_t g_bcLastBootN        = 0;
+uint8_t g_bcLastStage          = 0xFF; // 0xFF = 前回記録なし（初回起動）
+uint8_t g_bcCurStage           = 0xFF;
+esp_timer_handle_t g_bcTimer = nullptr;
+
+/**
+ * @brief 履歴リングへ1件追記する。呼び出し側が開いた handle をそのまま使う
+ * （呼び出し側が nvs_commit() する）。
+ *
+ * 読み出し失敗（キー無し・サイズ不一致等）は空リング（全ゼロ）として扱い、
+ * 書き込み失敗もログのみで続行する（起動を止めない）。
+ */
+void bootBreadcrumbPushHist(nvs_handle_t h, uint32_t bootN, uint8_t stage)
+{
+    BreadcrumbEntry hist[kBreadcrumbHistCapacity];
+    std::memset(hist, 0, sizeof(hist));
+    size_t histBytes = sizeof(hist);
+    if (nvs_get_blob(h, "hist", hist, &histBytes) != ESP_OK || histBytes != sizeof(hist)) {
+        std::memset(hist, 0, sizeof(hist)); // 読めなければ空リング扱い
+    }
+    uint32_t histN = 0;
+    nvs_get_u32(h, "hist_n", &histN); // キー無しなら0のまま（＝空リング）
+
+    const size_t slot = histN % kBreadcrumbHistCapacity;
+    hist[slot].bootN    = bootN;
+    hist[slot].stage     = stage;
+    ++histN;
+
+    if ((nvs_set_blob(h, "hist", hist, sizeof(hist)) != ESP_OK) || (nvs_set_u32(h, "hist_n", histN) != ESP_OK)) {
+        ESP_LOGW(TAG, "breadcrumb: failed to persist boot history ring (non-fatal)");
+    }
+}
+
+/**
+ * @brief +8秒の再表示。挿し直し直後にログを取り逃した場合の対策。
+ * esp_timer タスク上で動く（ブロッキング API 呼び出し厳禁）ため、NVSは
+ * 読まず static 変数だけを見る。
+ */
+void bootBreadcrumbTimerCb(void* /*arg*/)
+{
+    ESP_LOGW(TAG,
+             "breadcrumb +8s: previous run boot_n=%lu last_stage=%u, this run now at stage=%u "
+             "(0=entry 1=console 2=net_start 3=net_ok 4=got_ip)",
+             static_cast<unsigned long>(g_bcLastBootN), static_cast<unsigned>(g_bcLastStage),
+             static_cast<unsigned>(g_bcCurStage));
+}
+
+} // namespace
+
 static void bootBreadcrumb(uint8_t stage)
 {
+    g_bcCurStage = stage; // NVSの成否に関わらず先に更新する（+8秒タイマ用）
+
     nvs_handle_t h;
     if (nvs_open("dbg", NVS_READWRITE, &h) != ESP_OK) {
         return;
@@ -759,11 +843,46 @@ static void bootBreadcrumb(uint8_t stage)
         ESP_LOGW(TAG, "breadcrumb: previous run: boot_n=%lu last_stage=%u "
                       "(0=entry 1=console 2=net_start 3=net_ok 4=got_ip)",
                  static_cast<unsigned long>(bootN), static_cast<unsigned>(last));
+        g_bcLastBootN = bootN;
+        g_bcLastStage = last;
+
+        if (last != 0xFF) { // 0xFF＝前回記録なし（初回起動）はリングへ積まない
+            bootBreadcrumbPushHist(h, bootN, last);
+        }
+
         nvs_set_u32(h, "boot_n", bootN + 1);
+
+        // +8秒の再表示タイマ（一発、初回のみ生成）。登録失敗はログのみで続行。
+        if (g_bcTimer == nullptr) {
+            const esp_timer_create_args_t timerArgs = {
+                .callback             = &bootBreadcrumbTimerCb,
+                .arg                    = nullptr,
+                .dispatch_method       = ESP_TIMER_TASK,
+                .name                   = "uwb_bc_8s",
+                .skip_unhandled_events = true,
+            };
+            if (esp_timer_create(&timerArgs, &g_bcTimer) != ESP_OK) {
+                ESP_LOGW(TAG, "breadcrumb: esp_timer_create failed (8s re-log disabled, non-fatal)");
+                g_bcTimer = nullptr;
+            } else if (esp_timer_start_once(g_bcTimer, 8ULL * 1000ULL * 1000ULL) != ESP_OK) {
+                ESP_LOGW(TAG, "breadcrumb: esp_timer_start_once failed (8s re-log disabled, non-fatal)");
+            }
+        }
     }
     nvs_set_u8(h, "stage", stage);
     nvs_commit(h);
     nvs_close(h);
+}
+
+/**
+ * @brief stage 4 (got_ip) を記録する IP_EVENT_STA_GOT_IP ハンドラ。
+ * app_main が uwb::net::start() の後で登録する（イベントループは
+ * uwb_net が作成済み。CONFIG_UWB_NET_ENABLE=n のときは未作成なので登録
+ * 自体が失敗するが、呼び出し側でログのみ出して続行する）。
+ */
+static void bootBreadcrumbGotIpHandler(void* /*arg*/, esp_event_base_t /*base*/, int32_t /*id*/, void* /*data*/)
+{
+    bootBreadcrumb(4);
 }
 
 extern "C" void app_main(void)
@@ -1066,6 +1185,17 @@ extern "C" void app_main(void)
         if (netErr != ESP_OK) {
             ESP_LOGE(TAG, "uwb_net の起動に失敗しました (err=%s)。JSON出力・測位は継続します",
                      esp_err_to_name(netErr));
+        }
+
+        // stage 4 (got_ip): IP_EVENT_STA_GOT_IP。イベントループは
+        // uwb::net::start() が（成功時は）作成済み。CONFIG_UWB_NET_ENABLE=n
+        // やWi-Fi起動失敗でイベントループが無い場合は登録自体が失敗するが、
+        // ログのみで続行する（測位・他の起動処理は止めない）。
+        const esp_err_t ipHandlerErr =
+            esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &bootBreadcrumbGotIpHandler, nullptr);
+        if (ipHandlerErr != ESP_OK) {
+            ESP_LOGW(TAG, "breadcrumb: IP_EVENT_STA_GOT_IP ハンドラの登録に失敗しました (err=%s、続行します)",
+                     esp_err_to_name(ipHandlerErr));
         }
     }
 

@@ -218,6 +218,53 @@ bool uwb_port_usb_host_connected(void);
  */
 void uwb_port_console_guard_init(void);
 
+/**
+ * REPL タスクがホスト不在時に busy loop 化するのを防ぐ read フックを
+ * linenoise へ登録する。
+ *
+ * 背景: USJ (USB-Serial/JTAG) の VFS は USB ホスト不在時 (SOF 監視で判定)
+ * に read()/write() が即 -1 を返す。esp_console の REPL タスク
+ * (esp_console_repl_task, ~/esp/esp-idf/components/console/
+ * esp_console_common.c 205行付近) は linenoise() が NULL を返すと待ちなしで
+ * continue する。linenoise (linenoise.c) は read_func が負を返すと即 NULL
+ * を返す (linenoiseEdit 920行付近 / linenoiseDumb 1170行付近)。よって
+ * ホスト不在では優先度2のREPLタスクが遅延ゼロの busy loop になる。優先度1の
+ * main タスク（コア0固定）と同じコアに載ると、main task starvation により
+ * Wi-Fi 起動 (uwb::net::start()) 等の後続処理に進めなくなる
+ * (2026-08-31 実機で「PCなし給電でWi-Fiが上がらない」として観測)。
+ *
+ * 対策として read を 100ms ポーリングへ変える（read()<0 のときだけ待つ。
+ * ホスト在時は read が元々ブロックするので挙動不変）。linenoise の read
+ * フックは linenoiseSetReadFunction() (linenoise.h) で差し替え可能。既定の
+ * 弱シンボル linenoiseSetReadCharacteristics() (linenoise.c 247行、
+ * esp_console_stop_repl を使わない本プロジェクトでは弱版=素のread()が有効)
+ * は esp_console_new_repl_usb_serial_jtag() 内の esp_console_setup_prompt()
+ * → linenoiseProbe() から REPL タスク生成前に main タスクで同期的に呼ばれる
+ * ため、new_repl が返った後にこの関数で上書きすれば競合しない。
+ *
+ * 【呼ぶ位置が重要】必ず esp_console_start_repl() より【前】に呼ぶこと。
+ * ホスト不在時は start_repl が REPL タスクを起こした瞬間に main がコアを
+ * 奪われるため、start_repl の後に置いた呼び出しには到達できない
+ * (2026-08-31 充電器試験でパンくず stage=1 凍結として実証)。
+ *
+ * Background: the USB-Serial/JTAG VFS makes read()/write() return -1
+ * immediately while no USB host is attached (detected via SOF monitoring).
+ * esp_console's REPL task retries with no delay when linenoise() returns
+ * NULL, which it does immediately whenever the read callback returns a
+ * negative value. With no host, the priority-2 REPL task therefore spins at
+ * 100% CPU; pinned to the same core as the priority-1 main task, this starves
+ * main and prevents it from reaching e.g. Wi-Fi startup. This function
+ * replaces linenoise's read callback with one that sleeps 100ms whenever the
+ * underlying read() fails, turning the spin into a slow poll. Call once,
+ * after esp_console_new_repl_*() (so the synchronous linenoiseProbe() made
+ * while building the REPL cannot overwrite it) and strictly BEFORE
+ * esp_console_start_repl(): once the REPL task is started with no host
+ * attached, it preempts the core-0-pinned main task for good, and a call
+ * placed after start_repl is never reached (verified on hardware as a
+ * stage=1 breadcrumb freeze on charger power, 2026-08-31).
+ */
+void uwb_port_console_read_guard_install(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -41,6 +41,7 @@
 
 #include "uwb_cfgstore.hpp"
 #include "uwb_net.hpp"
+#include "uwb_port.h"
 
 namespace anchorapp {
 
@@ -424,6 +425,20 @@ esp_err_t consoleStart()
         ESP_LOGE(kLogTag, "REPL を作れませんでした (err=%s)", esp_err_to_name(err));
         return err;
     }
+    // read フックの差し替えは、必ず esp_console_start_repl() より【前】に行う。
+    // ホスト不在時、start_repl が REPL タスク (優先度2) を起こした瞬間に
+    // main タスク (優先度1、コア0固定) はコアを奪われ、素の read のままの
+    // REPL が busy loop 化して main は二度と走れない (タグ実機で stage=1
+    // 凍結として確認、2026-08-31 充電器試験)。read 関数は new_repl 内の
+    // linenoiseProbe() で確定済みなので、ここで差し替えれば上書きされない。
+    // Install the read hook BEFORE esp_console_start_repl(): with no USB host,
+    // the priority-2 REPL task preempts the core-0-pinned priority-1 main task
+    // the moment it is started, and with the raw read() it spins forever, so
+    // main would never reach an install placed after start_repl (observed as a
+    // stage=1 freeze on charger power on the tag). linenoiseProbe() inside
+    // new_repl has already finalized the read function, so nothing overwrites
+    // this hook.
+    uwb_port_console_read_guard_install();
     return esp_console_start_repl(repl);
 }
 

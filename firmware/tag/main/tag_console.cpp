@@ -57,9 +57,11 @@
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "nvs.h"
 
 #include "uwb_cfgstore.hpp"
 #include "uwb_net.hpp"
+#include "uwb_port.h"
 
 namespace tagapp {
 
@@ -688,6 +690,67 @@ int cmdReboot(int argc, char** argv)
     return 0; // 到達しない
 }
 
+/* ------------------------------------------------------------ bootlog コマンド */
+
+/* main.cpp の起動パンくず (bootBreadcrumb()) が NVS namespace "dbg" へ書く
+ * レイアウトを、ここで独立して読む。main.cpp 側の BreadcrumbEntry と
+ * キー名・構造体・容量を完全に一致させること（main.cpp 冒頭コメント参照。
+ * 両ファイルは #include を共有していないため、layout の変更は手動で
+ * 揃える必要がある）。 */
+constexpr size_t kBootlogHistCapacity = 16;
+
+struct BootlogHistEntry {
+    uint32_t bootN;
+    uint8_t stage;
+} __attribute__((packed));
+
+int cmdBootlog(int argc, char** argv)
+{
+    (void)argc;
+    (void)argv;
+
+    nvs_handle_t h;
+    if (nvs_open("dbg", NVS_READONLY, &h) != ESP_OK) {
+        std::printf("起動パンくずの記録がありません（NVS namespace \"dbg\" を開けませんでした）\n");
+        return 0;
+    }
+
+    uint32_t bootN = 0;
+    uint8_t stage  = 0xFF;
+    nvs_get_u32(h, "boot_n", &bootN);
+    nvs_get_u8(h, "stage", &stage);
+
+    uint32_t histN = 0;
+    nvs_get_u32(h, "hist_n", &histN);
+
+    BootlogHistEntry hist[kBootlogHistCapacity];
+    std::memset(hist, 0, sizeof(hist));
+    size_t histBytes = sizeof(hist);
+    // main.cpp 側と同じ方針: 読み出し失敗（キー無し・サイズ不一致等）は
+    // 空リングとして扱う。
+    const bool haveHist = (nvs_get_blob(h, "hist", hist, &histBytes) == ESP_OK) && (histBytes == sizeof(hist));
+    nvs_close(h);
+
+    std::printf("=== 起動パンくず (bootlog) ===\n");
+    std::printf("  今回      : boot_n=%lu stage=%u\n", static_cast<unsigned long>(bootN),
+                static_cast<unsigned>(stage));
+    std::printf("  凡例      : 0=entry 1=console 2=net_start 3=net_ok 4=got_ip\n");
+
+    const size_t n =
+        !haveHist ? 0 : ((histN > kBootlogHistCapacity) ? kBootlogHistCapacity : static_cast<size_t>(histN));
+    std::printf("  履歴（新しい順、%u/%u件）:\n", static_cast<unsigned>(n),
+                static_cast<unsigned>(kBootlogHistCapacity));
+    for (size_t i = 0; i < n; ++i) {
+        const size_t idx = static_cast<size_t>((histN - 1 - i) % kBootlogHistCapacity);
+        std::printf("    boot_n=%lu stage=%u\n", static_cast<unsigned long>(hist[idx].bootN),
+                    static_cast<unsigned>(hist[idx].stage));
+    }
+    if (n == 0) {
+        std::printf("    (記録なし)\n");
+    }
+    return 0;
+}
+
 /* --------------------------------------------------------------- 登録処理 */
 
 void registerCommands()
@@ -758,6 +821,17 @@ void registerCommands()
         .context        = nullptr,
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&rebootCmd));
+
+    const esp_console_cmd_t bootlogCmd = {
+        .command  = "bootlog",
+        .help     = "起動パンくず（起動回数・前回どの段階まで進んだか・直近16件の履歴）を表示する",
+        .hint     = nullptr,
+        .func     = &cmdBootlog,
+        .argtable = nullptr,
+        .func_w_context = nullptr,
+        .context        = nullptr,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&bootlogCmd));
 }
 
 } // namespace
@@ -843,6 +917,19 @@ esp_err_t consoleStart()
         ESP_LOGE(kLogTag, "REPL を作れませんでした (err=%s)", esp_err_to_name(err));
         return err;
     }
+    // read フックの差し替えは、必ず esp_console_start_repl() より【前】に行う。
+    // ホスト不在時、start_repl が REPL タスク (優先度2) を起こした瞬間に
+    // main タスク (優先度1、コア0固定) はコアを奪われ、素の read のままの
+    // REPL が busy loop 化して main は二度と走れない (実機で boot_n=9 が
+    // stage=1 で凍結、2026-08-31 充電器試験)。read 関数は new_repl 内の
+    // linenoiseProbe() で確定済みなので、ここで差し替えれば上書きされない。
+    // Install the read hook BEFORE esp_console_start_repl(): with no USB host,
+    // the priority-2 REPL task preempts the core-0-pinned priority-1 main task
+    // the moment it is started, and with the raw read() it spins forever, so
+    // main would never reach an install placed after start_repl (observed as a
+    // stage=1 freeze on charger power). linenoiseProbe() inside new_repl has
+    // already finalized the read function, so nothing overwrites this hook.
+    uwb_port_console_read_guard_install();
     return esp_console_start_repl(repl);
 }
 
