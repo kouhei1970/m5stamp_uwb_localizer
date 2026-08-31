@@ -56,6 +56,7 @@ C_SRC = $(UWB_LOC_DIR)/src/uwb_model.c \
         $(UWB_MATH_DIR)/src/uwb_math.c
 
 CXX_SRC = $(RANGING_DIR)/src/uwb_ranging_anchor_table.cpp \
+          $(RANGING_DIR)/src/uwb_ranging_mode.cpp \
           $(RANGING_DIR)/src/uwb_ranging_pipeline.cpp
 
 # components/uwb_cfgstore のハード非依存部分（設定のシリアライズ/デシリアライズ）。

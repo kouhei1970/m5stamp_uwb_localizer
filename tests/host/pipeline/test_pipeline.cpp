@@ -29,6 +29,7 @@
 #include "uwb_qm33120_twr_config.hpp"
 #include "uwb_qm33120_units.hpp"
 #include "uwb_ranging_anchor_table.hpp"
+#include "uwb_ranging_mode.hpp"
 #include "uwb_ranging_pipeline.hpp"
 
 using namespace uwb;
@@ -1292,6 +1293,338 @@ static void scenario20_missing_plus_outlier_excluded_index()
     CHECK(err < 0.1f, "欠測+外れ値棄却後の座標誤差が大きすぎる (%.4f m)", static_cast<double>(err));
 }
 
+/* ==================================================================== *
+ * 21. モード自動判定: 有効アンカー台数・配置による切り替え
+ *     （uwb_ranging_mode.hpp の decidePositioningMode() を
+ *      AnchorTable::evaluateMode() 経由で検証する）
+ * ==================================================================== */
+static void scenario21_mode_auto_by_count()
+{
+    std::printf("--- 21. モード自動判定: 有効アンカー台数・配置による切り替え ---\n");
+
+    // 2台: RANGING_ONLY（測位しない）。
+    {
+        static const AnchorEntry e2[2] = {
+            {0x0001, {0.0f, 0.0f, 2.4f}, 0.0f, true},
+            {0x0002, {5.0f, 0.0f, 0.2f}, 0.0f, true},
+        };
+        AnchorTable table;
+        CHECK(table.set(e2, 2), "2台のset()に失敗");
+        const ModeDecision d = table.evaluateMode();
+        CHECK(d.mode == PositioningMode::RangingOnly, "2台なのにRANGING_ONLYにならなかった (mode=%d)",
+              static_cast<int>(d.mode));
+        CHECK(d.reason == ModeReason::TooFewAnchors, "理由がTooFewAnchorsでない (reason=%d)",
+              static_cast<int>(d.reason));
+        CHECK(d.enabledCount == 2, "enabledCountが違う: %zu", d.enabledCount);
+    }
+
+    // 3台: 2D（3点は必ず同一平面なので3D測位不可）。
+    {
+        static const AnchorEntry e3[3] = {
+            {0x0001, {0.0f, 0.0f, 2.4f}, 0.0f, true},
+            {0x0002, {5.0f, 0.0f, 0.2f}, 0.0f, true},
+            {0x0003, {5.0f, 5.0f, 2.4f}, 0.0f, true},
+        };
+        AnchorTable table;
+        CHECK(table.set(e3, 3), "3台のset()に失敗");
+        const ModeDecision d = table.evaluateMode();
+        CHECK(d.mode == PositioningMode::Mode2D, "3台なのに2Dにならなかった (mode=%d)", static_cast<int>(d.mode));
+        CHECK(d.reason == ModeReason::ThreeAnchors, "理由がThreeAnchorsでない (reason=%d)",
+              static_cast<int>(d.reason));
+    }
+
+    // 4台・同一平面（天井配置）: 2D（フォールバック理由）。
+    {
+        static const AnchorEntry e4c[4] = {
+            {0x0001, {0.2f, 0.2f, 2.4f}, 0.0f, true}, {0x0002, {7.8f, 0.2f, 2.4f}, 0.0f, true},
+            {0x0003, {7.8f, 5.8f, 2.4f}, 0.0f, true}, {0x0004, {0.2f, 5.8f, 2.4f}, 0.0f, true},
+        };
+        AnchorTable table;
+        CHECK(table.set(e4c, 4), "4台(同一平面)のset()に失敗");
+        const ModeDecision d = table.evaluateMode();
+        CHECK(d.mode == PositioningMode::Mode2D, "4台・同一平面なのに2Dにならなかった (mode=%d)",
+              static_cast<int>(d.mode));
+        CHECK(d.reason == ModeReason::CoplanarFallback, "理由がCoplanarFallbackでない (reason=%d)",
+              static_cast<int>(d.reason));
+        CHECK(d.coplanar, "coplanarフラグが立っていない");
+    }
+
+    // 4台・立体配置（シナリオ1と同じ配置）: 3D。
+    {
+        static const AnchorEntry e4v[4] = {
+            {0x0001, {0.0f, 0.0f, 2.4f}, 0.0f, true}, {0x0002, {5.0f, 0.0f, 0.2f}, 0.0f, true},
+            {0x0003, {5.0f, 5.0f, 2.4f}, 0.0f, true}, {0x0004, {0.0f, 5.0f, 0.2f}, 0.0f, true},
+        };
+        AnchorTable table;
+        CHECK(table.set(e4v, 4), "4台(立体)のset()に失敗");
+        const ModeDecision d = table.evaluateMode();
+        CHECK(d.mode == PositioningMode::Mode3D, "4台・立体配置なのに3Dにならなかった (mode=%d)",
+              static_cast<int>(d.mode));
+        CHECK(d.reason == ModeReason::Volumetric, "理由がVolumetricでない (reason=%d)",
+              static_cast<int>(d.reason));
+        CHECK(!d.coplanar, "立体配置なのにcoplanar=1になった");
+    }
+
+    // 5台・立体配置（kAnchors[]と同じ配置）: 3D。
+    {
+        static const AnchorEntry e5[5] = {
+            {0x0002, {0.0f, 0.0f, 2.4f}, 0.0f, true}, {0x0003, {5.0f, 0.0f, 0.2f}, 0.0f, true},
+            {0x0004, {5.0f, 5.0f, 2.4f}, 0.0f, true}, {0x0005, {0.0f, 5.0f, 0.2f}, 0.0f, true},
+            {0x0006, {2.5f, 2.5f, 2.4f}, 0.0f, true},
+        };
+        AnchorTable table;
+        CHECK(table.set(e5, 5), "5台のset()に失敗");
+        const ModeDecision d = table.evaluateMode();
+        CHECK(d.mode == PositioningMode::Mode3D, "5台・立体配置なのに3Dにならなかった (mode=%d)",
+              static_cast<int>(d.mode));
+        CHECK(d.enabledCount == 5, "enabledCountが違う: %zu", d.enabledCount);
+    }
+
+    // disable混在: enabledCount()がdisableを数えないこと（テーブル台数4だが有効2台）。
+    {
+        AnchorEntry e[4] = {
+            {0x0001, {0.0f, 0.0f, 2.4f}, 0.0f, true},  {0x0002, {5.0f, 0.0f, 0.2f}, 0.0f, false},
+            {0x0003, {5.0f, 5.0f, 2.4f}, 0.0f, true}, {0x0004, {0.0f, 5.0f, 0.2f}, 0.0f, false},
+        };
+        AnchorTable table;
+        CHECK(table.set(e, 4), "disable混在4台のset()に失敗");
+        CHECK(table.enabledCount() == 2, "enabledCount()がdisableを数えている: %zu", table.enabledCount());
+        const ModeDecision d = table.evaluateMode();
+        CHECK(d.mode == PositioningMode::RangingOnly,
+              "有効2台(4台登録中disable2台)なのにRANGING_ONLYにならなかった (mode=%d)",
+              static_cast<int>(d.mode));
+    }
+}
+
+/* ==================================================================== *
+ * 22. モード手動オーバーライド
+ * ==================================================================== */
+static void scenario22_mode_manual_override()
+{
+    std::printf("--- 22. モード手動オーバーライド ---\n");
+
+    // 2台しかなくても強制2Dにすれば2Dになる（判定自体はoverride優先。
+    // ソルバは別途minValid2d=3未満で測位不能になるだけ）。
+    {
+        static const AnchorEntry e2[2] = {
+            {0x0001, {0.0f, 0.0f, 2.4f}, 0.0f, true},
+            {0x0002, {5.0f, 0.0f, 0.2f}, 0.0f, true},
+        };
+        AnchorTable table;
+        CHECK(table.set(e2, 2), "set()に失敗");
+        table.setModeOverride(ModeOverride::Force2D);
+        table.setZFixedM(1.2f);
+        const ModeDecision d = table.evaluateMode();
+        CHECK(d.mode == PositioningMode::Mode2D, "強制2Dなのに2Dにならなかった (mode=%d)",
+              static_cast<int>(d.mode));
+        CHECK(d.reason == ModeReason::ForcedTwoD, "理由がForcedTwoDでない (reason=%d)", static_cast<int>(d.reason));
+        CHECK(table.isDimension2D(), "AnchorTableのdimが2に反映されていない");
+    }
+
+    // 4台・非同一平面でも強制2Dが優先される。
+    {
+        static const AnchorEntry e4v[4] = {
+            {0x0001, {0.0f, 0.0f, 2.4f}, 0.0f, true}, {0x0002, {5.0f, 0.0f, 0.2f}, 0.0f, true},
+            {0x0003, {5.0f, 5.0f, 2.4f}, 0.0f, true}, {0x0004, {0.0f, 5.0f, 0.2f}, 0.0f, true},
+        };
+        AnchorTable table;
+        CHECK(table.set(e4v, 4), "set()に失敗");
+        table.setModeOverride(ModeOverride::Force2D);
+        const ModeDecision d = table.evaluateMode();
+        CHECK(d.mode == PositioningMode::Mode2D, "非同一平面でも強制2Dが効かなかった (mode=%d)",
+              static_cast<int>(d.mode));
+    }
+
+    // 4台・同一平面を強制3Dにすると、警告フラグが立つ。
+    {
+        static const AnchorEntry e4c[4] = {
+            {0x0001, {0.2f, 0.2f, 2.4f}, 0.0f, true}, {0x0002, {7.8f, 0.2f, 2.4f}, 0.0f, true},
+            {0x0003, {7.8f, 5.8f, 2.4f}, 0.0f, true}, {0x0004, {0.2f, 5.8f, 2.4f}, 0.0f, true},
+        };
+        AnchorTable table;
+        CHECK(table.set(e4c, 4), "set()に失敗");
+        table.setModeOverride(ModeOverride::Force3D);
+        const ModeDecision d = table.evaluateMode();
+        CHECK(d.mode == PositioningMode::Mode3D, "強制3Dなのに3Dにならなかった (mode=%d)",
+              static_cast<int>(d.mode));
+        CHECK(d.reason == ModeReason::ForcedThreeD, "理由がForcedThreeDでない (reason=%d)",
+              static_cast<int>(d.reason));
+        CHECK(d.forcedCoplanarWarning, "同一平面配置での強制3Dなのに警告フラグが立たなかった");
+        CHECK(!table.isDimension2D(), "強制3DなのにAnchorTableのdimが2のまま");
+    }
+
+    // 立体配置での強制3Dは警告なし。
+    {
+        static const AnchorEntry e4v[4] = {
+            {0x0001, {0.0f, 0.0f, 2.4f}, 0.0f, true}, {0x0002, {5.0f, 0.0f, 0.2f}, 0.0f, true},
+            {0x0003, {5.0f, 5.0f, 2.4f}, 0.0f, true}, {0x0004, {0.0f, 5.0f, 0.2f}, 0.0f, true},
+        };
+        AnchorTable table;
+        CHECK(table.set(e4v, 4), "set()に失敗");
+        table.setModeOverride(ModeOverride::Force3D);
+        const ModeDecision d = table.evaluateMode();
+        CHECK(!d.forcedCoplanarWarning, "立体配置での強制3Dなのに警告フラグが立った");
+    }
+
+    // autoに戻すと通常判定に戻る。
+    {
+        static const AnchorEntry e3[3] = {
+            {0x0001, {0.0f, 0.0f, 2.4f}, 0.0f, true},
+            {0x0002, {5.0f, 0.0f, 0.2f}, 0.0f, true},
+            {0x0003, {5.0f, 5.0f, 2.4f}, 0.0f, true},
+        };
+        AnchorTable table;
+        CHECK(table.set(e3, 3), "set()に失敗");
+        table.setModeOverride(ModeOverride::Force3D);
+        (void)table.evaluateMode();
+        table.setModeOverride(ModeOverride::Auto);
+        const ModeDecision d = table.evaluateMode();
+        CHECK(d.mode == PositioningMode::Mode2D && d.reason == ModeReason::ThreeAnchors,
+              "autoに戻したのに3台の判定(2D/ThreeAnchors)に戻らなかった");
+    }
+}
+
+/* ==================================================================== *
+ * 23. 2D測位の z_fixed が fix の z に反映されること
+ * ==================================================================== */
+static void scenario23_mode_zfixed_reflected_in_fix()
+{
+    std::printf("--- 23. 2D測位の z_fixed がfixのzに反映される ---\n");
+
+    static const AnchorEntry entries[3] = {
+        {0x0001, {0.0f, 0.0f, 2.4f}, 0.0f, true},
+        {0x0002, {5.0f, 0.0f, 0.2f}, 0.0f, true},
+        {0x0003, {5.0f, 5.0f, 2.4f}, 0.0f, true},
+    };
+    const float zFixed    = 1.2f;
+    const float truth[3] = {2.0f, 3.0f, zFixed};
+
+    AnchorTable table;
+    CHECK(table.set(entries, 3), "set()に失敗");
+    table.setZFixedM(zFixed);
+    const ModeDecision d = table.evaluateMode();
+    CHECK(d.mode == PositioningMode::Mode2D, "3台なのに2Dにならなかった");
+    CHECK(table.isDimension2D(), "dimが2に反映されていない");
+
+    RangingSample samples[3];
+    makeSamples(entries, 3, truth, samples);
+    PositioningPipeline pipeline(table);
+    const PositionResult lv2 = pipeline.solve(samples, 3, SolverLevel::Lv2);
+    CHECK(lv2.solvable && lv2.ok, "2D測位が解けなかった (solvable=%d ok=%d)", lv2.solvable, lv2.ok);
+    CHECK(std::fabs(lv2.p[2] - zFixed) < 1e-4f, "fixのzがz_fixedと一致しない (z=%.6f 期待=%.3f)",
+          static_cast<double>(lv2.p[2]), static_cast<double>(zFixed));
+    CHECK(dist3(lv2.p, truth) < 1e-3f, "2D測位の位置が真値と一致しない (誤差=%.6f)",
+          static_cast<double>(dist3(lv2.p, truth)));
+
+    // z_fixedを変えて再評価すると、次の解にすぐ反映される
+    // （NVS保存とは独立に実行時に効くことの確認）。
+    const float zFixed2   = -0.5f;
+    table.setZFixedM(zFixed2);
+    const ModeDecision d2 = table.evaluateMode();
+    CHECK(d2.mode == PositioningMode::Mode2D, "再評価後も2Dのはず");
+    const float truth2[3] = {2.0f, 3.0f, zFixed2};
+    RangingSample samples2[3];
+    makeSamples(entries, 3, truth2, samples2);
+    const PositionResult lv2b = pipeline.solve(samples2, 3, SolverLevel::Lv2);
+    CHECK(lv2b.solvable && lv2b.ok, "z_fixed変更後の2D測位が解けなかった");
+    CHECK(std::fabs(lv2b.p[2] - zFixed2) < 1e-4f, "z_fixed変更後のfixのzが新しい値に一致しない (z=%.6f 期待=%.3f)",
+          static_cast<double>(lv2b.p[2]), static_cast<double>(zFixed2));
+}
+
+/* ==================================================================== *
+ * 24. uwb_cfgstore: 測位モード設定(override/z_fixed)の往復・境界値・新旧互換
+ * ==================================================================== */
+static void scenario24_cfgstore_positioning_mode()
+{
+    std::printf("--- 24. uwb_cfgstore: 測位モード設定(override/z_fixed)の往復 ---\n");
+
+    // 正常系: override各値 × z_fixed(0/正/負/境界)の往復（IEEE754ビットパターンの
+    // 完全一致を期待。putFloat/getFloatは丸めを起こさない、シナリオ10と同じ前提）。
+    const uint8_t overrides[3] = {uwb::cfg::kModeOverrideAuto, uwb::cfg::kModeOverrideForce2D,
+                                   uwb::cfg::kModeOverrideForce3D};
+    const float zFixeds[5] = {0.0f, 1.2f, -1.2f, uwb::cfg::kMaxZFixedM, -uwb::cfg::kMaxZFixedM};
+    for (uint8_t ov : overrides) {
+        for (float z : zFixeds) {
+            uint8_t blob[uwb::cfg::positioningModeBlobSize()];
+            size_t len = 0;
+            CHECK(uwb::cfg::serializePositioningMode(ov, z, blob, sizeof(blob), &len) == BlobStatus::Ok,
+                  "override=%u z=%.3f のシリアライズに失敗した", static_cast<unsigned>(ov), static_cast<double>(z));
+            CHECK(len == uwb::cfg::positioningModeBlobSize(), "長さがpositioningModeBlobSize()と違う: %zu", len);
+
+            uint8_t gotOv = 0xFF;
+            float gotZ     = 12345.0f;
+            CHECK(uwb::cfg::deserializePositioningMode(blob, len, &gotOv, &gotZ) == BlobStatus::Ok,
+                  "override=%u z=%.3f のデシリアライズに失敗した", static_cast<unsigned>(ov), static_cast<double>(z));
+            CHECK(gotOv == ov, "overrideが往復で変化した (got=%u expect=%u)", static_cast<unsigned>(gotOv),
+                  static_cast<unsigned>(ov));
+            CHECK(gotZ == z, "z_fixedが往復で変化した (got=%.6f expect=%.6f)", static_cast<double>(gotZ),
+                  static_cast<double>(z));
+        }
+    }
+
+    // 境界値・不正値。
+    uint8_t blob[uwb::cfg::positioningModeBlobSize()];
+    size_t len = 0;
+    CHECK(uwb::cfg::isValidModeOverrideCode(uwb::cfg::kModeOverrideForce3D), "Force3Dコードが不正扱いされた");
+    CHECK(!uwb::cfg::isValidModeOverrideCode(3), "未知のoverrideコード(3)が有効扱いされた");
+    CHECK(uwb::cfg::serializePositioningMode(3, 0.0f, blob, sizeof(blob), &len) == BlobStatus::BadEntry,
+          "未知のoverrideコードがBadEntryにならなかった");
+    CHECK(uwb::cfg::serializePositioningMode(uwb::cfg::kModeOverrideAuto, uwb::cfg::kMaxZFixedM * 1.001f, blob,
+                                              sizeof(blob), &len) == BlobStatus::BadEntry,
+          "z_fixedが上限超なのにBadEntryにならなかった");
+    CHECK(uwb::cfg::serializePositioningMode(uwb::cfg::kModeOverrideAuto, std::nanf(""), blob, sizeof(blob), &len) ==
+              BlobStatus::BadEntry,
+          "NaNのz_fixedがBadEntryにならなかった");
+
+    // 出力バッファ不足。
+    CHECK(uwb::cfg::serializePositioningMode(uwb::cfg::kModeOverrideAuto, 0.0f, blob,
+                                              uwb::cfg::positioningModeBlobSize() - 1, &len) == BlobStatus::TooShort,
+          "出力バッファ不足がTooShortにならなかった");
+
+    // nullptr。
+    CHECK(uwb::cfg::serializePositioningMode(uwb::cfg::kModeOverrideAuto, 0.0f, nullptr, sizeof(blob), &len) ==
+              BlobStatus::NullArg,
+          "out=nullptrがNullArgにならなかった");
+    uint8_t okBlob[uwb::cfg::positioningModeBlobSize()];
+    CHECK(uwb::cfg::serializePositioningMode(uwb::cfg::kModeOverrideAuto, 0.0f, okBlob, sizeof(okBlob), &len) ==
+              BlobStatus::Ok,
+          "基準となるバイト列を作れなかった");
+    uint8_t gotOv = 0;
+    float gotZ     = 0.0f;
+    CHECK(uwb::cfg::deserializePositioningMode(okBlob, len, nullptr, &gotZ) == BlobStatus::NullArg,
+          "outOverrideCode=nullptrがNullArgにならなかった");
+    CHECK(uwb::cfg::deserializePositioningMode(okBlob, len, &gotOv, nullptr) == BlobStatus::NullArg,
+          "outZFixedM=nullptrがNullArgにならなかった");
+
+    // 【新旧互換】この機能追加前のNVS（"pos_mode"キー自体が存在しない）からの
+    // アップグレードでは、ConfigStore::loadPositioningMode() が nvs_get_blob() の
+    // ESP_ERR_NVS_NOT_FOUND を見て既定値（Auto/Kconfig値）へ倒す（ESP-IDF依存の
+    // ためホストでは検証できない）。ホストで検証できるのはその下の層
+    // （バイト列の検査）までなので、未初期化フラッシュ相当のバイト列
+    // （全0/全0xFF）や他種別(AnchorTable)のバイト列を渡しても、既定値への
+    // フォールバックを促す非Okが返ることを確認する（シナリオ12の
+    // AnchorTable版corruptionテストと同じ方針）。
+    uint8_t uninit[uwb::cfg::positioningModeBlobSize()];
+    std::memset(uninit, 0x00, sizeof(uninit));
+    CHECK(uwb::cfg::deserializePositioningMode(uninit, sizeof(uninit), &gotOv, &gotZ) == BlobStatus::BadMagic,
+          "全0（未初期化フラッシュ相当）がBadMagicにならなかった");
+    std::memset(uninit, 0xFF, sizeof(uninit));
+    CHECK(uwb::cfg::deserializePositioningMode(uninit, sizeof(uninit), &gotOv, &gotZ) == BlobStatus::BadMagic,
+          "全0xFFがBadMagicにならなかった");
+
+    // 既存のAnchorTableブロブ（この機能追加前から形式を一切変えていない。
+    // シナリオ10参照）を誤って測位モードとして読もうとしても、種別不一致で
+    // 弾かれること（＝両ブロブ形式が独立で、AnchorTable側の互換性はこの
+    // 追加で一切崩れていないことの確認を兼ねる）。
+    const AnchorEntry anchorSrc[1] = {{0x0002, {0.0f, 0.0f, 2.4f}, 0.0f, true}};
+    uint8_t anchorBlob[uwb::cfg::kMaxBlobSize];
+    size_t anchorLen = 0;
+    CHECK(uwb::cfg::serializeAnchorTable(anchorSrc, 1, anchorBlob, sizeof(anchorBlob), &anchorLen) == BlobStatus::Ok,
+          "比較用のAnchorTableブロブを作れなかった");
+    CHECK(uwb::cfg::deserializePositioningMode(anchorBlob, anchorLen, &gotOv, &gotZ) == BlobStatus::BadKind,
+          "AnchorTableブロブを測位モードとして読んでもBadKindにならなかった");
+}
+
 int main()
 {
     std::printf("=== tests/host/pipeline: uwb_ranging 測位パイプライン 合成データ検証 ===\n");
@@ -1318,6 +1651,10 @@ int main()
     scenario18_ranging_sample_t_us();
     scenario19_noise_and_outlier_gate();
     scenario20_missing_plus_outlier_excluded_index();
+    scenario21_mode_auto_by_count();
+    scenario22_mode_manual_override();
+    scenario23_mode_zfixed_reflected_in_fix();
+    scenario24_cfgstore_positioning_mode();
 
     std::printf("\n=== %d 件中 %d 件失敗 ===\n", g_run, g_fail);
     return (g_fail == 0) ? 0 : 1;

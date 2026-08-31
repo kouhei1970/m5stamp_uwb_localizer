@@ -176,9 +176,10 @@ DS-TWR は**両側に遅延送信の締切**があるので、タイミング設
 > **高さをばらすこと。全部同じ高さに置くと上下の鏡像が区別できません。**
 > 詳細は [`ANCHOR_PLACEMENT.md`](ANCHOR_PLACEMENT.md)。
 >
-> 床に並べて z≈0 になる配置では **Lv2 が毎周期 `ok:0` を返す**現象が実測で分かっています。
-> その場合は `UWB_TAG_AUTO_2D_FALLBACK`（既定 y）が 2D へ落とします。
-> **配置を調整している最中は、あえて n にして生の失敗を見るほうが分かりやすい。**
+> 床に並べて同一平面（z≈0 等）になる配置では **Lv2 が毎周期 `ok:0` を返す**現象が
+> 実測で分かっています。有効アンカーが同一平面上にある場合はタグが自動的に
+> 2D測位（高さ固定）へ切り替えます（`mode` コンソールコマンドで判定理由を確認可）。
+> **配置を調整している最中は、あえて `mode 3d` で強制し、生の失敗を見るほうが分かりやすい。**
 
 ### 6. 測位（`firmware/tag` × 1）
 | フラグ | 値 |
@@ -323,7 +324,7 @@ W ... respondDSRange: Poll<-TAG: peer=0x0001 とタイミングプリセット�
 | 3 | `UWB_TWR_METHOD_SS` → `_DS` | SS で通してから DS | `twr` 2台 | 実験 1 合格 |
 | 4 | `UWB_ANCHOR_SHORT_ADDR` | 5台で別々 | `anchor` | 実験 3 合格 |
 | 5 | `UWB_TAG_METHOD_DS` / `UWB_ANCHOR_METHOD_DS` | **必ず一致** | tag + anchor | 実験 4 合格 |
-| 6 | `UWB_TAG_AUTO_2D_FALLBACK` | 配置調整中は n にしてもよい | `tag` | — |
+| 6 | `mode`（tagコンソール） | 配置調整中は `mode 3d` で強制し、生の失敗を見てもよい | `tag` | — |
 | **7** | **`UWB_ENABLE_IRQ`** | **n → y** | **アンカーのみ** | **実験 6 合格** |
 | **8** | **`UWB_TIMING_PROFILE_ANCHOR_IRQ`** | **PollingBoth → AnchorIrq** | **タグとアンカー全台** | **実験 7 合格** |
 | 9 | `UWB_TAG_ENABLE_EKF` | n → y | `tag` | 実験 8 合格 |

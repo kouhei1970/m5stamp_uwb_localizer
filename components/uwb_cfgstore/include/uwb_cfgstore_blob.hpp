@@ -46,6 +46,21 @@
  *   オフセット  幅  内容
  *   0           2   ショートアドレス
  *   2           2   予約（0）
+ *
+ * 種別 BlobKind::PositioningMode の本体 = 8 バイト
+ *
+ *   オフセット  幅  内容
+ *   0           1   測位モードの手動オーバーライド（kModeOverrideAuto/Force2D/Force3D）
+ *   1           1   予約（0）
+ *   2           2   予約（0）
+ *   4           4   2D測位の固定高さ z_fixed_m [m]（IEEE754 単精度のビットパターン）
+ *
+ *   AnchorTable/AnchorAddr とは独立のキー（NVS上も別の名前空間キー）に
+ *   保存する。この機能を追加する前のNVS（このキー自体が存在しない）から
+ *   起動した場合は ConfigStore::loadPositioningMode() が既定値
+ *   （override=Auto、z_fixed=Kconfig UWB_TAG_FIXED_Z_MM）へフォールバックする
+ *   ので、AnchorTable 側のフォーマット・キーには一切手を入れていない
+ *   （後方互換は「新しいキーが無ければ既定値」という既存の設計をそのまま踏襲）。
  */
 #pragma once
 
@@ -76,11 +91,28 @@ inline constexpr size_t kAnchorEntrySize = 20;
 /** AnchorAddr 種別の本体長 [バイト]。 */
 inline constexpr size_t kAnchorAddrBodySize = 4;
 
+/** PositioningMode 種別の本体長 [バイト]。 */
+inline constexpr size_t kPositioningModeBodySize = 8;
+
 /** バイト列の種別。 */
 enum class BlobKind : uint16_t {
-    AnchorTable = 1, //!< タグ側: アンカー登録テーブル
-    AnchorAddr  = 2, //!< アンカー側: 自分のショートアドレス
+    AnchorTable    = 1, //!< タグ側: アンカー登録テーブル
+    AnchorAddr     = 2, //!< アンカー側: 自分のショートアドレス
+    PositioningMode = 3, //!< タグ側: 測位モードの手動オーバーライド + 2D固定高さ
 };
+
+/** 測位モードの手動オーバーライドのコード（NVSブロブでの符号化）。
+ *  uwb::ModeOverride（components/uwb_ranging/include/uwb_ranging_mode.hpp）
+ *  と1対1に対応する。cfgstore のこの層をハード非依存かつ uwb_ranging_mode.hpp
+ *  非依存に保つため、列挙型そのものではなく raw な uint8_t として扱う
+ *  （ESP-IDF依存側の uwb_cfgstore.cpp が ModeOverride との変換を行う）。 */
+inline constexpr uint8_t kModeOverrideAuto    = 0;
+inline constexpr uint8_t kModeOverrideForce2D = 1;
+inline constexpr uint8_t kModeOverrideForce3D = 2;
+
+/** 2D固定高さ(z_fixed)として受け付ける絶対値の上限 [m]。
+ *  Kconfig UWB_TAG_FIXED_Z_MM の範囲（±10000mm）と揃える。 */
+inline constexpr float kMaxZFixedM = 10.0f;
 
 /** シリアライズ/デシリアライズの結果。Ok 以外はすべて「既定値へ
  *  フォールバックする」以外の選択肢が無い状態を表す。 */
@@ -134,6 +166,12 @@ inline constexpr size_t anchorAddrBlobSize()
     return kBlobHeaderSize + kAnchorAddrBodySize + kBlobCrcSize;
 }
 
+/** PositioningMode 種別のバイト列全体の長さ [バイト]。 */
+inline constexpr size_t positioningModeBlobSize()
+{
+    return kBlobHeaderSize + kPositioningModeBodySize + kBlobCrcSize;
+}
+
 /** 想定しうる最大のバイト列長（呼び出し側がスタック上に確保する目安）。 */
 inline constexpr size_t kMaxBlobSize = kBlobHeaderSize + kAnchorEntrySize * kMaxAnchors + kBlobCrcSize;
 
@@ -180,6 +218,30 @@ BlobStatus serializeAnchorAddr(uint16_t addr, uint8_t* out, size_t outCap, size_
  * @return Ok 以外なら outAddr は書き換えられない。
  */
 BlobStatus deserializeAnchorAddr(const uint8_t* data, size_t len, uint16_t* outAddr);
+
+/**
+ * @brief 測位モードの手動オーバーライド + 2D固定高さをバイト列にする。
+ *
+ * @param overrideCode kModeOverrideAuto/Force2D/Force3D のいずれか
+ * @param zFixedM      2D固定高さ [m]。override の値に関わらず常に保存する
+ *                      （auto判定が同一平面フォールバックでMode2Dへ切り替わった
+ *                      ときにも使われるため）
+ * @return Ok / NullArg / BadEntry（overrideCodeが未知の値、または zFixedM が
+ *         非有限値・範囲外）/ TooShort
+ */
+BlobStatus serializePositioningMode(uint8_t overrideCode, float zFixedM, uint8_t* out, size_t outCap,
+                                     size_t* outLen);
+
+/**
+ * @brief バイト列を測位モードの手動オーバーライド + 2D固定高さへ戻す。
+ * @return Ok 以外なら out* は書き換えられない。呼び出し側は既定値
+ *         （override=Auto、zFixedM=Kconfig UWB_TAG_FIXED_Z_MM）へフォールバック
+ *         すること。
+ */
+BlobStatus deserializePositioningMode(const uint8_t* data, size_t len, uint8_t* outOverrideCode, float* outZFixedM);
+
+/** overrideCode が既知の値（kModeOverrideAuto/Force2D/Force3D）か。 */
+bool isValidModeOverrideCode(uint8_t code);
 
 // --------------------------------------------------------------- 値の検査
 

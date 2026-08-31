@@ -226,22 +226,41 @@ void RangingService::taskMain()
         result.n         = scheduler_->runCycle(result.samples, kMaxAnchors);
         result.cycleMs  = scheduler_->lastCycleMs();
 
+        // モードが RANGING_ONLY（有効アンカー2台以下、AnchorTable::evaluateMode()の
+        // 自動判定）のときはソルバ・EKFを一切呼ばない（呼んでも有効測距数不足で
+        // 同じ ok=false になるだけだが、無駄な計算そのものを省く。docs記載の
+        // 「測位モード自動切替」仕様）。PositionResult は既定構築のまま
+        // （ok=false, solvable=false）にし、levelUsed だけ通常経路と揃えておく。
+        const bool rangingOnly = (table_->modeDecision().mode == PositioningMode::RangingOnly);
+
         const int64_t t0 = esp_timer_get_time();
-        result.lv0        = pipeline_->solve(result.samples, result.n, SolverLevel::Lv0);
+        if (rangingOnly) {
+            result.lv0.levelUsed = SolverLevel::Lv0;
+        } else {
+            result.lv0 = pipeline_->solve(result.samples, result.n, SolverLevel::Lv0);
+        }
         const int64_t t1 = esp_timer_get_time();
         result.solveUsLv0 = static_cast<uint32_t>(t1 - t0);
 
-        result.lv2        = pipeline_->solve(result.samples, result.n, SolverLevel::Lv2);
+        if (rangingOnly) {
+            result.lv2.levelUsed = SolverLevel::Lv2;
+        } else {
+            result.lv2 = pipeline_->solve(result.samples, result.n, SolverLevel::Lv2);
+        }
         const int64_t t2 = esp_timer_get_time();
         result.solveUsLv2 = static_cast<uint32_t>(t2 - t1);
 
         result.haveLv3 = cfg_.enableEkf;
         if (cfg_.enableEkf) {
-            // updateEkf() の tS は「単調増加の秒」であればよい
-            // （uwb_ranging_pipeline.hpp のコメント）。esp_timer の us値を
-            // そのまま秒に直したものを使う（旧main.cppの t と同じ量）。
-            const double tS = static_cast<double>(result.tUs) / 1e6;
-            result.lv3        = pipeline_->updateEkf(tS, result.samples, result.n);
+            if (rangingOnly) {
+                result.lv3.levelUsed = SolverLevel::Lv3;
+            } else {
+                // updateEkf() の tS は「単調増加の秒」であればよい
+                // （uwb_ranging_pipeline.hpp のコメント）。esp_timer の us値を
+                // そのまま秒に直したものを使う（旧main.cppの t と同じ量）。
+                const double tS = static_cast<double>(result.tUs) / 1e6;
+                result.lv3        = pipeline_->updateEkf(tS, result.samples, result.n);
+            }
             const int64_t t3 = esp_timer_get_time();
             result.solveUsLv3 = static_cast<uint32_t>(t3 - t2);
         }

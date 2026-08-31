@@ -234,6 +234,91 @@ esp_err_t ConfigStore::saveAnchorTable(const AnchorEntry* entries, size_t count)
     return err;
 }
 
+/* --------------------------------------------------------------------------
+ * タグ側: 測位モード（手動オーバーライド + 2D固定高さ）
+ * -------------------------------------------------------------------------- */
+
+ConfigSource ConfigStore::loadPositioningMode(ModeOverride defaultOverride, float defaultZFixedM,
+                                               ModeOverride* outOverride, float* outZFixedM)
+{
+    if (outOverride == nullptr || outZFixedM == nullptr) {
+        return ConfigSource::Default;
+    }
+    // 何があっても既定値が入った状態で返れるよう、先に既定値を入れておく。
+    *outOverride = defaultOverride;
+    *outZFixedM  = defaultZFixedM;
+
+    if (!ready_) {
+        return ConfigSource::Default;
+    }
+
+    nvs_handle_t handle = 0;
+    esp_err_t err        = nvs_open(kNamespace, NVS_READONLY, &handle);
+    if (err != ESP_OK) {
+        // ESP_ERR_NVS_NOT_FOUND = 名前空間がまだ無い（＝未設定、またはこの機能
+        // 追加前のNVS）。正常系。
+        if (err != ESP_ERR_NVS_NOT_FOUND) {
+            ESP_LOGW(kLogTag, "nvs_open() 失敗 (err=%s) 既定値を使います", esp_err_to_name(err));
+        }
+        return ConfigSource::Default;
+    }
+
+    uint8_t buf[cfg::positioningModeBlobSize()];
+    size_t len = sizeof(buf);
+    err         = nvs_get_blob(handle, kKeyPositioningMode, buf, &len);
+    nvs_close(handle);
+
+    if (err != ESP_OK) {
+        // ESP_ERR_NVS_NOT_FOUND = キー自体が無い。この機能追加前のNVSから
+        // 起動した場合は必ずここを通り、既定値（Auto/Kconfig値）へ倒れる。
+        if (err != ESP_ERR_NVS_NOT_FOUND) {
+            ESP_LOGW(kLogTag, "nvs_get_blob(%s) 失敗 (err=%s) 既定値を使います", kKeyPositioningMode,
+                     esp_err_to_name(err));
+        }
+        return ConfigSource::Default;
+    }
+
+    uint8_t overrideCode      = 0;
+    float zFixedM              = 0.0f;
+    const cfg::BlobStatus st = cfg::deserializePositioningMode(buf, len, &overrideCode, &zFixedM);
+    if (st != cfg::BlobStatus::Ok) {
+        ESP_LOGW(kLogTag, "保存された測位モード設定が不正 (%s) 既定値を使います", cfg::blobStatusName(st));
+        return ConfigSource::Default;
+    }
+
+    *outOverride = static_cast<ModeOverride>(overrideCode);
+    *outZFixedM  = zFixedM;
+    return ConfigSource::Nvs;
+}
+
+esp_err_t ConfigStore::savePositioningMode(ModeOverride override, float zFixedM)
+{
+    if (!ready_) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    uint8_t buf[cfg::positioningModeBlobSize()];
+    size_t len                = 0;
+    const cfg::BlobStatus st = cfg::serializePositioningMode(static_cast<uint8_t>(override), zFixedM, buf,
+                                                                sizeof(buf), &len);
+    if (st != cfg::BlobStatus::Ok) {
+        ESP_LOGE(kLogTag, "測位モード設定をシリアライズできません (%s)", cfg::blobStatusName(st));
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    nvs_handle_t handle = 0;
+    esp_err_t err        = nvs_open(kNamespace, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = nvs_set_blob(handle, kKeyPositioningMode, buf, len);
+    if (err == ESP_OK) {
+        err = nvs_commit(handle);
+    }
+    nvs_close(handle);
+    return err;
+}
+
 /* -------------------------------------------------------------------------- */
 
 esp_err_t ConfigStore::eraseAll()

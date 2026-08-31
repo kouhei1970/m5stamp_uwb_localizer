@@ -144,6 +144,8 @@ esp-idf-monitor -p /dev/cu.usbmodemXXXX
 | アンカーの座標 | `anchor set <idx> <hex_addr> <x> <y> <z>` → `save` | `tag` |
 | アンテナ遅延 | `anchor delay <idx> <meters>` → `save` | `tag` |
 | アンカーの有効/無効・台数 | `anchor enable/disable <idx>` / `anchor count <n>` | `tag` |
+| 測位モード（有効台数・配置で自動切替。手動強制も可） | `mode` （表示）/ `mode auto\|2d\|3d` → `save` | `tag` |
+| 2D測位の固定高さ | `height <meters>` → `save` | `tag` |
 | JSON 出力の一時停止 | `output off` / `output on` | `tag` |
 | 設定の確認 | `info` / `anchor list` | 両方 |
 

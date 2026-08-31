@@ -9,9 +9,13 @@
  *   anchor delay <idx> <meters>               アンテナ遅延オフセット
  *   anchor enable <idx> / anchor disable <idx>
  *   anchor count <n>                          有効件数
+ *   mode                                      現在の測位モードと判定理由を表示
+ *   mode auto|2d|3d                           測位モードを手動で切り替える（既定 auto）
+ *   height                                    2D測位の固定高さ(z_fixed)を表示
+ *   height <meters>                           2D測位の固定高さを設定（例 height -1.2、範囲 ±10m）
  *   output <on|off>                           JSON Lines 出力の一時停止
- *   save                                      NVS へ保存
- *   reset-config                              NVS を消して kAnchors[] の既定値へ戻す
+ *   save                                      NVS へ保存（アンカー登録テーブル + 測位モード設定）
+ *   reset-config                              NVS を消して kAnchors[] の既定値・モードAutoへ戻す
  *   info                                      Device ID / チップ名 / 現在の設定 / 測位状況
  *   reboot                                    再起動
  *
@@ -141,13 +145,19 @@ void bumpTableGeneration()
 }
 
 /**
- * @brief 表を編集したコマンドの共通の締めくくり。
+ * @brief 設定（アンカー登録テーブル、または測位モード設定）を編集した
+ * コマンドの共通の締めくくり。
+ *
+ * anchor set/delay/enable/disable/count だけでなく、mode/height コマンド
+ * （AnchorTable::setModeOverride()/setZFixedM() を呼ぶ）の後にも共通して
+ * 呼ぶ（NVS未保存フラグ・統計リセット・EKF再構成・下流への再通知は
+ * どちらの編集でも同じ後処理が必要なため）。
  *
  * **呼び出し側は service.unlockTable() で既に離していること**
  * （resetStats()/reinitEkf() が内部で lockTable()/unlockTable() を
  * 使って取り直すため、離す前に呼ぶとデッドロックする）。
  */
-void afterTableEdit()
+void afterConfigEdit()
 {
     markUnsaved();
     if (g_service != nullptr) {
@@ -249,9 +259,11 @@ void printTableLocked(bool saved)
     std::printf("件数 %u / 上限 %u（うち enabled %u）  NVS: %s\n", static_cast<unsigned>(count),
                 static_cast<unsigned>(uwb::kMaxAnchors), static_cast<unsigned>(enabled),
                 saved ? "保存済み" : "未保存（save が必要）");
-    if (enabled < 4) {
-        std::printf("注意: 3D 測位には有効測距が最低 4 件必要です\n");
-    }
+    // 台数からの静的な注意書きではなく、実際に決まっている測位モード
+    // （uwb::AnchorTable::evaluateMode()、有効台数・配置・手動オーバーライドの
+    // 全部を反映済み）をそのまま出す。詳細理由は `mode` コマンドで見られる。
+    const uwb::ModeDecision d = g_table->modeDecision();
+    std::printf("測位モード: %s（%s）\n", uwb::positioningModeName(d.mode), uwb::modeReasonText(d.reason));
 }
 
 int cmdAnchor(int argc, char** argv)
@@ -365,12 +377,12 @@ int cmdAnchor(int argc, char** argv)
             g_table->update(idx, e);
         }
 
-        if (g_info.applyPlacementPolicy != nullptr) {
-            g_info.applyPlacementPolicy(*g_table);
+        if (g_info.applyModePolicy != nullptr) {
+            g_info.applyModePolicy(*g_table);
         }
         g_service->unlockTable();
 
-        afterTableEdit();
+        afterConfigEdit();
 
         std::printf("anchor[%u] = 0x%04X (%.3f, %.3f, %.3f) enabled=yes\n", static_cast<unsigned>(idx),
                     static_cast<unsigned>(addr), static_cast<double>(pos[0]), static_cast<double>(pos[1]),
@@ -409,7 +421,7 @@ int cmdAnchor(int argc, char** argv)
         g_table->update(idx, e);
         g_service->unlockTable();
 
-        afterTableEdit();
+        afterConfigEdit();
         std::printf("anchor[%u].antenna_delay_m = %.4f m（次の測位周期から反映）\n",
                     static_cast<unsigned>(idx), static_cast<double>(delay));
         return 0;
@@ -437,12 +449,12 @@ int cmdAnchor(int argc, char** argv)
         uwb::AnchorEntry e = g_table->entry(idx);
         e.enabled            = isEnable;
         g_table->update(idx, e);
-        if (g_info.applyPlacementPolicy != nullptr) {
-            g_info.applyPlacementPolicy(*g_table);
+        if (g_info.applyModePolicy != nullptr) {
+            g_info.applyModePolicy(*g_table);
         }
         g_service->unlockTable();
 
-        afterTableEdit();
+        afterConfigEdit();
         std::printf("anchor[%u].enabled = %s（次の測位周期から反映）\n", static_cast<unsigned>(idx),
                     isEnable ? "yes" : "no");
         return 0;
@@ -472,8 +484,8 @@ int cmdAnchor(int argc, char** argv)
             buf[i] = uwb::AnchorEntry{};
         }
         const bool ok = g_table->set(buf, n);
-        if (ok && g_info.applyPlacementPolicy != nullptr) {
-            g_info.applyPlacementPolicy(*g_table);
+        if (ok && g_info.applyModePolicy != nullptr) {
+            g_info.applyModePolicy(*g_table);
         }
         g_service->unlockTable();
 
@@ -482,7 +494,7 @@ int cmdAnchor(int argc, char** argv)
             return 1;
         }
 
-        afterTableEdit();
+        afterConfigEdit();
         std::printf("件数を %u 件にしました（次の測位周期から反映）。"
                     "新しいスロットは anchor set で設定してください\n",
                     static_cast<unsigned>(n));
@@ -492,6 +504,146 @@ int cmdAnchor(int argc, char** argv)
     std::printf("不明なサブコマンド: %s\n", sub);
     printUsageAnchor();
     return 1;
+}
+
+/* -------------------------------------------------------------- mode コマンド */
+
+/** uwb::ModeOverride の表示名（"auto"/"2d"/"3d"）。console 表示専用
+ *  （uwb::positioningModeName() は PositioningMode 用で Auto に対応する値が
+ *  無いため別に用意する）。 */
+const char* overrideName(uwb::ModeOverride o)
+{
+    switch (o) {
+    case uwb::ModeOverride::Auto:
+        return "auto";
+    case uwb::ModeOverride::Force2D:
+        return "2d";
+    case uwb::ModeOverride::Force3D:
+        return "3d";
+    }
+    return "unknown";
+}
+
+void printUsageMode()
+{
+    std::printf("使い方:\n");
+    std::printf("  mode              現在の測位モードと判定理由を表示\n");
+    std::printf("  mode auto|2d|3d   手動で切り替える（既定 auto）\n");
+}
+
+/** モード決定内容を表示する（呼び出し側が service.lockTable() を取った
+ *  状態、または取らずに読んだコピーを渡す。d は値渡しなのでどちらでもよい）。 */
+void printModeDecision(const uwb::ModeDecision& d)
+{
+    std::printf("mode     : %s（%s）\n", uwb::positioningModeName(d.mode), uwb::modeReasonText(d.reason));
+    std::printf("override : %s\n", overrideName(d.override));
+    std::printf("有効アンカー: %u台", static_cast<unsigned>(d.enabledCount));
+    if (d.enabledCount >= 3) {
+        std::printf("  配置: %s\n", d.coplanar ? "同一平面" : "立体");
+    } else {
+        std::printf("\n");
+    }
+    if (d.mode == uwb::PositioningMode::Mode2D) {
+        std::printf("z_fixed  : %.3f m\n", static_cast<double>(d.zFixedM));
+    }
+    if (d.mode == uwb::PositioningMode::Mode3D && d.forcedCoplanarWarning) {
+        std::printf("警告: 同一平面配置での3D強制です。ambiguousフラグを必ず確認してください\n");
+    }
+}
+
+int cmdMode(int argc, char** argv)
+{
+    if (g_table == nullptr || g_service == nullptr) {
+        std::printf("内部エラー: コンソールが初期化されていません\n");
+        return 1;
+    }
+
+    if (argc == 1) {
+        g_service->lockTable();
+        const uwb::ModeDecision d = g_table->modeDecision();
+        g_service->unlockTable();
+        printModeDecision(d);
+        return 0;
+    }
+
+    if (argc != 2) {
+        printUsageMode();
+        return 1;
+    }
+
+    const char* arg = argv[1];
+    uwb::ModeOverride newOverride;
+    if (std::strcmp(arg, "auto") == 0) {
+        newOverride = uwb::ModeOverride::Auto;
+    } else if (std::strcmp(arg, "2d") == 0) {
+        newOverride = uwb::ModeOverride::Force2D;
+    } else if (std::strcmp(arg, "3d") == 0) {
+        newOverride = uwb::ModeOverride::Force3D;
+    } else {
+        printUsageMode();
+        return 1;
+    }
+
+    g_service->lockTable();
+    g_table->setModeOverride(newOverride);
+    if (g_info.applyModePolicy != nullptr) {
+        g_info.applyModePolicy(*g_table);
+    }
+    const uwb::ModeDecision d = g_table->modeDecision();
+    g_service->unlockTable();
+
+    afterConfigEdit();
+
+    printModeDecision(d);
+    std::printf("次の測位周期から反映されます。残すには save を実行してください\n");
+    return 0;
+}
+
+/* ------------------------------------------------------------ height コマンド */
+
+int cmdHeight(int argc, char** argv)
+{
+    if (g_table == nullptr || g_service == nullptr) {
+        std::printf("内部エラー: コンソールが初期化されていません\n");
+        return 1;
+    }
+
+    if (argc == 1) {
+        g_service->lockTable();
+        const float z = g_table->zFixedM();
+        g_service->unlockTable();
+        std::printf("height = %.3f m\n", static_cast<double>(z));
+        return 0;
+    }
+
+    if (argc != 2) {
+        std::printf("使い方: height [<メートル>]（例 height -1.2、範囲 ±%.0fm）\n",
+                    static_cast<double>(uwb::cfg::kMaxZFixedM));
+        return 1;
+    }
+
+    float z = 0.0f;
+    if (!parseReal(argv[1], uwb::cfg::kMaxZFixedM, &z)) {
+        std::printf("値が不正です（範囲 ±%.0fm）: %s\n", static_cast<double>(uwb::cfg::kMaxZFixedM), argv[1]);
+        return 1;
+    }
+
+    g_service->lockTable();
+    g_table->setZFixedM(z);
+    if (g_info.applyModePolicy != nullptr) {
+        g_info.applyModePolicy(*g_table);
+    }
+    const uwb::ModeDecision d = g_table->modeDecision();
+    g_service->unlockTable();
+
+    afterConfigEdit();
+
+    std::printf("height = %.3f m（次の測位周期から反映。2D測位でないと今は使われません。残すには save）\n",
+                static_cast<double>(z));
+    if (d.mode == uwb::PositioningMode::Mode2D) {
+        std::printf("現在2D測位中なので、この値がすぐ z_fixed として使われます\n");
+    }
+    return 0;
 }
 
 /* ------------------------------------------------------------ output コマンド */
@@ -553,11 +705,15 @@ int cmdSave(int argc, char** argv)
 
     uwb::AnchorEntry snapshot[uwb::kMaxAnchors];
     size_t count = 0;
+    uwb::ModeOverride override;
+    float zFixedM = 0.0f;
     g_service->lockTable();
-    count = g_table->size();
+    count      = g_table->size();
     for (size_t i = 0; i < count; ++i) {
         snapshot[i] = g_table->entry(i);
     }
+    override = g_table->modeOverride();
+    zFixedM   = g_table->zFixedM();
     g_service->unlockTable();
 
     if (count == 0) {
@@ -565,14 +721,25 @@ int cmdSave(int argc, char** argv)
         return 1;
     }
 
-    const esp_err_t err = uwb::ConfigStore::saveAnchorTable(snapshot, count);
-    if (err != ESP_OK) {
-        std::printf("保存に失敗しました (err=%s)\n", esp_err_to_name(err));
+    const esp_err_t tableErr = uwb::ConfigStore::saveAnchorTable(snapshot, count);
+    if (tableErr != ESP_OK) {
+        std::printf("アンカー登録テーブルの保存に失敗しました (err=%s)\n", esp_err_to_name(tableErr));
+        return 1;
+    }
+
+    // 測位モード設定（手動オーバーライド + 2D固定高さ）も同じ save コマンドで
+    // 永続化する。テーブルは既に保存できているので、こちらが失敗しても
+    // markSaved() は呼ばず「一部だけ保存できた」状態を素直に報告する。
+    const esp_err_t modeErr = uwb::ConfigStore::savePositioningMode(override, zFixedM);
+    if (modeErr != ESP_OK) {
+        std::printf("アンカー登録テーブルは保存しましたが、測位モード設定の保存に失敗しました (err=%s)\n",
+                    esp_err_to_name(modeErr));
         return 1;
     }
 
     markSaved();
-    std::printf("NVS へ保存しました: アンカー %u 件\n", static_cast<unsigned>(count));
+    std::printf("NVS へ保存しました: アンカー %u 件, mode=%s, height=%.3fm\n", static_cast<unsigned>(count),
+                overrideName(override), static_cast<double>(zFixedM));
     return 0;
 }
 
@@ -594,18 +761,26 @@ int cmdResetConfig(int argc, char** argv)
         restored = (g_info.defaultCount < uwb::kMaxAnchors) ? g_info.defaultCount : uwb::kMaxAnchors;
         g_service->lockTable();
         const bool ok = g_table->set(g_info.defaults, restored);
-        if (ok && g_info.applyPlacementPolicy != nullptr) {
-            g_info.applyPlacementPolicy(*g_table);
+        // 測位モード設定もコンパイル時の既定（override=Auto、高さ=Kconfig
+        // UWB_TAG_FIXED_Z_MM）へ戻す。anchor set() が失敗した場合はテーブルが
+        // 変わっていないので、こちらも変更しないでおく。
+        if (ok) {
+            g_table->setModeOverride(uwb::ModeOverride::Auto);
+            g_table->setZFixedM(g_info.defaultZFixedM);
+        }
+        if (ok && g_info.applyModePolicy != nullptr) {
+            g_info.applyModePolicy(*g_table);
         }
         g_service->unlockTable();
         if (!ok) {
             restored = 0;
         } else {
-            afterTableEdit();
+            afterConfigEdit();
         }
     }
-    std::printf("NVS を消去し、kAnchors[] の既定値 %u 件に戻しました（次の測位周期から反映）\n",
-                static_cast<unsigned>(restored));
+    std::printf("NVS を消去し、kAnchors[] の既定値 %u 件・測位モード auto (height=%.3fm) に戻しました"
+                "（次の測位周期から反映）\n",
+                static_cast<unsigned>(restored), static_cast<double>(g_info.defaultZFixedM));
     return 0;
 }
 
@@ -632,6 +807,7 @@ int cmdInfo(int argc, char** argv)
             ++enabled;
         }
     }
+    const uwb::ModeDecision modeDecision = g_table->modeDecision();
     g_service->unlockTable();
 
     const bool saved  = readSaved();
@@ -651,6 +827,12 @@ int cmdInfo(int argc, char** argv)
     std::printf("  anchors      : %u 件（enabled %u 件, 起動時の設定元: %s, NVS: %s）\n",
                 static_cast<unsigned>(count), static_cast<unsigned>(enabled),
                 uwb::configSourceName(g_info.source), saved ? "保存済み" : "未保存（save が必要）");
+    std::printf("  mode         : %s（%s）  override=%s", uwb::positioningModeName(modeDecision.mode),
+                uwb::modeReasonText(modeDecision.reason), overrideName(modeDecision.override));
+    if (modeDecision.mode == uwb::PositioningMode::Mode2D) {
+        std::printf("  z_fixed=%.3fm", static_cast<double>(modeDecision.zFixedM));
+    }
+    std::printf("\n");
     std::printf("  nvs          : %s\n", uwb::ConfigStore::isReady() ? "使用可" : "使用不可（既定値のみ）");
     std::printf("  json output  : %s\n", jsonOn ? "on" : "off");
     // 【v2での変更】RangingService は「累積の epoch数/ok数」を公開していない
@@ -766,6 +948,28 @@ void registerCommands()
         .context        = nullptr,
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&anchorCmd));
+
+    const esp_console_cmd_t modeCmd = {
+        .command  = "mode",
+        .help     = "測位モードの表示・手動切替（有効アンカー台数・配置から自動決定。auto/2d/3dで強制も可）",
+        .hint     = " [auto|2d|3d]",
+        .func     = &cmdMode,
+        .argtable = nullptr,
+        .func_w_context = nullptr,
+        .context        = nullptr,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&modeCmd));
+
+    const esp_console_cmd_t heightCmd = {
+        .command  = "height",
+        .help     = "2D測位の固定高さ(z_fixed)の表示・変更 [m]（範囲 ±10m）",
+        .hint     = " [<meters>]",
+        .func     = &cmdHeight,
+        .argtable = nullptr,
+        .func_w_context = nullptr,
+        .context        = nullptr,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&heightCmd));
 
     const esp_console_cmd_t outputCmd = {
         .command  = "output",

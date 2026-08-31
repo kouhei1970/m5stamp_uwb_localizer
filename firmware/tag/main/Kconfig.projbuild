@@ -224,6 +224,8 @@ menu "UWB Tag Configuration"
                 anchor delay <idx> <meters>
                 anchor enable <idx> / anchor disable <idx>
                 anchor count <n>
+                mode [auto|2d|3d]   （測位モードの表示・手動切替）
+                height [<meters>]   （2D測位の固定高さの表示・変更）
                 output <on|off>   （JSON Lines 出力の一時停止）
                 save / reset-config / info / reboot
 
@@ -250,28 +252,26 @@ menu "UWB Tag Configuration"
             (solve_us_lv3) が追加される。既定は無効
             （Lv0/Lv2の本番経路の検証にはEKFの状態管理までは不要なため）。
 
-    config UWB_TAG_AUTO_2D_FALLBACK
-        bool "アンカー平面が原点を通ると検出された場合、dim=2(高さ固定)へ自動フォールバックする"
-        default y
-        help
-            docs/ANCHOR_PLACEMENT.md / docs/archive/PROGRESS.md Phase 4 に記録されている
-            既知の現象: 登録済みアンカーが全て同一平面上にあり、かつその
-            平面がワールド原点をほぼ通っている場合（床にアンカーを並べる
-            構成で z~=0 になりがち）、Lv2 は毎周期 ok=0 を返す。
-            このオプションが有効で、起動時にその条件が検出されたときは、
-            main.cpp が AnchorTable::setDimension2D(UWB_TAG_FIXED_Z_MM/1000.0f)
-            を呼び、x,yだけは解けるようにする（高さは固定値になり解かれない）。
-            生の ok=0 失敗をそのまま見たい場合（配置を調整している最中など）は
-            無効にする。
-
     config UWB_TAG_FIXED_Z_MM
-        int "dim=2フォールバック時に固定する高さ [mm]"
+        int "2D測位（dim=2固定）で使う高さの既定値 [mm]"
         range -10000 10000
         default 1200
-        depends on UWB_TAG_AUTO_2D_FALLBACK
         help
-            UWB_TAG_AUTO_2D_FALLBACK が発動したときのみ使われる。
+            uwb::AnchorTable::evaluateMode()（components/uwb_ranging/include/
+            uwb_ranging_mode.hpp）が測位モードを2D（RangingModeがMode2D）に
+            決めたときに使う固定高さ z_fixed の既定値。以下のいずれかで
+            2Dになったときに使われる:
+              - 有効アンカーが3台ちょうど
+              - 有効アンカーが4台以上だが全て同一平面上にある
+                （3D測位が原理的に不安定/失敗するため自動フォールバック）
+              - `mode 2d` コンソールコマンドで手動指定
             ワールド座標系でのタグの想定運用高さを設定すること。
+
+            起動時の既定値としてのみ使う。実行時はタグのコンソール
+            （firmware/tag/main/tag_console.cpp）の `height <メートル>` で
+            上書きでき、`save` で NVS へ永続化できる。NVSに保存済みの値が
+            あれば起動時はそちらを優先する（この設定はNVSが空のときの
+            フォールバック）。
 
     choice UWB_TIMING_PROFILE
         prompt "TWR 遅延プリセット"

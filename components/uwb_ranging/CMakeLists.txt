@@ -14,6 +14,7 @@
 idf_component_register(
     SRCS
         "src/uwb_ranging_anchor_table.cpp"
+        "src/uwb_ranging_mode.cpp"
         "src/uwb_ranging_pipeline.cpp"
         "src/uwb_ranging_scheduler.cpp"
         "src/uwb_ranging_service.cpp"

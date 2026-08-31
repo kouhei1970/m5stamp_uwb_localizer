@@ -107,6 +107,33 @@ PlacementCheck AnchorTable::checkPlacement(float originPlaneEpsM) const
     return result;
 }
 
+size_t AnchorTable::enabledCount() const
+{
+    size_t n = 0;
+    for (size_t i = 0; i < count_; ++i) {
+        if (entries_[i].enabled) {
+            ++n;
+        }
+    }
+    return n;
+}
+
+ModeDecision AnchorTable::evaluateMode()
+{
+    const PlacementCheck placement = checkPlacement();
+    modeDecision_                    = decidePositioningMode(enabledCount(), placement, modeOverride_, zFixedM_);
+
+    if (modeDecision_.mode == PositioningMode::Mode2D) {
+        setDimension2D(zFixedM_);
+    } else {
+        // RangingOnly のときも dim=3 にしておく（測位そのものをしないので実害は
+        // 無いが、次に有効台数が増えて自動的にMode2D/Mode3Dへ移るときの起点を
+        // そろえておくため）。
+        setDimension3D();
+    }
+    return modeDecision_;
+}
+
 void AnchorTable::rebuildStorage()
 {
     uwb_config previous = config_;

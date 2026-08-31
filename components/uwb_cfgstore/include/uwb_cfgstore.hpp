@@ -27,6 +27,7 @@
 #include "esp_err.h"
 
 #include "uwb_cfgstore_blob.hpp"
+#include "uwb_ranging_mode.hpp"
 #include "uwb_ranging_types.hpp"
 
 namespace uwb {
@@ -53,6 +54,11 @@ public:
 
     /** タグのアンカー登録テーブルのキー。 */
     static constexpr const char* kKeyAnchorTable = "anchor_tbl";
+
+    /** タグの測位モード設定（手動オーバーライド + 2D固定高さ）のキー。
+     *  anchor_tbl とは独立のキー（この機能追加前のNVSには存在しない。
+     *  load 系がその場合の既定値フォールバックを保証する）。 */
+    static constexpr const char* kKeyPositioningMode = "pos_mode";
 
     /**
      * @brief NVS フラッシュを初期化する。app_main の最初のほうで 1 回呼ぶ。
@@ -112,6 +118,27 @@ public:
      * @return ESP_OK / ESP_ERR_INVALID_STATE / ESP_ERR_INVALID_ARG（値が異常）/ NVS のエラー
      */
     static esp_err_t saveAnchorTable(const AnchorEntry* entries, size_t count);
+
+    // --------------------------------------------------------- タグ側（測位モード）
+
+    /**
+     * @brief 測位モードの手動オーバーライド設定 + 2D固定高さを読む。
+     *
+     * @param defaultOverride NVS に無い/壊れている場合に使う既定値（通常 ModeOverride::Auto）
+     * @param defaultZFixedM  同上（通常 CONFIG_UWB_TAG_FIXED_Z_MM/1000.0f）
+     * @param outOverride     結果。**必ず書き込まれる**（nullptr は不可）
+     * @param outZFixedM      結果。**必ず書き込まれる**（nullptr は不可）
+     * @return どちらの値を採用したか
+     */
+    static ConfigSource loadPositioningMode(ModeOverride defaultOverride, float defaultZFixedM,
+                                             ModeOverride* outOverride, float* outZFixedM);
+
+    /**
+     * @brief 測位モードの手動オーバーライド設定 + 2D固定高さを保存する。
+     * @return ESP_OK / ESP_ERR_INVALID_STATE（init 未了）/ ESP_ERR_INVALID_ARG
+     *         （値が異常）/ NVS のエラー
+     */
+    static esp_err_t savePositioningMode(ModeOverride override, float zFixedM);
 
     // ------------------------------------------------------------------ 消去
 

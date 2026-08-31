@@ -59,20 +59,24 @@
 namespace tagapp {
 
 /**
- * @brief テーブル編集後の後処理（配置チェック + 2D自動フォールバック + ログ）。
+ * @brief テーブル編集後の後処理（測位モードの再評価 + ログ）。
  *
- * main.cpp が実装し、起動時（初期テーブル適用時）とコンソールでの編集後の
- * 両方から呼ぶ共通関数。CONFIG_UWB_TAG_AUTO_2D_FALLBACK 等の Kconfig 判断・
- * ESP_LOGW は main.cpp 側の責務なので、tag_console.cpp はこの関数ポインタ
- * 経由で呼ぶだけにして重複させない。
+ * main.cpp が実装し、起動時（初期テーブル適用時）と、コンソールでの編集後
+ * （anchor set/enable/disable/count、mode、height の各コマンド）の両方から
+ * 呼ぶ共通関数。uwb::AnchorTable::evaluateMode() を呼んで測位モード
+ * （RANGING_ONLY/2D/3D）を決めてdim/z_fixedへ反映し、結果に応じたESP_LOGWは
+ * main.cpp 側の責務なので、tag_console.cpp はこの関数ポインタ経由で呼ぶだけに
+ * して重複させない。
  *
- * Post-edit housekeeping (placement check + optional 2D fallback + logging),
+ * Post-edit housekeeping (re-evaluate the positioning mode + logging),
  * implemented in main.cpp and shared between startup and console edits, so
- * tag_console.cpp doesn't duplicate the Kconfig-driven policy logic.
+ * tag_console.cpp doesn't duplicate the mode-decision logging policy.
  *
- * 呼び出し側は既に service.lockTable() を取っていること。
+ * 呼び出し側は既に service.lockTable() を取っていること
+ * （table.evaluateMode() 内の setDimension2D/3D() はソルバが読んでいる最中に
+ * 呼んではいけないため）。
  */
-using PlacementPolicyFn = void (*)(uwb::AnchorTable& table);
+using ModePolicyFn = void (*)(uwb::AnchorTable& table);
 
 /** 起動時に確定していて、以後変わらない表示用の情報。 */
 struct StaticInfo {
@@ -89,8 +93,12 @@ struct StaticInfo {
     const uwb::AnchorEntry* defaults = nullptr;
     size_t defaultCount               = 0;
 
+    /** reset-config で戻す測位モード設定の既定値（override=Auto固定、
+     *  高さはKconfig UWB_TAG_FIXED_Z_MMから main.cpp が渡す）。 */
+    float defaultZFixedM = 0.0f;
+
     /** 上記参照。main.cpp が渡す。 */
-    PlacementPolicyFn applyPlacementPolicy = nullptr;
+    ModePolicyFn applyModePolicy = nullptr;
 };
 
 /**

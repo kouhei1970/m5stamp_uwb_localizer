@@ -372,7 +372,10 @@ static void printAnchorsLine(const uwb::AnchorTable& table)
     }
     char* const buf = g_jsonBuf;
     size_t off      = 0;
-    jsonAppend(buf, JSON_BUF_SIZE, &off, "{\"v\":1,\"type\":\"anchors\",\"anchors\":[");
+    // "mode": 現在の測位モード（"ranging"|"2d"|"3d"）。Webダッシュボード側との
+    // インターフェース契約（printFixLine()と同じキー名。委譲指示書参照）。
+    jsonAppend(buf, JSON_BUF_SIZE, &off, "{\"v\":1,\"type\":\"anchors\",\"mode\":\"%s\",\"anchors\":[",
+               uwb::positioningModeName(table.modeDecision().mode));
     for (size_t i = 0; i < table.size(); ++i) {
         const uwb::AnchorEntry& e = table.entry(i);
         char id[8];
@@ -461,10 +464,18 @@ static void printFixLine(double t, uint32_t cycleMs, const uwb::AnchorTable& tab
     char* const buf = g_jsonBuf;
     size_t off      = 0;
 
+    const uwb::PositioningMode mode = table.modeDecision().mode;
+
     jsonAppend(buf, JSON_BUF_SIZE, &off,
                "{\"v\":1,\"type\":\"fix\",\"t\":%.3f,\"tag\":\"tag0\",\"cycle_ms\":%lu,"
-               "\"primary_level\":\"Lv2\",",
-               t, static_cast<unsigned long>(cycleMs));
+               "\"primary_level\":\"Lv2\",\"mode\":\"%s\",",
+               t, static_cast<unsigned long>(cycleMs), uwb::positioningModeName(mode));
+    if (mode == uwb::PositioningMode::Mode2D) {
+        // 2D測位のときだけ、いま使われている固定高さ [m] を付す
+        // （Webダッシュボード側とのインターフェース契約。委譲指示書参照）。
+        jsonAppend(buf, JSON_BUF_SIZE, &off, "\"z_fixed\":%.4f,",
+                   static_cast<double>(table.modeDecision().zFixedM));
+    }
 
     appendResultBody(buf, JSON_BUF_SIZE, &off, lv2);
 
@@ -565,46 +576,61 @@ static void printStatsLine(double t, const uwb::AnchorTable& table, const uwb::R
 static uwb::AnchorEntry g_workEntries[uwb::kMaxAnchors];
 
 /**
- * @brief テーブル編集後の後処理（配置チェック + 2D自動フォールバック + ログ）。
+ * @brief テーブル編集後の後処理（測位モードの再評価 + ログ）。
  *
- * 起動時（applyAnchorTable() から）と、コンソールでの編集後の両方から呼ぶ
- * 共通関数（tag_console.hpp の PlacementPolicyFn 経由）。前回 dim=2 へ
- * フォールバックしていた状態を引きずらないよう、判定前に必ず dim=3 へ
- * 戻してから checkPlacement() をやり直す。
+ * 起動時（applyAnchorTable() から）と、コンソールでの編集後
+ * （anchor set/enable/disable/count、mode、height の各コマンド）の両方から
+ * 呼ぶ共通関数（tag_console.hpp の ModePolicyFn 経由）。
+ * uwb::AnchorTable::evaluateMode()（components/uwb_ranging/include/
+ * uwb_ranging_mode.hpp）が有効アンカー台数・配置・手動オーバーライドから
+ * 測位モード（RANGING_ONLY/2D/3D）を決めて dim/z_fixed へ反映するので、
+ * ここでは決定結果に応じたログ出力だけを行う。
+ *
+ * 【旧実装からの変更点】以前は「アンカー平面が原点をほぼ通る」場合に限って
+ * dim=2へフォールバックする特殊ケース（CONFIG_UWB_TAG_AUTO_2D_FALLBACK）が
+ * あったが、これは「有効台数4台以上・同一平面なら2Dへ落とす」という一般
+ * ロジック（evaluateMode()）に置き換えて廃止した（原点通過はあくまで
+ * 同一平面配置でLv2が失敗する条件の一例に過ぎず、一般ロジックはそれを
+ * 包含する）。Kconfig の UWB_TAG_AUTO_2D_FALLBACK 項目自体も削除した
+ * （UWB_TAG_FIXED_Z_MM は2D測位の既定高さとして引き続き使う）。
  *
  * 呼び出し側が service.tableMutex() を保持した状態で呼ぶこと
- * （table.setDimension2D/3D() はソルバが読んでいる最中に呼んではいけない
- * ため。tag_console.hpp 冒頭コメント参照）。
+ * （table.evaluateMode() 内の setDimension2D/3D() はソルバが読んでいる
+ * 最中に呼んではいけないため。tag_console.hpp 冒頭コメント参照）。
  */
-static void applyPlacementPolicy(uwb::AnchorTable& table)
+static void applyModePolicy(uwb::AnchorTable& table)
 {
-    table.setDimension3D();
+    const uwb::ModeDecision decision = table.evaluateMode();
 
-    const uwb::PlacementCheck placement = table.checkPlacement();
-    if (placement.coplanar) {
+    ESP_LOGI(TAG, "測位モード: %s（%s、有効アンカー%u台）", uwb::positioningModeName(decision.mode),
+             uwb::modeReasonText(decision.reason), static_cast<unsigned>(decision.enabledCount));
+
+    if (decision.mode == uwb::PositioningMode::Mode2D && decision.reason == uwb::ModeReason::CoplanarFallback) {
         ESP_LOGW(TAG,
-                 "登録済みアンカーが同一平面上にあります。3D測位のambiguousフラグを"
-                 "必ず確認してください（normal=(%.3f,%.3f,%.3f) offset=%.3f）",
-                 static_cast<double>(placement.normal[0]), static_cast<double>(placement.normal[1]),
-                 static_cast<double>(placement.normal[2]), static_cast<double>(placement.offsetM));
-        if (placement.originWarning) {
-            ESP_LOGW(TAG, "アンカー平面が原点を通っています。ワールド原点をずらしてください"
-                          "（この配置ではLv2が毎回ok=0になることが実測で判明しています）");
-#if CONFIG_UWB_TAG_AUTO_2D_FALLBACK
-            const float zFixedM = static_cast<float>(CONFIG_UWB_TAG_FIXED_Z_MM) / 1000.0f;
-            table.setDimension2D(zFixedM);
-            ESP_LOGW(TAG, "dim=2 (z_fixed=%.3fm) へフォールバックしました", static_cast<double>(zFixedM));
-#endif
+                 "登録済みアンカーが同一平面上にあります。2D測位（z_fixed=%.3fm）へ自動的に切り替えました "
+                 "(normal=(%.3f,%.3f,%.3f) offset=%.3f)",
+                 static_cast<double>(decision.zFixedM), static_cast<double>(decision.placement.normal[0]),
+                 static_cast<double>(decision.placement.normal[1]), static_cast<double>(decision.placement.normal[2]),
+                 static_cast<double>(decision.placement.offsetM));
+        if (decision.placement.originWarning) {
+            ESP_LOGW(TAG, "アンカー平面が原点を通っています（この配置では3D測位のLv2がok=0になりがちです）");
         }
+    } else if (decision.mode == uwb::PositioningMode::Mode3D && decision.forcedCoplanarWarning) {
+        ESP_LOGW(TAG,
+                 "手動で3D測位を指定していますが、登録済みアンカーは同一平面上にあります。"
+                 "ambiguousフラグを必ず確認してください（normal=(%.3f,%.3f,%.3f) offset=%.3f）",
+                 static_cast<double>(decision.placement.normal[0]), static_cast<double>(decision.placement.normal[1]),
+                 static_cast<double>(decision.placement.normal[2]), static_cast<double>(decision.placement.offsetM));
+    } else if (decision.mode == uwb::PositioningMode::RangingOnly) {
+        ESP_LOGW(TAG, "有効アンカーが2台以下のため測位しません（測距のみ）。3台以上にしてください");
     }
 }
 
 /**
- * @brief アンカー登録テーブルを丸ごと差し替え、applyPlacementPolicy() を
- * かける。起動時（NVS もしくは kAnchors[] の初期テーブル適用）専用
- * （service 起動前なので tableMutex 不要。以後の差し替えは
- * tag_console.cpp が table.set()/update() + applyPlacementPolicy() を
- * 直接呼ぶ）。
+ * @brief アンカー登録テーブルを丸ごと差し替え、applyModePolicy() をかける。
+ * 起動時（NVS もしくは kAnchors[] の初期テーブル適用）専用（service 起動前
+ * なので tableMutex 不要。以後の差し替えは tag_console.cpp が
+ * table.set()/update() + applyModePolicy() を直接呼ぶ）。
  *
  * @return 差し替えに成功したら true。false のときテーブルは変更されない。
  */
@@ -614,7 +640,7 @@ static bool applyAnchorTable(uwb::AnchorTable& table, const uwb::AnchorEntry* en
         ESP_LOGE(TAG, "AnchorTable::set() failed (count=%zu, kMaxAnchors=%zu)", count, uwb::kMaxAnchors);
         return false;
     }
-    applyPlacementPolicy(table);
+    applyModePolicy(table);
     return true;
 }
 
@@ -694,10 +720,16 @@ static void uwbLogTask(void* argRaw)
         timing.solveLv2Us = result.solveUsLv2;
         timing.solveLv3Us = result.solveUsLv3;
 
+        // 「測位不能」の要約ログ（下の failLogCounter 判定）を、意図的な
+        // RANGING_ONLY（有効アンカー2台以下）のときは出さないための現在
+        // モード。tableMtx を離した後に読むので、ここで一度コピーしておく。
+        uwb::PositioningMode curMode = uwb::PositioningMode::RangingOnly;
+
         xSemaphoreTake(tableMtx, portMAX_DELAY);
         printMeasLine(t, table, result.samples, result.n);
         printFixLine(t, result.cycleMs, table, result.samples, result.n, result.lv0, result.lv2,
                      result.haveLv3, result.lv3, timing, bootUs);
+        curMode = table.modeDecision().mode;
         xSemaphoreGive(tableMtx);
 
         // 【スタック監視】起動5秒後に1回、uwb_ranging_svc タスクと
@@ -733,10 +765,14 @@ static void uwbLogTask(void* argRaw)
             }
         }
 
-        if (!result.lv2.ok) {
+        if (!result.lv2.ok && curMode != uwb::PositioningMode::RangingOnly) {
             // 「測位不能」（有効測距不足）または解ソルバ失敗（同一平面配置の
-            // 既知の縮退等）。JSON行そのものは毎回stdoutへ出るので、こちらは
-            // 人間向けの要約ログを間引いて出すだけにする。
+            // 既知の縮退等）。RANGING_ONLY（有効アンカー2台以下）はソルバ自体を
+            // 呼んでいない意図した状態なので、ここでは対象外にする
+            // （table_.modeDecision() 参照。measures的にはok=falseが毎周期
+            // 続くのが正常なので、この警告は出さない）。
+            // JSON行そのものは毎回stdoutへ出るので、こちらは人間向けの
+            // 要約ログを間引いて出すだけにする。
             if ((++failLogCounter % 20) == 1) {
                 ESP_LOGW(TAG, "position unavailable: solvable=%d ok=%d n_total=%d anchors=%zu",
                          result.lv2.solvable, result.lv2.ok, result.lv2.nTotal, table.size());
@@ -921,6 +957,23 @@ extern "C" void app_main(void)
     ESP_LOGI(TAG, "uwb_tag firmware (v2/RangingService), board=%s method=%s anchors=%zu (%s)", BOARD_NAME,
              METHOD_NAME, entryCount, uwb::configSourceName(tableSource));
 
+    /* --- NVS から測位モード設定（手動オーバーライド + 2D固定高さ）を読む ---
+     * 無ければ既定値（override=Auto、z_fixed=Kconfig UWB_TAG_FIXED_Z_MM）。
+     * アンカー登録テーブルと同じく、この設定も後で uwb::AnchorTable へ
+     * 反映してから applyAnchorTable()（内部でevaluateMode()を呼ぶ）を
+     * 実行する必要があるので、テーブル自体をAnchorTableへ渡すより前に
+     * 読んでおく。 */
+    const float defaultZFixedM = static_cast<float>(CONFIG_UWB_TAG_FIXED_Z_MM) / 1000.0f;
+    uwb::ModeOverride modeOverride = uwb::ModeOverride::Auto;
+    float zFixedM                     = defaultZFixedM;
+    const uwb::ConfigSource modeSource =
+        uwb::ConfigStore::loadPositioningMode(uwb::ModeOverride::Auto, defaultZFixedM, &modeOverride, &zFixedM);
+    ESP_LOGI(TAG, "positioning mode settings: override=%s z_fixed=%.3fm (%s)",
+             (modeOverride == uwb::ModeOverride::Auto)     ? "auto"
+             : (modeOverride == uwb::ModeOverride::Force2D) ? "2d"
+                                                               : "3d",
+             static_cast<double>(zFixedM), uwb::configSourceName(modeSource));
+
     // static にする理由: RangingService::start() はこのオブジェクトへの
     // 生ポインタを保持し、専用タスクが動き続ける間ずっと参照する。
     // app_main はセットアップ後に return する（v1と違い無限ループでは
@@ -1014,8 +1067,12 @@ extern "C" void app_main(void)
     const int64_t bootUs = esp_timer_get_time();
 
     /* --- アンカー登録テーブルの構築 + 起動時チェック（必須） ---
-     * service 起動前なので tableMutex は不要（他タスクがまだ触らない）。 */
+     * service 起動前なので tableMutex は不要（他タスクがまだ触らない）。
+     * 測位モード設定（override/z_fixed）は evaluateMode() が使うので、
+     * applyAnchorTable()（内部で evaluateMode() を呼ぶ）より先に反映する。 */
     static uwb::AnchorTable table; // .bss へ置いて app_main のスタックを節約する
+    table.setModeOverride(modeOverride);
+    table.setZFixedM(zFixedM);
     if (!applyAnchorTable(table, g_workEntries, entryCount)) {
         return;
     }
@@ -1139,7 +1196,8 @@ extern "C" void app_main(void)
         consoleInfo.source       = tableSource;
         consoleInfo.defaults     = kAnchors;
         consoleInfo.defaultCount = kNumAnchors;
-        consoleInfo.applyPlacementPolicy = &applyPlacementPolicy;
+        consoleInfo.defaultZFixedM = defaultZFixedM;
+        consoleInfo.applyModePolicy = &applyModePolicy;
         if (tagapp::sharedInit(table, service, consoleInfo)) {
             bootBreadcrumb(1);
     const esp_err_t consoleErr = tagapp::consoleStart();

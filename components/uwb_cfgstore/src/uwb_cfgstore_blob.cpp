@@ -335,5 +335,65 @@ BlobStatus deserializeAnchorAddr(const uint8_t* data, size_t len, uint16_t* outA
     return BlobStatus::Ok;
 }
 
+bool isValidModeOverrideCode(uint8_t code)
+{
+    return code == kModeOverrideAuto || code == kModeOverrideForce2D || code == kModeOverrideForce3D;
+}
+
+BlobStatus serializePositioningMode(uint8_t overrideCode, float zFixedM, uint8_t* out, size_t outCap,
+                                     size_t* outLen)
+{
+    if (out == nullptr) {
+        return BlobStatus::NullArg;
+    }
+    // 壊れた値をNVSに残さないため、書き込み時にも検査する
+    // （isValidAnchorEntry()と同じ方針。uwb_cfgstore_blob.hpp冒頭コメント参照）。
+    if (!isValidModeOverrideCode(overrideCode) || !inRange(zFixedM, kMaxZFixedM)) {
+        return BlobStatus::BadEntry;
+    }
+    const size_t need = positioningModeBlobSize();
+    if (outCap < need) {
+        return BlobStatus::TooShort;
+    }
+
+    writeHeader(out, BlobKind::PositioningMode, 1); // count=1（常に1件のレコード。AnchorAddrと同じ流儀）
+    out[kBlobHeaderSize + 0] = overrideCode;
+    out[kBlobHeaderSize + 1] = 0;
+    put16(out + kBlobHeaderSize + 2, 0);
+    putFloat(out + kBlobHeaderSize + 4, zFixedM);
+    put32(out + need - kBlobCrcSize, crc32(out, need - kBlobCrcSize));
+
+    if (outLen != nullptr) {
+        *outLen = need;
+    }
+    return BlobStatus::Ok;
+}
+
+BlobStatus deserializePositioningMode(const uint8_t* data, size_t len, uint8_t* outOverrideCode, float* outZFixedM)
+{
+    if (outOverrideCode == nullptr || outZFixedM == nullptr) {
+        return BlobStatus::NullArg;
+    }
+
+    uint16_t count            = 0;
+    const BlobStatus headerOk = checkHeader(data, len, BlobKind::PositioningMode, positioningModeBlobSize(), &count);
+    if (headerOk != BlobStatus::Ok) {
+        return headerOk;
+    }
+    if (count != 1) {
+        return BlobStatus::BadCount;
+    }
+
+    const uint8_t overrideCode = data[kBlobHeaderSize + 0];
+    const float zFixedM         = getFloat(data + kBlobHeaderSize + 4);
+    if (!isValidModeOverrideCode(overrideCode) || !inRange(zFixedM, kMaxZFixedM)) {
+        return BlobStatus::BadEntry;
+    }
+
+    *outOverrideCode = overrideCode;
+    *outZFixedM       = zFixedM;
+    return BlobStatus::Ok;
+}
+
 } // namespace cfg
 } // namespace uwb

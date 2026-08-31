@@ -16,6 +16,7 @@
 #pragma once
 
 #include "uwb_loc.h"
+#include "uwb_ranging_mode.hpp"
 #include "uwb_ranging_types.hpp"
 
 namespace uwb {
@@ -97,6 +98,35 @@ public:
      */
     PlacementCheck checkPlacement(float originPlaneEpsM = 0.05f) const;
 
+    /** 現在登録されている台数のうち、enabled==true のものの数。 */
+    size_t enabledCount() const;
+
+    /** 測位モードの手動オーバーライド設定（既定 Auto）。evaluateMode() が使う。 */
+    void setModeOverride(ModeOverride mode) { modeOverride_ = mode; }
+    ModeOverride modeOverride() const { return modeOverride_; }
+
+    /** 2D測位（dim=2）で使う固定高さ [m]。evaluateMode() が使う。既定は0
+     *  （呼び出し側が起動時に Kconfig UWB_TAG_FIXED_Z_MM 等から必ず設定すること）。 */
+    void setZFixedM(float zFixedM) { zFixedM_ = zFixedM; }
+    float zFixedM() const { return zFixedM_; }
+
+    /**
+     * @brief 有効アンカー台数・配置・modeOverride()/zFixedM() から測位モードを
+     * 決定し（uwb_ranging_mode.hpp の decidePositioningMode()）、dim/z_fixed へ
+     * 反映する。
+     *
+     * 呼ぶタイミング: 起動時（テーブル構築直後）と、テーブルを変える操作
+     * （set()/update()）・setModeOverride()/setZFixedM() の後に必ず呼ぶこと
+     * （firmware/tag/main/main.cpp の applyModePolicy() 参照）。
+     *
+     * @return 決定内容（ログ・JSON出力に使う）。以後 modeDecision() でも
+     *         同じ値を返す。
+     */
+    ModeDecision evaluateMode();
+
+    /** 直近の evaluateMode() の結果。呼ぶ前は既定値（RangingOnly/TooFewAnchors）。 */
+    const ModeDecision& modeDecision() const { return modeDecision_; }
+
 private:
     AnchorEntry entries_[kMaxAnchors]{};
     uwb_anchor storage_[kMaxAnchors]{}; //!< uwb_config.anchors が指す安定記憶域
@@ -104,6 +134,10 @@ private:
     uwb_config config_{};
     bool configInitialized_ = false; //!< 2回目以降の set() で dim/z_fixed 等を
                                       //!< 引き継ぐために、初回かどうかを覚えておく
+
+    ModeOverride modeOverride_ = ModeOverride::Auto; //!< setModeOverride() 参照
+    float zFixedM_               = 0.0f;               //!< setZFixedM() 参照
+    ModeDecision modeDecision_{};                        //!< evaluateMode() の最新結果
 
     /**
      * @brief entries_[0..count_) から storage_ を作り直し、uwb_config_init()
