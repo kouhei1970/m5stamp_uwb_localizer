@@ -5,18 +5,22 @@
  *        module via components/uwb_port.
  *
  * ============================================================
- * 実機での確認状況 (2026-08-27, M5StampS3A + StampS3 BreakOut + FPC, 1台,
- * firmware/probe)
+ * 実機での確認状況 (2026-08-27〜30, M5StampS3A + StampS3 BreakOut + FPC, 2台,
+ * firmware/probe L1〜L11 + firmware/twr / tag / anchor)
  *
  *   確定  SCK=G12 / MOSI=G11 / MISO=G13 / CS=G10
- *         この4本を変えずに Device ID 0xDECA0314 を60秒間安定して読めた。
- *         Verified on real hardware.
+ *         この4本を変えずに Device ID 0xDECA0314 を60秒間安定して読めた
+ *         (2026-08-27)。Verified on real hardware.
  *
- *   未確認 RST=G6 / IRQ=G7 / WAKEUP=G8
- *         probe が PASS してもこの3本は裏付けられない。RST は未配線でも
- *         POR 直後なら通り、WAKEUP は未配線だと CS パルス経路へ
- *         フォールバックし、IRQ は probe がポーリングのため読まれない。
- *         Not yet verified - docs/GETTING_STARTED.md section 4.2.1.
+ *   確定  RST=G6 / IRQ=G7
+ *         2026-08-29 の拡張 probe で L4 (RSTn 機能検査) と L5 (IRQ 自己診断)
+ *         が2台とも PASS。IRQ は 2026-08-30 の IRQ 有効構成での測距成立でも
+ *         裏付け済み。Verified on real hardware - docs/HANDOFF.md.
+ *
+ *   未確認 WAKEUP=G8
+ *         拡張 probe の L10 (WAKEUP 検査) は既定で SKIP。未配線だと CS
+ *         パルス経路へフォールバックするため、動作からは裏付けられない。
+ *         Not yet verified.
  * ============================================================
  *
  * ■ 標準構成 (2026-08-22 確定)

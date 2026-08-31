@@ -1090,8 +1090,9 @@ menu "UWB TWR Configuration"
             Anchor-role boards (AtomS3, pin_irq wired) are the primary
             beneficiary; TAG-role boards on StampFly have no pin_irq wired
             at all and always fall back to polling regardless of this
-            setting. The default is n because the IRQ polarity assumption
-            (active-high) has not yet been verified on real hardware.
+            setting. The default is y: the active-high polarity is backed
+            by the datasheet and was verified on real hardware (probe L5
+            IRQ self-test, 2026-08-29; ranging with IRQ enabled, 2026-08-30).
 
             Even when enabled, an unwired pin_irq or a failed ISR
             registration falls back to polling automatically

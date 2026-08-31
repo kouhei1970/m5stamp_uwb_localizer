@@ -2,8 +2,15 @@
 
 ## 仕様
 
-**全ボードで IRQ が取れる。したがって IRQ を既定とし、遅延プリセットの既定も
-`BothIrq`（約 90 Hz）にする。**
+**全ボードで IRQ が取れる。したがって IRQ（受信待ちの起床信号としての使用）は
+既定で有効にする**（`UWB_ENABLE_IRQ` default y。2026-08-29〜30 に実機で通電確認済み。
+下記「既定を IRQ にしたことの risk」）。
+
+遅延プリセットの既定は当初 `BothIrq`（約 90 Hz）としていたが、実機で `BothIrq` の
+素の成功率が極端に低い（6.8Mbps 構成で 1.0%）ことが判明したため、**現在の既定は
+`PollingBoth`** である（`firmware/anchor` / `firmware/tag` の Kconfig と
+`Config::timing_profile`。評価用 `firmware/twr` のみ `BothIrq` のまま。経緯は
+`docs/HANDOFF.md` §0-C、プリセットの正本は `docs/TIMING_PRESETS.md`）。
 
 | 役割 | ボード | IRQ ピン |
 |---|---|---|
@@ -16,14 +23,16 @@
 配線は `docs/WIRING.md`。
 
 **ポーリング経路は残すが、位置づけは「フォールバック」である。**
-消さない理由は3つ:
+消さない理由:
 
-1. IRQ の極性は一次資料（データシート）で確認したが、実機での通電確認はまだ（下記）
-2. `pin_irq` を配線しない個体・構成があり得る
-3. ISR 登録に失敗しても測距だけは続けられるようにしておきたい
-4. （2026-08-28 追加）ISR 登録に成功しても IRQ 線が実際に生きているとは限らない。
+1. `pin_irq` を配線しない個体・構成があり得る
+2. ISR 登録に失敗しても測距だけは続けられるようにしておきたい
+3. （2026-08-28 追加）ISR 登録に成功しても IRQ 線が実際に生きているとは限らない。
    `verifyIrqLine()` の実測に落ちても測距だけは続けられるようにしておきたい
    （詳細は下記「実装要件 1」）
+
+（当初は「IRQ 極性の実機通電確認がまだ」も理由の一つだったが、2026-08-29〜30 に
+実機確認済みとなり解消した。）
 
 `uwb_port_irq_wait()` は IRQ が無効なとき `vTaskDelay()` と完全に等価に
 振る舞うので、**待ちループのコードは1本**である。IRQ の有無で復号経路が
@@ -33,8 +42,10 @@
 
 ## 【重要】既定を IRQ にしたことの risk
 
-**IRQ の極性は一次資料（データシート）で裏付けたが、実機での通電確認はまだ
-していない。** 実装は `GPIO_INTR_POSEDGE`（アクティブ HIGH 前提）。従来この
+**IRQ の極性は一次資料（データシート）と実機の両方で裏付けが取れている**
+（実機: 2026-08-29 の拡張 probe で 2 台とも `L5=PASS(irq=active)`〈IRQ 自己診断込み〉、
+2026-08-30 に IRQ 有効構成での測距成立と、ポーリング比較で同等の成功率。
+`docs/HANDOFF.md`）。実装は `GPIO_INTR_POSEDGE`（アクティブ HIGH 前提）。従来この
 節は根拠を Qorvo SDK のコメント（`components/qm33120w_sdk/deca_device_api.h`
 「The IRQ line has to be low/inactive (i.e., no pending events) otherwise
 device will not enter sleep」から active は HIGH と類推）だけに置いていたが、
@@ -51,9 +62,9 @@ device will not enter sleep」から active は HIGH と類推）だけに置い
 > unless pulled low."
 
 **IRQ は既定でアクティブ HIGH の出力**であり、`GPIO_INTR_POSEDGE` の想定と
-一致している。**ただし「一次資料でチップの既定仕様を確認した」ことと
-「この個体で実際にその極性で動作していることを通電して確認した」ことは別
-であり、後者はまだ済んでいない。** この区別は本ドキュメント全体で維持する。
+一致している。「一次資料でチップの既定仕様を確認した」ことと「この個体で
+実際にその極性で動作していることを通電して確認した」ことは別だが、
+**後者も 2026-08-29〜30 の実機セッションで確認できた**（上記）。
 
 **遅延プリセットは、2026-08-28 から既定で IRQ の実際の有効／無効に追従する
 ようになった**（`docs/TIMING_PRESETS.md` §4(b)、
@@ -113,7 +124,8 @@ device will not enter sleep」から active は HIGH と類推）だけに置い
 返し、起動ログには `irq=active` と出ていたが、実際には全ての待ちが 1 ms タイム
 アウトへ黙って劣化していた（症状に気づく手段が無かった）。`verifyIrqLine()` は
 `init()` の直後に実際にエッジが届くかを能動的に測ることで、この検出漏れを
-塞ぐ。**本追記はビルド確認のみで実機未検証。**
+塞ぐ。**2026-08-29 の拡張 probe 実行で、2 台とも自己診断が通ること
+（`L5=PASS(irq=active)`）を実機確認済み。**
 
 ### 2. 遅延値は IRQ の有無に紐づける
 折返し時間が変わるので、プリセットは IRQ の有無とセットで選ぶ
@@ -121,9 +133,9 @@ device will not enter sleep」から active は HIGH と類推）だけに置い
 
 | プリセット | 想定 | レート |
 |---|---|---|
-| `BothIrq` | **既定。**タグ・アンカーとも IRQ | 約 90 Hz |
+| `BothIrq` | タグ・アンカーとも IRQ（**旧既定**。実機での成功率が極端に低く既定から外した。`docs/HANDOFF.md` §0-C） | 約 90 Hz |
 | `AnchorIrq` | アンカーのみ IRQ | 約 59 Hz |
-| `PollingBoth` | どちらもポーリング | 約 31 Hz |
+| `PollingBoth` | **現在の既定。**どちらもポーリング相当の遅延（IRQ 有効時もこの遅延で安全に使える） | 約 31 Hz |
 
 ### 3. 【重要】遅延値はタグとアンカーで一致していなければならない
 片側だけ変えると測距が成立しない。しかも症状は「距離が出ない」だけで
@@ -191,8 +203,9 @@ device will not enter sleep」から active は HIGH と類推）だけに置い
   実際の有効状態**（`irq=active (pin=N)` / `irq=polling (pin_irq unwired)`
   / `irq=polling (disabled by Kconfig)` / `irq=polling (enable failed)`）
   を出す。
-- **既定は全ファームで有効。** 遅延プリセットの既定も `BothIrq`。
-  極性は一次資料（データシート）で確認済みだが、実機での通電確認はまだなので、
+- **IRQ の既定は全ファームで有効。** 遅延プリセットの既定は `PollingBoth`
+  （本番 `firmware/anchor` / `firmware/tag`。評価用 `firmware/twr` のみ `BothIrq` のまま）。
+  極性は一次資料（データシート）と実機（2026-08-29〜30）の両方で確認済み。
   駄目だったときの切り分け手順は上の「既定を IRQ にしたことの risk」を参照。
   **（2026-08-28 追加）** 待ちがポーリングへ落ちたときは、既定で遅延プリセット
   も自動的に `PollingBoth` へ降格する（`Config::downgrade_timing_profile_

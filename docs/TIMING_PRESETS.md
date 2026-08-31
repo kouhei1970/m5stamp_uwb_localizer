@@ -610,7 +610,7 @@ base 側の実効設定と同一）。IRQ 有効/無効を明示的に作り分�
 | 不一致を1回だけ警告するための状態 | `Qm33120::Impl::warned_peers[8]` / `warned_count` | `components/uwb_qm33120/src/uwb_qm33120_impl.hpp` |
 | Kconfig（3アプリ共通） | `choice UWB_TIMING_PROFILE`（`UWB_TIMING_PROFILE_POLLING_BOTH` / `_ANCHOR_IRQ` / `_BOTH_IRQ`） | `firmware/{anchor,tag,twr}/main/Kconfig.projbuild` |
 | 起動時ログ・§4(b)の起動時チェック | `timingProfileName()`/`timingProfileNeedsAnchorIrq()`/`timingProfileNeedsTagIrq()` を使った `ESP_LOGI`/`ESP_LOGW` | `firmware/{anchor,tag,twr}/main/main.cpp` の `app_main()` |
-| プリセット表・締切式・往復のホスト検算 | シナリオ13〜17（188件中の一部。旧132件から+56） | `tests/host/pipeline/test_pipeline.cpp` |
+| プリセット表・締切式・往復のホスト検算 | シナリオ13〜17（200件中の一部。旧132件から+56） | `tests/host/pipeline/test_pipeline.cpp` |
 | IRQ 線の起動時自己診断（§4(a) の条件3） | `Qm33120::verifyIrqLine()` | `components/uwb_qm33120/src/uwb_qm33120.cpp` |
 | プリセットのポーリング降格（§4(b)、2026-08-28） | `Config::downgrade_timing_profile_when_polling`（既定 `true`） | `components/uwb_qm33120/include/uwb_qm33120_types.hpp`、`uwb_qm33120.cpp` の `init()` |
 | 遅延送信の締切までの残り時間の実測（§1.3.2、2026-08-28） | `detail::delayedTxMarginUs()`、`ResponderResult`/`DSRangeResult`/`DSResponderResult::txMarginUs` | `components/uwb_qm33120/src/uwb_qm33120_internal.hpp`、`uwb_qm33120_twr.cpp`、`uwb_qm33120_types.hpp` |

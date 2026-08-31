@@ -1,5 +1,8 @@
 # StampFly UWB ドライバ開発 進捗記録
 
+> **本書の記録は 2026-08-21 まで。** 以降の進捗（実機での SS-TWR/DS-TWR 測距成功、
+> Wi-Fi ダッシュボード化 等）は [`docs/HANDOFF.md`](../HANDOFF.md) を参照してください。
+
 対象:
 - UWBモジュール: M5Stamp UWB Module (https://docs.m5stack.com/en/stamp/Stamp_UWB_F)
 - 既存ドライバ資産: https://github.com/kouhei1970/uwb_localizer

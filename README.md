@@ -6,10 +6,16 @@
 **ESP-IDF** で使い、**屋内の 3 次元位置**を求めて JSON Lines で吐くスタックです。
 タグ 1 台 + アンカー 4 台以上で動きます。
 
-> ### ⚠️ 実機で確認できているのは SPI 疎通までです
-> **2026-08-27、実機で Device ID `0xDECA0314` を読みました**（M5StampS3A + StampS3
-> BreakOut + FPC、1 台、60 秒安定）。ビルドは通り、測位計算は PC 上の合成データで
-> 検証済みですが、**実機での測距・測位はまだ一度も動いていません。**
+> ### ⚠️ 実機で確認できているのは 1 対 1 の測距までです
+> **2026-08-29〜31、実機（M5StampS3A + StampS3 BreakOut + FPC、タグ 1 + アンカー 1、
+> 距離約 1m）で測距を確認しました**: SS-TWR（Single-Sided TWR。1 回の往復時間だけで
+> 距離を出す簡易な測距方式）は**サイクル成功率 99.95%**（300 秒、2,180 サイクル中
+> 2,179 成功）、DS-TWR（Double-Sided TWR。往復を 2 回行って時計のずれの影響を
+> 打ち消す測距方式）は**周期成功率 99.5〜99.6%**（本番既定構成: 850kbps/プリアンブル
+> 256/IRQ 有効/再試行 2 回。Wi-Fi 併用時は 99.3〜99.4%）。ブラウザダッシュボードでの
+> リアルタイム表示と、PC を繋がない給電のみ（充電器/モバイルバッテリ）での運用も
+> 確認済みです（2026-08-31）。ただし**アンカー 4 台以上での 3D 測位は、実機では
+> まだ一度も動いていません**（ホスト（PC）上の合成データでの検証のみ）。
 > 「測位まで動作実績のあるライブラリ」ではなく、**一次資料から積み上げた実装と
 > 検証手順の一式**です。
 > → [現状をもう少し詳しく](#現状をもう少し詳しく)
@@ -22,7 +28,7 @@
 
 ## 📖 どこから読むか
 
-ドキュメントは現役 17 本（+ 経緯を記録した archive 9 本）あります。**全部読む必要はありません。**
+ドキュメントは現役 17 本（+ 経緯を記録した archive 11 本）あります。**全部読む必要はありません。**
 下から自分に合う入口を選んでください。索引は **[`docs/README.md`](docs/README.md)**。
 
 | あなたは | 入口 | その次 |
@@ -31,8 +37,7 @@
 | 🔧 **買った。動かしたい** | **[`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md)**<br>BOM から測位までの完全手順 | [`EXPERIMENT_PLAN.md`](docs/EXPERIMENT_PLAN.md)（進める順序） |
 | ⚡ **とにかく書き込んで試したい** | **[`docs/PREBUILT_BINARIES.md`](docs/PREBUILT_BINARIES.md)**<br>ESP-IDF を入れずに書き込む | [`GETTING_STARTED.md`](docs/GETTING_STARTED.md)（最初の関門） |
 | 🛠 **中身を読みたい・改造したい** | **[`docs/PLAN.md`](docs/PLAN.md)**<br>全体設計と方針 | [`REIMPL_PLAN.md`](docs/archive/REIMPL_PLAN.md)（なぜこの実装か。経緯） |
-**略語が分からないときは [`docs/GLOSSARY.md`](docs/GLOSSARY.md)、
-単位（UUS / DTU）で混乱したら [`docs/GLOSSARY.md`](docs/GLOSSARY.md)。**
+**略語や単位（UUS / DTU）で混乱したら [`docs/GLOSSARY.md`](docs/GLOSSARY.md)。**
 
 ---
 
@@ -40,19 +45,19 @@
 
 | 機能 | 状態 |
 |---|---|
-| **SS-TWR / DS-TWR による 2 点間の測距** | 実装済み（実機未検証） |
-| **アンカー 4 台以上での 3D 測位**（台数は登録テーブルの長さで決まる。上限 8） | 実装済み（ホスト検証済み） |
-| 測位ソルバ 3 段（Lv0 閉形式三辺測量 / **Lv2 Beck 厳密解 + Huber ロバスト化** / Lv3 EKF） | 実装済み |
+| **SS-TWR / DS-TWR による 2 点間の測距** | **実機確認済み**（2026-08-29〜31、タグ 1 + アンカー 1・約 1m。SS-TWR 99.95% / DS-TWR 99.5〜99.6%〈Wi-Fi 併用時 99.3〜99.4%〉） |
+| **アンカー 4 台以上での 3D 測位**（台数は登録テーブルの長さで決まる。上限 8） | 実装済み（ホスト検証済み・**実機未検証**） |
+| 測位ソルバ 3 段（Lv0 閉形式三辺測量 / **Lv2 Beck 厳密解 + Huber ロバスト化** / Lv3 EKF〈拡張カルマンフィルタ〉） | 実装済み |
 | **外れ値アンカーの自動棄却**（Huber / χ² ゲート） | 実装済み |
 | 欠測・タイムアウトへの耐性（有効測距 4 件以上あれば解く） | 実装済み |
 | 同一平面配置の検出と 2D フォールバック | 実装済み |
-| **JSON Lines 出力**（測距値・位置・GDOP・残差・棄却情報・周期時間） | 実装済み |
+| **JSON Lines 出力**（測距値・位置・GDOP〈アンカー配置の良し悪しによる精度低下係数〉・残差・棄却情報・周期時間） | 実装済み |
 | アンテナ遅延の補正（値はアンカーごとに設定） | 実装済み（**校正手順は手動**） |
-| **シリアルコンソールによる実行時設定**（アンカーのアドレス・座標を NVS に保存。再ビルド不要） | 実装済み（実機未検証） |
-| **IRQ 駆動**（アンカー側。既定は無効） | 実装済み（**極性が実機未検証**。[`docs/IRQ_POLICY.md`](docs/IRQ_POLICY.md)） |
+| **シリアルコンソールによる実行時設定**（アンカーのアドレス・座標を NVS〈ESP32 の不揮発設定ストレージ〉に保存。再ビルド不要） | Wi-Fi 設定（`wifi set/show`）は**実機確認済み**（2026-08-31）。**アンカー座標・アドレスの設定は実機未検証** |
+| **IRQ 駆動**（アンカー側。既定で有効） | **実機確認済み**（2026-08-30、ポーリングと同等の成功率）・**既定で有効**（`UWB_ENABLE_IRQ` default y）。[`docs/IRQ_POLICY.md`](docs/IRQ_POLICY.md) |
 | **TWR 遅延プリセットと版不一致の自動検出** | 実装済み（[`docs/TIMING_PRESETS.md`](docs/TIMING_PRESETS.md)） |
 | **Wi-Fi ブラウザダッシュボード + 無線コンソール**（HTTP/WebSocket、TCP コンソール） | 実装済み（実機確認: UWB 測距への悪影響なし・ブラウザ実表示・**PC を繋がない給電のみ運用（充電器/モバイルバッテリ）**も確認済み〈2026-08-31〉。[`docs/NET_DASHBOARD.md`](docs/NET_DASHBOARD.md)） |
-| ch9 PLL 再校正 / NLOS 判定 | **未実装**（[§既知の制約](docs/GETTING_STARTED.md#limitations)） |
+| ch9 PLL〈搬送波を作る位相同期回路〉再校正 / NLOS〈見通し外〉判定 | **未実装**（[§既知の制約](docs/GETTING_STARTED.md#limitations)） |
 
 ---
 
@@ -72,7 +77,8 @@ esptool.py --chip esp32s3 -p /dev/cu.usbmodemXXXX write_flash 0x0 merged-firmwar
 ブラウザからでも書けます（<https://espressif.github.io/esptool-js/> でオフセット `0x0`）。
 14 通りの構成を用意してあります → **[`docs/PREBUILT_BINARIES.md`](docs/PREBUILT_BINARIES.md)**
 
-> **⚠ ピン定義（`boards/*.h`）は実機未検証の暫定値**を焼き込んであります。
+> **⚠ 実機確認済みのピン定義は M5StampS3A（`boards/stamps3.h`）のみ**です
+> （SPI 4 本・RST・IRQ まで実機確認済み。WAKEUP と AtomS3 / StampFly 用の定義は未検証の暫定値）。
 > 配線が [`docs/GETTING_STARTED.md` §3](docs/GETTING_STARTED.md#wiring) と違えば動きません。
 
 配布 zip には Qorvo ライセンスの条件（Qorvo 製 IC 限定）が適用されます →
@@ -85,7 +91,7 @@ esptool.py --chip esp32s3 -p /dev/cu.usbmodemXXXX write_flash 0x0 merged-firmwar
 > **ESP-IDF を入れずに試したい場合**は、GitHub Actions がビルドした
 > **そのまま書き込めるバイナリ**が [Releases](https://github.com/kouhei1970/m5stamp_uwb_localizer/releases)
 > と Actions の artifact にあります。→ [`docs/PREBUILT_BINARIES.md`](docs/PREBUILT_BINARIES.md)
-> （**ただしピン定義は実機未検証の暫定値**なので、配線が本書と違うと動きません）
+> （ただし実機確認済みのピン定義は M5StampS3A 用のみ。配線が本書と違うと動きません）
 
 ```sh
 # 1) ESP-IDF v5.5.2（未導入なら）
@@ -102,7 +108,7 @@ cd m5stamp_uwb_localizer
 
 # 4) 測位計算が正しく動くことを PC 上で確認（ESP-IDF 不要）
 cd tests/host/pipeline && make test
-#    → "=== 188 件中 0 件失敗 ===" が出れば OK
+#    → "=== 200 件中 0 件失敗 ===" が出れば OK
 cd ../..
 
 # 5) 疎通確認ファームをビルド
@@ -122,9 +128,10 @@ idf.py -p /dev/cu.usbmodemXXXX flash monitor
 期待される出力:
 
 ```
-I (xxx) uwb_probe: L1: raw DEV_ID = 0xDECA0314 (expect 0xDECA0314) -> OK
-I (xxx) uwb_probe: L2: dwt_probe + dwt_readdevid = 0xDECA0314 (expect 0xDECA0314) -> OK
-I (xxx) uwb_probe: === L1: PASS / L2: PASS ===
+I (xxx) uwb_probe: L1: raw DEV_ID = 0xDECA0314 (expect 0xDECA0314) -> PASS
+I (xxx) uwb_probe: L2: dwt_probe + dwt_readdevid = 0xDECA0314 (expect 0xDECA0314) -> PASS
+...（L3〜L11 の各検査が PASS / FAIL / SKIP を出力）
+I (xxx) uwb_probe: === PROBE SUMMARY L1=PASS L2=PASS L3=PASS L4=PASS(RSTn ok) L5=PASS(irq=active) L6=PASS(0/1000 bad) L7=rec L8=PASS L9=rec L10=SKIP L11=rec(dgc=OTP) ===
 ```
 
 **`0xDECA0314` が読めれば最初の関門は突破**です。
@@ -145,18 +152,26 @@ I (xxx) uwb_probe: === L1: PASS / L2: PASS ===
 
 ## 現状をもう少し詳しく
 
-**実機で確認できているのは SPI 疎通までです。測距も測位も実機では動いていません。**
+**実機で確認できているのは 1 対 1 の測距までです。アンカー複数台での 3D 測位はまだ実機では動いていません。**
 
 | | 状況 |
 |---|---|
 | ビルド | 全ファーム **警告 0・エラー 0**（ESP-IDF v5.5.2 / ESP32-S3） |
-| 測位パイプライン | ホスト（PC）上の合成データで検証済み（**188 件のチェック全通過**。設定のシリアライズ/デシリアライズ、遅延プリセット、フレーム照合の検算を含む） |
-| 測位ソルバ（uwb_loc） | 本リポジトリ独立のホストテストで検証済み（**77 件 + 新旧比較回帰 591,418 件**。上流 [uwb_localizer](https://github.com/kouhei1970/uwb_localizer) は凍結・独立しており、以後の開発は本リポジトリ側で行っている） |
-| 線形代数（uwb_math）／自動測量（uwb_survey） | ホストで検証済み（uwb_math **10,781 件** / uwb_survey **561 件**） |
+| 測位パイプライン | ホスト（PC）上の合成データで検証済み（**200 件のチェック全通過**。設定のシリアライズ/デシリアライズ、遅延プリセット、フレーム照合の検算を含む） |
+| 測位ソルバ（uwb_loc） | 本リポジトリ独立のホストテストで検証済み（単体 **77 件** + 新旧比較回帰 **591,199 件**。上流 [uwb_localizer](https://github.com/kouhei1970/uwb_localizer) は凍結・独立しており、以後の開発は本リポジトリ側で行っている） |
+| 線形代数（uwb_math）／自動測量（uwb_survey）／アンカー応答の状態遷移（responder_fsm） | ホストで検証済み（uwb_math **10,781 件** / uwb_survey **561 件** / responder_fsm **41 件**） |
 | ソルバの計算時間 | ESP32-S3 実機用ベンチを実装済み（**実行は未**） |
 | **実機での SPI 疎通（Device ID 読み出し）** | **確認済み**（2026-08-27。M5StampS3A + StampS3 BreakOut + FPC、1 台。60 秒 64 回すべて `0xDECA0314`。→ [`docs/GETTING_STARTED.md` §4.2.1](docs/GETTING_STARTED.md#probe-result)） |
-| **実機での測距・測位** | **未確認** |
-| **16MHz SPI / RSTn・IRQ・WAKEUP の配線** | **未確認**（`firmware/probe` では裏付けられない） |
+| **実機での 1 対 1 測距（SS-TWR）** | **確認済み**（2026-08-29。850kbps/プリアンブル 256、タグ即時再試行 2 回。300 秒・2,180 サイクル中 2,179 成功＝**サイクル成功率 99.95%**、距離中央値 1.033m〈巻尺実測約 1.0m〉） |
+| **実機での 1 対 1 測距（DS-TWR）** | **確認済み**（2026-08-30。不安定の原因〈タグ周期とアンカー受信窓の位相ロック、Final 遅延送信の締切不足〉を特定し、アンカーを受信常時 ON のステートマシン〈v2 アーキテクチャ、[`docs/ARCHITECTURE_V2.md`](docs/ARCHITECTURE_V2.md)〉へ移行して解決。本番既定構成〈850kbps/プリアンブル 256/IRQ 有効/再試行 2 回〉で**周期成功率 99.5〜99.6%**） |
+| **実機での Wi-Fi ブラウザダッシュボード + PC を繋がない給電** | **確認済み**（2026-08-31。`http://uwb-tag.local/` でのブラウザ実表示、充電器/モバイルバッテリのみでの運用、Wi-Fi 併用時も測距の周期成功率 99.3〜99.4%〈悪化なし〉） |
+| **アンカー 4 台以上での 3D 測位** | **未確認**（ホスト上の合成データでの検証のみ） |
+| 自動測量（uwb_survey）の実機実行 | **未確認**（デバイス上の呼び出し経路が未実装） |
+| アンテナ遅延の校正 | **未実施** |
+| **RSTn の配線・16MHz SPI** | **確認済み**（2026-08-29。probe を L1〜L11 の受入検査へ拡張して 2 台とも実行。L4=RSTn 機能検査 PASS、L6=16MHz SPI 連続 1,000 回読み出しで不一致 0 件） |
+| WAKEUP の配線 | **未確認**（拡張 probe の L10 は必要時のみ有効化する検査で、実行記録では SKIP） |
+| `uwb_cfgstore` のアンカー座標・アドレス設定コンソールの実機読み書き | **未確認**（Wi-Fi 設定の NVS 保存は `uwb_net` 側で実機確認済み〈2026-08-31〉。別物なので混同しないこと） |
+| アンカー 2 台目以降での UDP 集約 | **未確認** |
 
 同じモジュールを公式 Arduino ライブラリ + 別 MCU（XIAO ESP32-C6）で動かした外部報告
 （[GOROman 氏、gist](https://gist.github.com/GOROman/76c222768b042d35599d26192a25e829)）があり、
@@ -171,8 +186,8 @@ I (xxx) uwb_probe: === L1: PASS / L2: PASS ===
   [`docs/GETTING_STARTED.md` §11](docs/GETTING_STARTED.md#limitations) にあります。
 
 つまりこれは「測位まで動作実績のあるライブラリ」ではなく、**一次資料から積み上げた
-実装と、その検証手順の一式**です。実機での検証は SPI 疎通まで進みました。
-次の関門は 2 台での測距です。
+実装と、その検証手順の一式**です。実機での検証はタグ 1 + アンカー 1 の測距まで進みました。
+次の関門はアンカー複数台での 3D 測位です。
 
 ---
 
@@ -228,28 +243,29 @@ m5stamp_uwb_localizer/
 │
 ├── docs/
 │   ├── README.md            ★ ドキュメント索引（ここから探す）
-│   ├── GETTING_STARTED.md   ★ 買ってから測位が出るまでの完全手順
+│   ├── GETTING_STARTED.md   ★ 買ってから測位が出るまでの完全手順（Phase 1 の SPI 疎通受入確認を含む）
 │   ├── NET_DASHBOARD.md     Wi-Fi ダッシュボード・無線コンソール（uwb_net）の使い方
 │   ├── EXPERIMENT_PLAN.md   ★ 実機到着後の実験計画とフラグ有効化の順序
 │   ├── UWB_PRIMER.md        ★ UWB 入門（なぜ電波で cm が測れるのか）
 │   ├── UWB_ALGORITHMS.md    測位アルゴリズムの導出（上流からの移植・改訂版）
-│   ├── GLOSSARY.md          用語集（略語の正式名称と意味）
-│   ├── GLOSSARY.md             UUS / DTU / 実µs の単位リファレンス
+│   ├── GLOSSARY.md          用語集（略語の正式名称と意味。UUS / DTU / 実µs の単位リファレンスも含む）
 │   ├── WIRING.md            配線の正本。3つの接続経路とピン対応・向きの確定
-│   ├── GETTING_STARTED.md           Phase 1（SPI 疎通）の受入確認手順
+│   ├── PREBUILT_BINARIES.md ビルド済みバイナリの入手と書き込み（ESP-IDF 不要）
 │   ├── ANCHOR_PLACEMENT.md  アンカー配置ルール（実測にもとづく）
 │   ├── IRQ_POLICY.md        IRQ を使うかどうかの方針
 │   ├── TIMING_PRESETS.md    TWR 遅延プリセットと版不一致検出
 │   ├── SURVEY_SPEC.md       アンカー座標の自動測量の仕様
 │   ├── STAMPFLY_INTEGRATION.md  StampFly 位置制御への統合検討
+│   ├── ARCHITECTURE_V2.md   UWB 測距ファームウェアの v2 アーキテクチャ（アンカー受信常時 ON のステートマシン化）
 │   ├── HANDOFF.md           次セッションへの申し送り
 │   ├── PLAN.md              全体設計・フェーズ計画
-│   ├── PERF_ANALYSIS.md     測位ソルバの性能分析
-│   ├── PERF_ANALYSIS.md   ESP32-S3 固有の最適化調査
+│   ├── PERF_ANALYSIS.md     測位ソルバの計算コスト分析と ESP32-S3 固有の最適化調査
 │   └── archive/             経緯文書（設計当時の調査・検討。現役の仕様ではない）
+│       ├── DESIGN_HISTORY.md    廃案・訂正・方針変更の経緯の集約
 │       ├── PROGRESS.md          開発進捗ログ（何がどこまで検証済みか）
 │       ├── REIMPL_PLAN.md       TWR 層の課題一覧（R1〜R12）
 │       ├── CRITICAL_REVIEW.md   移植元コードの問題点の詳細分析
+│       ├── REVIEW_2026-08-21.md 実機投入前の最終レビュー
 │       ├── MATH_AUDIT_2026-08-21.md  行列計算の残存箇所の監査とスカラー化の設計根拠
 │       └── SURVEY_*.md          事前調査資料
 │
@@ -267,7 +283,10 @@ m5stamp_uwb_localizer/
 │   ├── uwb_ranging/         アンカー登録テーブル / スケジューラ / 測位パイプライン
 │   ├── uwb_cfgstore/        NVS 永続化 + シリアルコンソール
 │   ├── uwb_survey/          アンカー座標の自動測量（MDS + Gauss-Newton + ゲージ固定）
-│   └── uwb_loc/             測位ソルバ（Lv0 / Lv2 / EKF）
+│   ├── uwb_loc/             測位ソルバ（Lv0 / Lv2 / EKF）
+│   ├── uwb_math/            uwb_loc・uwb_survey が使う小次元線形代数（ESP-IDF 非依存、C99）
+│   ├── uwb_net/             Wi-Fi ブラウザダッシュボード + 無線コンソール（HTTP/WebSocket/TCP/UDP集約）
+│   └── uwb_status_led/      内蔵 WS2812/SK6812 LED によるハートビート表示
 │
 ├── firmware/
 │   ├── probe/               ★ SPI 疎通確認（Device ID を読む）
@@ -280,13 +299,16 @@ m5stamp_uwb_localizer/
 ├── tests/
 │   ├── Makefile             host/*/Makefile を自動検出して一括実行（`make test strict float`）
 │   └── host/
-│       ├── loc/              測位ソルバのホスト検証（`make test`、77件）
-│       ├── pipeline/          測位パイプラインのホスト検証（実機不要、`make test`、188件）
-│       └── survey/            自動測量の計算のホスト検証（`make test`、281件）
+│       ├── loc/              測位ソルバのホスト検証（`make test`、77件 + 新旧比較回帰591,199件）
+│       ├── math/              線形代数（uwb_math）のホスト検証（`make test`、10,781件）
+│       ├── pipeline/          測位パイプラインのホスト検証（実機不要、`make test`、200件）
+│       ├── responder_fsm/     アンカー応答の状態遷移（uwb::decide()）のホスト検証（`make test`、41件）
+│       └── survey/            自動測量の計算のホスト検証（`make test`、561件）
 │
 ├── tools/
 │   ├── README.md            ベンチとスクリプトの置き場（テストは tests/ 側）
 │   ├── bench_loc/           測位ソルバのマイクロベンチマーク（`make bench`）
+│   ├── docs_check/          文書とコードの整合チェック（リンク切れ・削除済み文書への言及・Kconfig参照等。`python3 tools/docs_check/verify_docs.py`。CI から実行）
 │   └── serial/              シリアルログ採取・集計スクリプト（capture / capture_reenum / twr_stats）
 │
 └── third_party/             上流リポジトリの参照クローン（gitignore 済み・ビルド対象外）
@@ -336,7 +358,7 @@ firmware/tag ──┬─ uwb_ranging ─┬─ uwb_loc          （ハード非
 | | 公式 [`m5stack/M5Stamp-UWB`](https://github.com/m5stack/M5Stamp-UWB) | 本リポジトリ |
 |---|---|---|
 | フレームワーク | Arduino | **ESP-IDF** |
-| 範囲 | 1 対 1 の測距まで | **測距 + 屋内3次元測位 + 自動測量** |
+| 範囲 | 1 対 1 の測距まで | **測距（実機確認済み）+ 屋内3次元測位・自動測量（実装済み・実機未検証）** |
 | 位置づけ | — | 公式ライブラリを**移植元の一つ**として参照 |
 
 **StampFly（マルチコプター機体）には依存しません。** 想定利用者は
@@ -382,4 +404,4 @@ firmware/tag ──┬─ uwb_ranging ─┬─ uwb_loc          （ハード非
 | 進捗ログ | [`docs/archive/PROGRESS.md`](docs/archive/PROGRESS.md) |
 | 全体設計・フェーズ計画 | [`docs/PLAN.md`](docs/PLAN.md) |
 | 既知の課題（経緯） | [`docs/archive/REIMPL_PLAN.md`](docs/archive/REIMPL_PLAN.md) / [`docs/archive/CRITICAL_REVIEW.md`](docs/archive/CRITICAL_REVIEW.md) |
-| 最終レビュー（実機投入前） | [docs/REVIEW_2026-08-21.md](docs/archive/REVIEW_2026-08-21.md) |
+| 最終レビュー（実機投入前） | [docs/archive/REVIEW_2026-08-21.md](docs/archive/REVIEW_2026-08-21.md) |

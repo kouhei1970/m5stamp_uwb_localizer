@@ -64,8 +64,8 @@ PLAN.md  →  各仕様書  →  archive/REIMPL_PLAN.md / archive/CRITICAL_REVIE
 | [TIMING_PRESETS.md](TIMING_PRESETS.md) | TWR 遅延値の**導出**と、タグ/アンカー間の版不一致検出 |
 | [SURVEY_SPEC.md](SURVEY_SPEC.md) | アンカー座標の自動測量（MDS + Gauss-Newton + ゲージ固定） |
 | [STAMPFLY_INTEGRATION.md](STAMPFLY_INTEGRATION.md) | StampFly の位置制御へ載せる設計検討 |
-| [PERF_ANALYSIS.md](PERF_ANALYSIS.md) | ESP32-S3 固有の最適化調査 |
-| [PERF_ANALYSIS.md](PERF_ANALYSIS.md) | 測位ソルバの性能分析 |
+| [PERF_ANALYSIS.md](PERF_ANALYSIS.md) | 測位ソルバの性能分析と ESP32-S3 固有の最適化調査 |
+| [ARCHITECTURE_V2.md](ARCHITECTURE_V2.md) | UWB 測距ファームウェアの v2 アーキテクチャ（アンカー受信常時 ON のステートマシン化） |
 | [REVIEW_2026-08-21.md](archive/REVIEW_2026-08-21.md) | 実機投入前の最終レビュー。Critical 1・High 6 を含む全指摘と根拠、対応状況、着手順 |
 | [archive/REIMPL_PLAN.md](archive/REIMPL_PLAN.md) | 【経緯】移植元の課題一覧 R1〜R12 と、それぞれの決着 |
 | [archive/CRITICAL_REVIEW.md](archive/CRITICAL_REVIEW.md) | 【経緯】移植元コードの批判的レビュー（**訂正ボックス入り**） |
@@ -110,16 +110,14 @@ PLAN.md  →  各仕様書  →  archive/REIMPL_PLAN.md / archive/CRITICAL_REVIE
 |---|---|
 | [UWB_PRIMER.md](UWB_PRIMER.md) | UWB の原理。なぜ電波で cm が測れるのか |
 | [UWB_ALGORITHMS.md](UWB_ALGORITHMS.md) | 測位アルゴリズムの導出（上流 uwb_localizer からの移植・改訂版） |
-| [GLOSSARY.md](GLOSSARY.md) | 用語集。**§9 に「紛らわしい語」**（ToF の二義など） |
-| [GLOSSARY.md](GLOSSARY.md) | UUS / DTU / 実 µs。**遅延値を触る前に必読** |
+| [GLOSSARY.md](GLOSSARY.md) | 用語集。**§9 に「紛らわしい語」**（ToF の二義など）。UUS / DTU / 実 µs の単位リファレンスも含む（**遅延値を触る前に必読**） |
 
 ### 実践
 | 文書 | 内容 |
 |---|---|
-| [GETTING_STARTED.md](GETTING_STARTED.md) | BOM から測位までの完全手順（11 章） |
+| [GETTING_STARTED.md](GETTING_STARTED.md) | BOM から測位までの完全手順（11 章）。Phase 1（SPI 疎通）の受入確認を含む |
 | [EXPERIMENT_PLAN.md](EXPERIMENT_PLAN.md) | 実機到着後の実験計画とフラグ有効化の順序 |
 | [PREBUILT_BINARIES.md](PREBUILT_BINARIES.md) | ビルド済みバイナリの入手と書き込み。ライセンス条件込み |
-| [GETTING_STARTED.md](GETTING_STARTED.md) | Phase 1（SPI 疎通）の受入確認 |
 | [WIRING.md](WIRING.md) | 配線の正本。3つの接続経路とピン対応・向きの確定 |
 | [ANCHOR_PLACEMENT.md](ANCHOR_PLACEMENT.md) | アンカー配置ルール（実測にもとづく） |
 | [NET_DASHBOARD.md](NET_DASHBOARD.md) | Wi-Fi ブラウザダッシュボード・無線コンソール（`uwb_net`）の使い方。トポロジ・`wifi`/`net probe` コマンド・プロトコル・実測結果 |
@@ -132,13 +130,9 @@ PLAN.md  →  各仕様書  →  archive/REIMPL_PLAN.md / archive/CRITICAL_REVIE
 | [TIMING_PRESETS.md](TIMING_PRESETS.md) | 遅延プリセットの導出と版不一致検出 |
 | [SURVEY_SPEC.md](SURVEY_SPEC.md) | アンカー座標の自動測量の仕様（外れ値 leave-one-out・キラリティ入力） |
 | [STAMPFLY_INTEGRATION.md](STAMPFLY_INTEGRATION.md) | StampFly 位置制御への統合検討 |
-| [PERF_ANALYSIS.md](PERF_ANALYSIS.md) | ESP32-S3 の浮動小数点・コンパイル設定 |
+| [PERF_ANALYSIS.md](PERF_ANALYSIS.md) | 測位ソルバの計算コスト分析と ESP32-S3 固有の最適化調査（浮動小数点・コンパイル設定） |
+| [ARCHITECTURE_V2.md](ARCHITECTURE_V2.md) | UWB 測距ファームウェアの v2 アーキテクチャ設計。アンカー受信常時 ON のステートマシン化・DS-TWR 不安定の原因特定 |
 
-### 経緯・分析
-| 文書 | 内容 |
-|---|---|
-| [REVIEW_2026-08-21.md](archive/REVIEW_2026-08-21.md) | 実機投入前の最終レビュー。Critical 1・High 6、**全件対応済み**（実機確認のみ残る） |
-| [PERF_ANALYSIS.md](PERF_ANALYSIS.md) | 測位ソルバの性能分析と上流最適化の結果 |
 ### 引き継ぎ
 | 文書 | 内容 |
 |---|---|
@@ -149,13 +143,14 @@ PLAN.md  →  各仕様書  →  archive/REIMPL_PLAN.md / archive/CRITICAL_REVIE
 ## アーカイブ（経緯）
 
 上記はすべて**現役の文書**です。それとは別に、[`archive/`](archive/) に
-**設計当時の調査・検討の記録**（経緯文書）を 9 本まとめてあります。
+**設計当時の調査・検討の記録**（経緯文書）を 11 本まとめてあります。
 プロジェクトの背景や「なぜ今の実装になったか」を追いたいときに読んでください。
 **現役文書と矛盾する場合は、常に現役文書が正しい。** 索引は [`archive/README.md`](archive/README.md)。
 
 | 文書 | 内容 |
 |---|---|
 | **[archive/DESIGN_HISTORY.md](archive/DESIGN_HISTORY.md)** | **廃案・訂正・方針変更の経緯を集約。現役文書から外したものはここにある** |
+| [archive/REVIEW_2026-08-21.md](archive/REVIEW_2026-08-21.md) | 実機投入前の最終レビュー。Critical 1・High 6、全件対応済み |
 | [archive/REIMPL_PLAN.md](archive/REIMPL_PLAN.md) | 移植元の課題一覧 R1〜R12 とその決着 |
 | [archive/CRITICAL_REVIEW.md](archive/CRITICAL_REVIEW.md) | 移植元コードの批判的レビュー |
 | [archive/SURVEY_m5stamp_uwb_module.md](archive/SURVEY_m5stamp_uwb_module.md) | モジュールのハードウェア仕様の事前調査 |
@@ -174,12 +169,13 @@ PLAN.md  →  各仕様書  →  archive/REIMPL_PLAN.md / archive/CRITICAL_REVIE
 
 1. **略語は各文書の初出で「正式名称（英語）＝日本語の意味」を添える**（[GLOSSARY.md](GLOSSARY.md) 冒頭）。
    文書をまたぐときは各文書で改めて展開する
-2. **断定には出典を `ファイル:行` で添える**（
-   一次資料は Qorvo の SDK / UM / APS。M5Stack のラッパは二次資料として扱う
+2. **断定には出典を `ファイル:行` で添える**
+   （一次資料は Qorvo の SDK / UM / APS。M5Stack のラッパは二次資料として扱う）
 3. **フラグやメタデータより、直接観測できる事実を優先する。**
    矛盾する証拠が出たら辻褄を合わせず前提を疑う
 4. **実機で確認していないことは「未検証」と明記する。** このリポジトリは
-   実機で確認できているのは SPI 疎通（2026-08-27）までで、測距・測位は未検証。
+   実機で確認できているのはタグ 1 + アンカー 1 の測距（2026-08-29〜31、SS-TWR
+   99.95% / DS-TWR 99.5〜99.6%）までで、アンカー複数台での 3D 測位は未検証。
    これを省くと読者を誤解させる。**逆に、実機で確認が取れた項目は「未検証」の
    記述を消して確定に書き換える**
 5. **`.gitignore` されているディレクトリ（`third_party/` / `docs/refs/`）へ

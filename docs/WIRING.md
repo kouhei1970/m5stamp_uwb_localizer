@@ -155,9 +155,10 @@ device." と明記している。
 **`boards/stamps3.h` の SPI 4 本（SCK=G12 / MOSI=G11 / MISO=G13 / CS=G10）は
 2026-08-27 に実機で確認済み**（M5StampS3A + StampS3 BreakOut + FPC、1 台。値を
 変えずに `firmware/probe` が PASS。→ [`GETTING_STARTED.md` §4.2.1](GETTING_STARTED.md#probe-result)）。
-**同じファイルでも RST=G6 / IRQ=G7 / WAKEUP=G8 は未確認**で、`boards/atoms3.h` は
-全ピン未確認。**確認済みの 4 本以外は実配線前に現物と照合すること**
-（両ファイルの冒頭コメント参照）。
+**RST=G6 / IRQ=G7 も 2026-08-29〜30 に実機で確認済み**（拡張 probe の L4=RSTn 機能
+検査・L5=IRQ 自己診断、および IRQ 有効構成での測距成立。→ `docs/HANDOFF.md`）。
+**WAKEUP=G8 のみ未確認**で、`boards/atoms3.h` は全ピン未確認。
+**未確認のピンは実配線前に現物と照合すること**（両ファイルの冒頭コメント参照）。
 
 **M5StampS3A（標準構成。BreakOut の有無によらず同じ）**
 
@@ -629,8 +630,8 @@ H に張り付く**。QM33120W データシートには「sleep するには IRQ
 ## 9. 関連ドキュメント
 
 - **`docs/GETTING_STARTED.md` … 本書の内容を作業手順として展開したもの
-  （§3 配線）。買ってから測位が出るまでの通し手順はこちら**
-- `docs/GETTING_STARTED.md` … Phase 1（SPI 疎通）の受入確認手順。FPC / 半田パッドの選択も
+  （§3 配線、§4 に SPI 疎通の受入確認手順、FPC / 半田パッドの選択も）。
+  買ってから測位が出るまでの通し手順はこちら**
 - `docs/archive/SURVEY_m5stamp_uwb_module.md` … モジュール全体の仕様調査（FPC ピンアサインの出典）
 - `boards/stamps3.h` / `boards/atoms3.h` … ホスト側ピン割当。
   冒頭コメントに実機での確認状況（どのピンが確定でどれが未確認か）がある
