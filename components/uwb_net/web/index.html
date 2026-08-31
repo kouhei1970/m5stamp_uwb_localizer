@@ -71,7 +71,14 @@ tr.disabled{opacity:.45}
 .chart-box{height:150px;margin-bottom:10px}
 .chart-box canvas{width:100%;height:100%;display:block}
 #planBox{height:320px}
-#planBox canvas{width:100%;height:100%;display:block}
+#planBox canvas{width:100%;height:100%;display:block;touch-action:none}
+#planBox canvas.rot{cursor:grab}
+#planBox canvas.rot:active{cursor:grabbing}
+.viewTabs{display:flex;gap:4px;margin-bottom:8px}
+.viewTabs button{padding:3px 10px;font-size:11px}
+.viewTabs button.sel{background:var(--ink);color:var(--surface);border-color:var(--ink)}
+.planHead{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:2px}
+.planHead h2{margin-bottom:0}
 
 #conOut{height:180px;overflow-y:auto;background:var(--page);border:1px solid var(--border);border-radius:6px;
   padding:6px 8px;margin:0 0 6px;white-space:pre-wrap;word-break:break-word;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px}
@@ -96,6 +103,7 @@ details#rawDet summary{cursor:pointer;font-size:13px;color:var(--ink2);margin-bo
   <div class="spacer"></div>
   <div><span id="connDot" class="dot warn"></span><span id="connText" class="muted">接続中&hellip;</span></div>
   <div id="rateText" class="muted"></div>
+  <div id="modeBadge" class="badge">—</div>
   <div class="actions">
     <button id="btnRec">● 記録開始</button>
     <button id="btnSave" disabled>保存</button>
@@ -134,7 +142,13 @@ details#rawDet summary{cursor:pointer;font-size:13px;color:var(--ink2);margin-bo
   </section>
 
   <section class="panel">
-    <h2>平面図</h2>
+    <div class="planHead">
+      <h2>位置図</h2>
+      <div class="viewTabs" id="viewTabs">
+        <button data-view="2d" id="btnView2D">2D</button>
+        <button data-view="3d" id="btnView3D" class="sel">3D</button>
+      </div>
+    </div>
     <div id="planBox"><canvas id="cvPlan"></canvas></div>
   </section>
 
@@ -191,6 +205,12 @@ const conHistory = []; let conHistIdx = 0;
 const conBuf = [];
 
 let ws = null, connState = 'connecting', reconnectTimer = null;
+const isDemo = new URLSearchParams(location.search).get('demo')==='1';
+
+// ---- 3D 位置図 / 3D plan view ----
+let view3D = true;
+let cam3 = {yaw:-0.7, pitch:0.5, zoom:1}; // yaw/pitch [rad], zoom は等角投影の倍率
+function resetCam3(){ cam3.yaw=-0.7; cam3.pitch=0.5; cam3.zoom=1; }
 
 // ---- 汎用ヘルパ / helpers ----
 function esc(s){ return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -320,7 +340,8 @@ function onFix(o){
   cycleSeries.push({t, val, band});
   while(cycleSeries.length && cycleSeries[0].t < t-60000) cycleSeries.shift();
   if(o.ok && Array.isArray(o.p)){
-    fixTrail.push({x:o.p[0], y:o.p[1]});
+    const z = o.p.length>2 ? o.p[2] : (typeof o.z_fixed==='number' ? o.z_fixed : 0);
+    fixTrail.push({x:o.p[0], y:o.p[1], z});
     if(fixTrail.length>200) fixTrail.shift();
   }
   for(const a of (o.anchors||[])) if(a && a.a) fixAnchorsLatest.set(a.a, a);
@@ -394,11 +415,21 @@ function renderHeader(){
   document.getElementById('hdrUptime').textContent = n ? '稼働 ' + fmtUptime(n.uptime_s) : '';
   const dot = document.getElementById('connDot');
   const txt = document.getElementById('connText');
-  dot.className = 'dot ' + (connState==='open'?'ok':'warn');
-  txt.textContent = connState==='open' ? 'WebSocket 接続中' : (connState==='reconnecting' ? '再接続中…' : '接続中…');
+  dot.className = 'dot ' + (isDemo || connState==='open' ? 'ok':'warn');
+  txt.textContent = isDemo ? 'デモモード' : (connState==='open' ? 'WebSocket 接続中' : (connState==='reconnecting' ? '再接続中…' : '接続中…'));
   document.getElementById('rateText').textContent = `${rateLinesShown} 行/秒 ・ ${(rateBytesShown/1024).toFixed(1)} KB/秒`;
   document.getElementById('recInfo').textContent = recCount ? `${recCount} 行 / ${fmtBytes(recBytes)}` : '';
   document.getElementById('btnSave').disabled = recCount===0;
+  renderModeBadge();
+}
+function renderModeBadge(){
+  const el = document.getElementById('modeBadge');
+  const o = fixLatest;
+  if(!o || typeof o.mode !== 'string'){ el.textContent='—'; return; }
+  if(o.mode==='ranging') el.textContent='測距のみ';
+  else if(o.mode==='2d') el.textContent = '2D測位' + (typeof o.z_fixed==='number' ? ` (z=${o.z_fixed.toFixed(2)}m)` : '');
+  else if(o.mode==='3d') el.textContent='3D測位';
+  else el.textContent = o.mode;
 }
 function kv(label,key,val){
   return `<dt>${esc(label)}${key?` <code>${esc(key)}</code>`:''}</dt><dd>${esc(String(val))}</dd>`;
@@ -626,12 +657,111 @@ function drawPlan(){
   }
 }
 
+// ---- 描画: 3D 位置図（自前の直交投影） / 3D plan view (hand-rolled orthographic projection) ----
+// z が up の世界座標を、ヨー(yaw)→ピッチ(pitch)の順に回転してから平行投影する。
+// world z-up: rotate by yaw then pitch, then drop the depth axis (parallel/orthographic projection).
+function proj3(pt, center, yaw, pitch){
+  const x=pt[0]-center[0], y=pt[1]-center[1], z=pt[2]-center[2];
+  const cy=Math.cos(yaw), sy=Math.sin(yaw);
+  const x1 = x*cy + y*sy, y1 = -x*sy + y*cy, z1 = z;
+  const cp=Math.cos(pitch), sp=Math.sin(pitch);
+  return { sx:x1, sy:-y1*sp+z1*cp, depth:y1*cp+z1*sp };
+}
+function getBounds3D(){
+  let xs=[0], ys=[0], zs=[0];
+  for(const a of anchorsCfg) if(a && Array.isArray(a.p)){ xs.push(a.p[0]); ys.push(a.p[1]); zs.push(a.p[2]||0); }
+  for(const p of fixTrail) if(p.z!=null){ xs.push(p.x); ys.push(p.y); zs.push(p.z); }
+  const pad=0.6;
+  return { minX:Math.min(...xs)-pad, maxX:Math.max(...xs)+pad,
+    minY:Math.min(...ys)-pad, maxY:Math.max(...ys)+pad,
+    minZ:Math.min(0,Math.min(...zs))-0.2, maxZ:Math.max(0,Math.max(...zs))+pad };
+}
+function drawPlan3D(){
+  const fc = fitCanvas(document.getElementById('cvPlan')); if(!fc) return;
+  const {ctx,w,h} = fc;
+  const b = getBounds3D();
+  const center = [(b.minX+b.maxX)/2, (b.minY+b.maxY)/2, (b.minZ+b.maxZ)/2];
+  const yaw = cam3.yaw, pitch = cam3.pitch;
+  const corners = [];
+  for(const x of [b.minX,b.maxX]) for(const y of [b.minY,b.maxY]) for(const z of [b.minZ,b.maxZ]) corners.push([x,y,z]);
+  const pc = corners.map(c=>proj3(c,center,yaw,pitch));
+  const sxs=pc.map(p=>p.sx), sys=pc.map(p=>p.sy);
+  const spanX=Math.max(0.5,Math.max(...sxs)-Math.min(...sxs)), spanY=Math.max(0.5,Math.max(...sys)-Math.min(...sys));
+  const midSx=(Math.max(...sxs)+Math.min(...sxs))/2, midSy=(Math.max(...sys)+Math.min(...sys))/2;
+  const pad=32, iw=Math.max(10,w-pad*2), ih=Math.max(10,h-pad*2);
+  const scale = Math.max(3, Math.min(iw/spanX, ih/spanY)) * cam3.zoom;
+  const cxC=w/2, cyC=h/2;
+  const toScr = pt=>{ const p=proj3(pt,center,yaw,pitch); return {x:cxC+(p.sx-midSx)*scale, y:cyC-(p.sy-midSy)*scale, depth:p.depth}; };
+
+  ctx.clearRect(0,0,w,h);
+
+  // 床グリッド（1mピッチ）/ floor grid at z=0, 1 m pitch
+  const gx0=Math.floor(b.minX), gx1=Math.ceil(b.maxX), gy0=Math.floor(b.minY), gy1=Math.ceil(b.maxY);
+  ctx.strokeStyle=COL.grid; ctx.lineWidth=1;
+  for(let x=gx0;x<=gx1;x++){ const p1=toScr([x,gy0,0]), p2=toScr([x,gy1,0]); ctx.beginPath(); ctx.moveTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y); ctx.stroke(); }
+  for(let y=gy0;y<=gy1;y++){ const p1=toScr([gx0,y,0]), p2=toScr([gx1,y,0]); ctx.beginPath(); ctx.moveTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y); ctx.stroke(); }
+
+  // 座標軸 x赤/y緑/z青 / axes, x red / y green / z blue (原点は世界原点そのもの・bounds centerではない)
+  const axLen = Math.max(0.4, Math.min(b.maxX-b.minX, b.maxY-b.minY, b.maxZ-b.minZ)*0.22);
+  const org = toScr([0,0,0]);
+  for(const [tip,col,lab] of [[[axLen,0,0],'#d03b3b','x'], [[0,axLen,0],'#0ca30c','y'], [[0,0,axLen],'#2a78d6','z']]){
+    const p = toScr(tip);
+    ctx.strokeStyle=col; ctx.lineWidth=1.6; ctx.beginPath(); ctx.moveTo(org.x,org.y); ctx.lineTo(p.x,p.y); ctx.stroke();
+    ctx.fillStyle=col; ctx.font='10px system-ui'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(lab, p.x+(p.x>org.x?7:-7), p.y+(p.y>org.y?7:-7));
+  }
+
+  // アンカー・軌跡・タグは視点からの距離でソートして描画（painter's algorithm）
+  // anchors / trail / tag are depth-sorted before drawing (painter's algorithm)
+  const items = [];
+  for(const a of anchorsCfg){
+    if(!a || !Array.isArray(a.p)) continue;
+    const wp=[a.p[0],a.p[1],a.p[2]||0], s=toScr(wp), gp=toScr([a.p[0],a.p[1],0]);
+    const en = a.enabled!==false;
+    items.push({depth:s.depth, draw:()=>{
+      ctx.strokeStyle = en? getColor(a.id) : COL.muted; ctx.globalAlpha=0.35; ctx.lineWidth=1;
+      ctx.beginPath(); ctx.moveTo(s.x,s.y); ctx.lineTo(gp.x,gp.y); ctx.stroke(); ctx.globalAlpha=1;
+      ctx.fillStyle = en? getColor(a.id) : COL.muted;
+      ctx.beginPath(); ctx.arc(s.x,s.y,4.5,0,TAU); ctx.fill();
+      ctx.fillStyle = en? COL.ink : COL.muted;
+      ctx.font='10px system-ui'; ctx.textAlign='left'; ctx.textBaseline='bottom';
+      ctx.fillText(a.id, s.x+6, s.y-4);
+    }});
+  }
+  const trail = fixTrail.filter(p=>p.z!=null).slice(-60); // 直近数十点をフェード表示 / fade the last few dozen fixes
+  if(trail.length>1){
+    const pts = trail.map(p=>toScr([p.x,p.y,p.z]));
+    const dAvg = pts.reduce((s,p)=>s+p.depth,0)/pts.length;
+    items.push({depth:dAvg, draw:()=>{
+      for(let i=1;i<pts.length;i++){
+        ctx.strokeStyle=COL.ink; ctx.globalAlpha=0.08+0.55*(i/pts.length); ctx.lineWidth=1.6;
+        ctx.beginPath(); ctx.moveTo(pts[i-1].x,pts[i-1].y); ctx.lineTo(pts[i].x,pts[i].y); ctx.stroke();
+      }
+      ctx.globalAlpha=1;
+    }});
+  }
+  if(fixLatest && fixLatest.ok && Array.isArray(fixLatest.p)){
+    const z = fixLatest.p.length>2 ? fixLatest.p[2] : (typeof fixLatest.z_fixed==='number' ? fixLatest.z_fixed : 0);
+    const wp=[fixLatest.p[0],fixLatest.p[1],z], s=toScr(wp), gp=toScr([wp[0],wp[1],0]);
+    items.push({depth:s.depth, draw:()=>{
+      ctx.strokeStyle=COL.ink; ctx.globalAlpha=0.5; ctx.setLineDash([3,3]); ctx.lineWidth=1.2;
+      ctx.beginPath(); ctx.moveTo(s.x,s.y); ctx.lineTo(gp.x,gp.y); ctx.stroke();
+      ctx.setLineDash([]); ctx.globalAlpha=1;
+      ctx.fillStyle=COL.ink; ctx.beginPath(); ctx.arc(s.x,s.y,5,0,TAU); ctx.fill();
+      ctx.strokeStyle=COL.ink; ctx.lineWidth=1.5;
+      ctx.beginPath(); ctx.moveTo(s.x-7,s.y); ctx.lineTo(s.x+7,s.y); ctx.moveTo(s.x,s.y-7); ctx.lineTo(s.x,s.y+7); ctx.stroke();
+    }});
+  }
+  items.sort((p,q)=>p.depth-q.depth);
+  for(const it of items) it.draw();
+}
+
 // ---- 更新ループ / update loops ----
 let lastDraw = 0;
 function tick(ts){
   if(ts - lastDraw >= 100){
     lastDraw = ts;
-    drawDist(); drawRate(); drawCycle(); drawPlan();
+    drawDist(); drawRate(); drawCycle(); if(view3D) drawPlan3D(); else drawPlan();
   }
   requestAnimationFrame(tick);
 }
@@ -674,10 +804,79 @@ document.getElementById('conQuick').addEventListener('click', e=>{
 document.getElementById('rawFilter').addEventListener('input', renderRaw);
 document.getElementById('rawDet').addEventListener('toggle', renderRaw);
 
+// ---- 3D 位置図の操作（ドラッグ回転・ホイールズーム・ダブルクリックでリセット） ----
+// 3D view controls: drag to rotate, wheel to zoom, dbl-click to reset. Pointer Events で
+// マウス・タッチを一本化（1本指=回転、2本指=ピンチズーム）。
+{
+  const cv = document.getElementById('cvPlan');
+  cv.classList.add('rot');
+  const pointers = new Map();
+  let pinchDist = null;
+  cv.addEventListener('pointerdown', e=>{
+    if(!view3D) return;
+    cv.setPointerCapture(e.pointerId);
+    pointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
+  });
+  cv.addEventListener('pointermove', e=>{
+    if(!view3D || !pointers.has(e.pointerId)) return;
+    const prev = pointers.get(e.pointerId), cur = {x:e.clientX, y:e.clientY};
+    pointers.set(e.pointerId, cur);
+    if(pointers.size===1){
+      cam3.yaw += (cur.x-prev.x)*0.008;
+      cam3.pitch = Math.max(-1.5, Math.min(1.5, cam3.pitch - (cur.y-prev.y)*0.008));
+    } else if(pointers.size===2){
+      const pts = Array.from(pointers.values());
+      const d = Math.hypot(pts[0].x-pts[1].x, pts[0].y-pts[1].y);
+      if(pinchDist!=null) cam3.zoom = Math.max(0.2, Math.min(8, cam3.zoom*(d/pinchDist)));
+      pinchDist = d;
+    }
+  });
+  const endPtr = e=>{ pointers.delete(e.pointerId); if(pointers.size<2) pinchDist=null; try{ cv.releasePointerCapture(e.pointerId); }catch(err){} };
+  cv.addEventListener('pointerup', endPtr);
+  cv.addEventListener('pointercancel', endPtr);
+  cv.addEventListener('wheel', e=>{
+    if(!view3D) return;
+    e.preventDefault();
+    cam3.zoom = Math.max(0.2, Math.min(8, cam3.zoom*(e.deltaY<0?1.1:0.9)));
+  }, {passive:false});
+  cv.addEventListener('dblclick', ()=>{ if(view3D) resetCam3(); });
+}
+document.getElementById('viewTabs').addEventListener('click', e=>{
+  const b = e.target.closest('button'); if(!b) return;
+  view3D = b.dataset.view==='3d';
+  document.getElementById('btnView2D').classList.toggle('sel', !view3D);
+  document.getElementById('btnView3D').classList.toggle('sel', view3D);
+  document.getElementById('cvPlan').classList.toggle('rot', view3D);
+});
+
+// ---- デモモード（?demo=1）/ demo mode: 実機なしで表示確認するための擬似データ生成 ----
+// WebSocket の代わりに handleLine() へ直接 JSON 行を流し込む（受信〜描画の経路をそのまま使う）。
+function startDemo(){
+  const anchors = [ {id:'A0001',p:[0,0,0]}, {id:'A0002',p:[5,0,1.6]}, {id:'A0003',p:[5,4,0.2]}, {id:'A0004',p:[0,4,1.2]} ];
+  const dist3 = (a,b)=>Math.hypot(a[0]-b[0], a[1]-b[1], (a[2]||0)-(b[2]||0));
+  const feed = o=>handleLine(JSON.stringify(o));
+  const t0 = performance.now();
+  let seq = 0;
+  feed({type:'node', addr:'A0000', role:'tag', name:'TAG-DEMO', wifi:{mode:'STA',ssid:'demo',ip:'192.0.2.1',rssi:-52}, uptime_s:0, heap_free:180000, drops:0, ws_clients:1, udp_tx:0, udp_rx:0});
+  feed({type:'anchors', mode:'3d', anchors: anchors.map(a=>({id:a.id, p:a.p, enabled:true}))});
+  setInterval(()=>{
+    const t = (performance.now()-t0)/1000;
+    const tp = [2.5+2*Math.cos(t*0.4), 2+2*Math.sin(t*0.4), 0.9+0.5*Math.sin(t*0.7)];
+    feed({type:'meas', meas: anchors.map(a=>({a:a.id, d: dist3(a.p,tp)+(Math.random()-0.5)*0.02}))});
+    feed({type:'fix', ok:true, mode:'3d', p:tp, cycle_ms: 30+Math.random()*5, gdop:2.1, residual_m:0.02,
+      anchors: anchors.map(a=>({a:a.id, elapsed_ms: 5+Math.random()*2}))});
+    seq++;
+    if(seq%20===0){
+      feed({type:'stats', anchors: anchors.map(a=>({a:a.id, att:seq, succ:seq-1, retries:0, rescued:0}))});
+      feed({type:'node', addr:'A0000', role:'tag', name:'TAG-DEMO', wifi:{mode:'STA',ssid:'demo',ip:'192.0.2.1',rssi:-52-Math.floor(Math.random()*5)}, uptime_s:Math.floor(t), heap_free:180000-seq, drops:0, ws_clients:1, udp_tx:seq, udp_rx:seq});
+    }
+  }, 150);
+}
+
 // ---- 初期化 / init ----
 rebuildTheme();
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', rebuildTheme);
-connect();
+if(isDemo) startDemo(); else connect();
 requestAnimationFrame(tick);
 setInterval(uiTick, 500);
 setInterval(rateTick, 1000);
