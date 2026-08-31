@@ -10,10 +10,16 @@
 # ヘッダとして uwb_math.h を include するので REQUIRES（PUBLIC 相当）に置く。
 # uwb_loc には依存しない（uwb_real の幅は uwb_math 側が
 # CONFIG_UWB_LOC_USE_FLOAT を見て uwb_loc と揃える）。
+#
+# uwb_survey_tape.c はメジャー実測値からの閉形式計算（uwb_survey.c の
+# 自己測量ソルバとは別物。uwb_survey_tape.h 冒頭コメント参照）。
+# uwb_survey.h（ビットマスクの添字規約 uwb_survey_link_index()）にだけ
+# 依存し、追加の REQUIRES は要らない。
 
 idf_component_register(
     SRCS
         "src/uwb_survey.c"
+        "src/uwb_survey_tape.c"
     INCLUDE_DIRS
         "include"
     REQUIRES

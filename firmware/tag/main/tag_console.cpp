@@ -13,6 +13,11 @@
  *   mode auto|2d|3d                           測位モードを手動で切り替える（既定 auto）
  *   height                                    2D測位の固定高さ(z_fixed)を表示
  *   height <meters>                           2D測位の固定高さを設定（例 height -1.2、範囲 ±10m）
+ *   survey dist <i> <j> <meters>              メジャーで測った距離を記録（RAMのみ）
+ *   survey z <i> <meters>                     アンカーの高さを記録（既定0）
+ *   survey show                               記録済みの入力一覧 + 計算可能なら座標プレビュー
+ *   survey apply                              座標を計算してアンカー登録テーブルへ書き込む
+ *   survey clear                              survey の入力を全消去
  *   output <on|off>                           JSON Lines 出力の一時停止
  *   save                                      NVS へ保存（アンカー登録テーブル + 測位モード設定）
  *   reset-config                              NVS を消して kAnchors[] の既定値・モードAutoへ戻す
@@ -66,6 +71,7 @@
 #include "uwb_cfgstore.hpp"
 #include "uwb_net.hpp"
 #include "uwb_port.h"
+#include "uwb_survey_tape.h"
 
 namespace tagapp {
 
@@ -94,6 +100,19 @@ bool g_saved = false;
 uint32_t g_tableGeneration = 0;
 
 bool g_jsonOutput = true;
+
+/** `survey dist`/`survey z` で記録中の入力（メジャー実測値からの閉形式
+ *  座標計算 uwb_survey_tape_solve() 用。components/uwb_survey/include/
+ *  uwb_survey_tape.h 参照）。NVSには保存しない（アンカー登録テーブルに
+ *  書き込む前の作業用スクラッチ）。
+ *
+ *  g_mutex では守らない: コンソールは単一タスクの REPL で、この入力は
+ *  他のタスク（測位ループ）からは参照されない（g_table/g_service 越しの
+ *  アンカー登録テーブルとは別物）ため、他の共有状態と違って排他制御が
+ *  要らない。`{}` で全ゼロ初期化されるので n=0（uwb_survey_tape_input_init
+ *  と同じ意味）。実際の n は使わず、show/apply のたびに登録テーブルの
+ *  台数で上書きする（台数は anchor set/count で変わりうるため）。 */
+uwb_survey_tape_input g_surveyInput{};
 
 bool lock()
 {
@@ -149,9 +168,10 @@ void bumpTableGeneration()
  * コマンドの共通の締めくくり。
  *
  * anchor set/delay/enable/disable/count だけでなく、mode/height コマンド
- * （AnchorTable::setModeOverride()/setZFixedM() を呼ぶ）の後にも共通して
- * 呼ぶ（NVS未保存フラグ・統計リセット・EKF再構成・下流への再通知は
- * どちらの編集でも同じ後処理が必要なため）。
+ * （AnchorTable::setModeOverride()/setZFixedM() を呼ぶ）、survey apply
+ * （メジャー実測値から計算した座標を書き込む）の後にも共通して呼ぶ
+ * （NVS未保存フラグ・統計リセット・EKF再構成・下流への再通知はどの編集
+ * でも同じ後処理が必要なため）。
  *
  * **呼び出し側は service.unlockTable() で既に離していること**
  * （resetStats()/reinitEkf() が内部で lockTable()/unlockTable() を
@@ -646,6 +666,319 @@ int cmdHeight(int argc, char** argv)
     return 0;
 }
 
+/* ------------------------------------------------------------ survey コマンド */
+
+/* メジャー実測値からの閉形式アンカー座標計算（components/uwb_survey/include/
+ * uwb_survey_tape.h）。`survey dist`/`survey z` で少数の距離・高さを記録し、
+ * `survey show` でプレビュー、`survey apply` でアンカー登録テーブルへ
+ * 書き込む。座標系の規約（index0=原点、index1=+X軸、index2=+y側固定）は
+ * アンカー登録テーブルの並び（`anchor list` と同じ番号）そのもの。
+ *
+ * ESP-NOW での総当たり自己測量（uwb_survey_solve()、docs/SURVEY_SPEC.md
+ * S3〜S5、未実装）とは別の、より軽い経路。台数が少ない・巻尺だけで
+ * 済ませたい場合に使う。 */
+
+/** dist/z の添字として受け付ける上限。アンカー登録テーブルの上限
+ *  (uwb::kMaxAnchors) と閉形式計算側の上限 (UWB_SURVEY_TAPE_MAX_NODES) の
+ *  小さい方（既定はどちらも8なので通常は同じ値になる）。 */
+size_t surveyIndexLimit()
+{
+    const size_t tapeMax = static_cast<size_t>(UWB_SURVEY_TAPE_MAX_NODES);
+    return (uwb::kMaxAnchors < tapeMax) ? uwb::kMaxAnchors : tapeMax;
+}
+
+void printUsageSurvey()
+{
+    std::printf("使い方:\n");
+    std::printf("  survey dist <i> <j> <meters>  メジャーで測った距離を記録（例 survey dist 0 2 4.83）\n");
+    std::printf("  survey z <i> <meters>         アンカーの高さを記録（既定0、例 survey z 1 2.4）\n");
+    std::printf("  survey show                   記録済みの入力一覧・座標プレビュー\n");
+    std::printf("  survey apply                  座標を計算してアンカー登録テーブルへ書き込む\n");
+    std::printf("  survey clear                  survey の入力を全消去\n");
+    std::printf("  i, j は anchor list と同じ添字（index0=原点, index1=+X軸, index2=+y側固定）\n");
+}
+
+/** ペア(i,j)単位のビットマスク（missing/clamped_pairs）を "d(i,j)" の列で
+ *  表示する（uwb_survey_link_index() と同じ添字規約）。何も立っていなければ
+ *  何もしない。 */
+void printPairMask(const char* label, unsigned long mask, int n)
+{
+    if (mask == 0UL) {
+        return;
+    }
+    std::printf("%s:", label);
+    for (int j = 1; j < n; ++j) {
+        for (int i = 0; i < j; ++i) {
+            const int bit = uwb_survey_link_index(i, j);
+            if (bit >= 0 && ((mask >> bit) & 1UL) != 0UL) {
+                std::printf(" d(%d,%d)", i, j);
+            }
+        }
+    }
+    std::printf("\n");
+}
+
+/** ノード単位のビットマスク（clamped_nodes/sign_unresolved）を表示する。 */
+void printNodeMask(const char* label, unsigned long mask, int n)
+{
+    if (mask == 0UL) {
+        return;
+    }
+    std::printf("%s:", label);
+    for (int k = 0; k < n; ++k) {
+        if (((mask >> k) & 1UL) != 0UL) {
+            std::printf(" ノード%d", k);
+        }
+    }
+    std::printf("\n");
+}
+
+/** 距離1本の入力状況を表示する（"d(i,j) = 4.830 m" または "d(i,j) = 未入力"）。
+ *  i,j どちらに入れても拾う（uwb_survey_tape_solve() 側の流儀と揃えてある）。 */
+void printDistEntry(int i, int j)
+{
+    if (g_surveyInput.have[i][j]) {
+        std::printf("  d(%d,%d) = %.3f m\n", i, j, static_cast<double>(g_surveyInput.dist[i][j]));
+    } else if (g_surveyInput.have[j][i]) {
+        std::printf("  d(%d,%d) = %.3f m\n", i, j, static_cast<double>(g_surveyInput.dist[j][i]));
+    } else {
+        std::printf("  d(%d,%d) = 未入力\n", i, j);
+    }
+}
+
+/** uwb_survey_tape_solve() が失敗した理由を日本語で表示する。 */
+void printSurveyError(const uwb_survey_tape_result& r, int n)
+{
+    switch (r.status) {
+    case UWB_SURVEY_TAPE_ERR_N_RANGE:
+        if (n < UWB_SURVEY_TAPE_MIN_NODES) {
+            std::printf("アンカー登録テーブルが%d台です（%d台以上必要）。"
+                        "先に anchor set / anchor count で登録してください\n",
+                        n, UWB_SURVEY_TAPE_MIN_NODES);
+        } else {
+            std::printf("アンカー登録テーブルが%d台です（この計算は%d台まで対応）\n", n,
+                        UWB_SURVEY_TAPE_MAX_NODES);
+        }
+        break;
+    case UWB_SURVEY_TAPE_ERR_MISSING:
+        printPairMask("未入力", r.missing, n);
+        break;
+    case UWB_SURVEY_TAPE_ERR_BASELINE:
+        std::printf("d(0,1) から水平距離を作れません（z[0]とz[1]の高さ差が d(0,1) 以上です）。"
+                    "survey z 0 / survey z 1 か d(0,1) の測定値を確認してください\n");
+        break;
+    case UWB_SURVEY_TAPE_ERR_INCONSISTENT:
+        if (r.err_i >= 0) {
+            std::printf("d(%d,%d) が高さ差より短く、水平距離を計算できません"
+                        "（測定値を確認してください）\n",
+                        r.err_i, r.err_j);
+        } else {
+            std::printf("ノード%d の位置が測定値と矛盾しています（三角形 d(0,1)・d(0,%d)・"
+                        "d(1,%d) を作れません。測定値を確認してください）\n",
+                        r.err_j, r.err_j, r.err_j);
+        }
+        break;
+    case UWB_SURVEY_TAPE_OK:
+    default:
+        break;
+    }
+}
+
+/** 記録済みの入力から座標を計算する（登録テーブルへは書き込まない）。
+ *  呼び出し側が n（登録テーブルの現在の台数）を渡す。 */
+bool solveSurveyPreview(int n, uwb_survey_tape_result* out)
+{
+    uwb_survey_tape_input snapshot = g_surveyInput;
+    snapshot.n                      = n;
+    return uwb_survey_tape_solve(&snapshot, out) != 0;
+}
+
+/** 計算結果（座標・警告）を表示する（show のプレビューと apply の結果表示で共通）。 */
+void printSurveyResult(const uwb_survey_tape_result& result, int n)
+{
+    for (int i = 0; i < n; ++i) {
+        std::printf("  idx%d: (%.3f, %.3f, %.3f)\n", i, static_cast<double>(result.pos[i][0]),
+                    static_cast<double>(result.pos[i][1]), static_cast<double>(result.pos[i][2]));
+    }
+    printNodeMask("警告: 左右(y符号)が未確定（d(2,k)が無いため+y側にしてあります）",
+                  result.sign_unresolved, n);
+    printPairMask("警告: 高さ差とほぼ同じ距離を0扱いに丸めました", result.clamped_pairs, n);
+    printNodeMask("警告: 三角形の一辺をほぼ0として丸めました", result.clamped_nodes, n);
+}
+
+int cmdSurvey(int argc, char** argv)
+{
+    if (argc < 2) {
+        printUsageSurvey();
+        return 1;
+    }
+    const char* sub       = argv[1];
+    const int nArgs       = argc - 2;
+    const char* const* a  = argv + 2;
+
+    if (std::strcmp(sub, "dist") == 0) {
+        if (nArgs != 3) {
+            std::printf("引数の数が違います。例: survey dist 0 2 4.83\n");
+            return 1;
+        }
+        size_t idxI = 0, idxJ = 0;
+        float  d    = 0.0f;
+        const size_t limit = surveyIndexLimit();
+        if (!parseIndex(a[0], limit, &idxI) || !parseIndex(a[1], limit, &idxJ)) {
+            std::printf("添字が範囲外です（0〜%u）: %s, %s\n", static_cast<unsigned>(limit - 1), a[0], a[1]);
+            return 1;
+        }
+        if (idxI == idxJ) {
+            std::printf("同じ添字は指定できません: %u\n", static_cast<unsigned>(idxI));
+            return 1;
+        }
+        if (!parseReal(a[2], uwb::cfg::kMaxCoordM, &d) || d <= 0.0f) {
+            std::printf("距離が不正です（正の値にしてください）: %s\n", a[2]);
+            return 1;
+        }
+        g_surveyInput.dist[idxI][idxJ] = static_cast<uwb_real>(d);
+        g_surveyInput.dist[idxJ][idxI] = static_cast<uwb_real>(d);
+        g_surveyInput.have[idxI][idxJ] = 1;
+        g_surveyInput.have[idxJ][idxI] = 1;
+        std::printf("d(%u,%u) = %.3f m を記録しました（RAMのみ。save では保存されません）\n",
+                    static_cast<unsigned>(idxI), static_cast<unsigned>(idxJ), static_cast<double>(d));
+        return 0;
+    }
+
+    if (std::strcmp(sub, "z") == 0) {
+        if (nArgs != 2) {
+            std::printf("引数の数が違います。例: survey z 1 2.4\n");
+            return 1;
+        }
+        size_t idx = 0;
+        float  z   = 0.0f;
+        const size_t limit = surveyIndexLimit();
+        if (!parseIndex(a[0], limit, &idx)) {
+            std::printf("添字が範囲外です（0〜%u）: %s\n", static_cast<unsigned>(limit - 1), a[0]);
+            return 1;
+        }
+        if (!parseReal(a[1], uwb::cfg::kMaxZFixedM, &z)) {
+            std::printf("値が不正です（範囲 ±%.0fm）: %s\n", static_cast<double>(uwb::cfg::kMaxZFixedM), a[1]);
+            return 1;
+        }
+        g_surveyInput.z[idx] = static_cast<uwb_real>(z);
+        std::printf("z[%u] = %.3f m を記録しました（RAMのみ）\n", static_cast<unsigned>(idx),
+                    static_cast<double>(z));
+        return 0;
+    }
+
+    if (std::strcmp(sub, "clear") == 0) {
+        uwb_survey_tape_input_init(&g_surveyInput, 0);
+        std::printf("survey の入力を全消去しました\n");
+        return 0;
+    }
+
+    if (std::strcmp(sub, "show") == 0) {
+        if (g_table == nullptr || g_service == nullptr) {
+            std::printf("内部エラー: コンソールが初期化されていません\n");
+            return 1;
+        }
+        g_service->lockTable();
+        const size_t count = g_table->size();
+        g_service->unlockTable();
+        const int n = static_cast<int>(count);
+
+        std::printf("登録テーブルの台数: %u（survey はこの台数ぶんを対象にします）\n",
+                    static_cast<unsigned>(count));
+        if (count == 0) {
+            std::printf("アンカーが登録されていません。先に anchor set で登録してください\n");
+            return 0;
+        }
+
+        std::printf("高さ z[i]（既定0、単位m）:\n");
+        for (int i = 0; i < n; ++i) {
+            std::printf("  z[%d] = %.3f m\n", i, static_cast<double>(g_surveyInput.z[i]));
+        }
+
+        std::printf("距離（メジャー実測、必須）:\n");
+        if (n >= 2) {
+            printDistEntry(0, 1);
+        }
+        for (int k = 2; k < n; ++k) {
+            printDistEntry(0, k);
+            printDistEntry(1, k);
+        }
+        if (n > 3) {
+            std::printf("距離（任意、左右(y符号)の判定用。無ければ+y側に決めて計算は続けます）:\n");
+            for (int k = 3; k < n; ++k) {
+                printDistEntry(2, k);
+            }
+        }
+
+        if (n < UWB_SURVEY_TAPE_MIN_NODES) {
+            std::printf("計算にはあと%d台ぶんの登録が必要です\n", UWB_SURVEY_TAPE_MIN_NODES - n);
+            return 0;
+        }
+
+        uwb_survey_tape_result result;
+        if (solveSurveyPreview(n, &result)) {
+            std::printf("座標プレビュー（survey apply で登録テーブルへ書き込むまで反映されません）:\n");
+            printSurveyResult(result, n);
+        } else {
+            std::printf("まだ計算できません: ");
+            printSurveyError(result, n);
+        }
+        return 0;
+    }
+
+    if (std::strcmp(sub, "apply") == 0) {
+        if (g_table == nullptr || g_service == nullptr) {
+            std::printf("内部エラー: コンソールが初期化されていません\n");
+            return 1;
+        }
+        g_service->lockTable();
+        const size_t count = g_table->size();
+        g_service->unlockTable();
+        const int n = static_cast<int>(count);
+
+        if (n < UWB_SURVEY_TAPE_MIN_NODES) {
+            std::printf("アンカー登録テーブルが%u台です（%d台以上必要）。"
+                        "先に anchor set / anchor count で登録してください\n",
+                        static_cast<unsigned>(count), UWB_SURVEY_TAPE_MIN_NODES);
+            return 1;
+        }
+
+        uwb_survey_tape_result result;
+        if (!solveSurveyPreview(n, &result)) {
+            std::printf("計算できません: ");
+            printSurveyError(result, n);
+            return 1;
+        }
+
+        g_service->lockTable();
+        for (int i = 0; i < n; ++i) {
+            uwb::AnchorEntry e = g_table->entry(static_cast<size_t>(i));
+            e.pos[0]             = static_cast<float>(result.pos[i][0]);
+            e.pos[1]             = static_cast<float>(result.pos[i][1]);
+            e.pos[2]             = static_cast<float>(result.pos[i][2]);
+            // enabled はここでは触らない: survey は座標だけを決める機能で、
+            // 有効/無効の管理は anchor enable/disable に委ねる（anchor set
+            // と違い、暗黙に enabled=true へ変えたりしない）。
+            g_table->update(static_cast<size_t>(i), e);
+        }
+        if (g_info.applyModePolicy != nullptr) {
+            g_info.applyModePolicy(*g_table);
+        }
+        g_service->unlockTable();
+
+        afterConfigEdit();
+
+        std::printf("%d 台の座標を計算してアンカー登録テーブルへ書き込みました:\n", n);
+        printSurveyResult(result, n);
+        std::printf("次の測位周期から反映されます。save で NVS へ永続化してください\n");
+        return 0;
+    }
+
+    std::printf("不明なサブコマンド: %s\n", sub);
+    printUsageSurvey();
+    return 1;
+}
+
 /* ------------------------------------------------------------ output コマンド */
 
 int cmdOutput(int argc, char** argv)
@@ -970,6 +1303,17 @@ void registerCommands()
         .context        = nullptr,
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&heightCmd));
+
+    const esp_console_cmd_t surveyCmd = {
+        .command  = "survey",
+        .help     = "メジャー実測値からのアンカー座標計算（survey dist/z/show/apply/clear）",
+        .hint     = " dist <i> <j> <m> | z <i> <m> | show | apply | clear",
+        .func     = &cmdSurvey,
+        .argtable = nullptr,
+        .func_w_context = nullptr,
+        .context        = nullptr,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&surveyCmd));
 
     const esp_console_cmd_t outputCmd = {
         .command  = "output",

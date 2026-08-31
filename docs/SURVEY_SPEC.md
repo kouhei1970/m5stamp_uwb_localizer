@@ -451,3 +451,93 @@ struct AnchorEntry {
 - 複数タグ
 - 測量結果の時間的な追跡（アンカーが動いた場合の再測量は手動）
 - ESP-NOW の暗号化
+
+---
+
+## 9. メジャー実測値からのアンカー座標計算（閉形式・軽量版）
+
+上記の §1〜§7 は ESP-NOW での総当たり相互測距 + MDS初期値 + Levenberg-Marquardt
+（`uwb_survey_solve()`）を前提にした自己測量で、S3〜S5（ESP-NOW層・ファーム側の
+配線）は本稿時点で未実装。**それとは別に**、「アンカーを設置したあと、巻尺で
+測った少数の距離だけから、反復も無い閉形式（代数式そのもの）で座標を出す」軽量な
+経路を用意した。台数が少ない・ESP32-S3上でLMのような反復計算を回したくない・
+今すぐ巻尺だけで座標を出したい場合に使う。
+
+### 9.1 座標系の規約
+§2[5] と同じ規約を使う（アンカー登録テーブルの並び = `anchor list` の添字番号）。
+- index 0 が XY 原点
+- index 1 が +X 軸上（y=0, x>0）
+- index 2 は **+y 側に固定**（規約。§2[4]の |y| 規約と違い、こちらは常に+y側に倒す）
+- index k≥3 の y の符号は d(2,k) があればそれで判定（無ければ index2 と同じ+y側）
+
+### 9.2 自己測量との違い
+| | §1〜§7（自己測量） | §9（メジャー閉形式） |
+|---|---|---|
+| 入力 | 総当たり相互測距（ESP-NOW で自動収集） | 基準2台からの距離のみ（巻尺で手入力） |
+| 高さの扱い | 実測高さに**最小二乗で合わせる**（傾き・z並進を推定） | 入力した z を**そのまま**出力の z 座標に使う |
+| 計算 | MDS初期値 + Levenberg-Marquardt（反復） | 余弦定理・ピタゴラスの定理（閉形式、反復なし） |
+| 外れ値検出・冗長度診断 | あり（leave-one-out 等） | なし（入力が少ないため冗長度が無い） |
+| 実装 | `uwb_survey_solve()`（uwb_survey.h/.c） | `uwb_survey_tape_solve()`（uwb_survey_tape.h/.c） |
+
+### 9.3 入力
+- ノード数 n（3〜8）。**アンカー登録テーブルの現在の台数**をそのまま使う
+  （テーブルの index 0..n-1 が測量の対象になる）
+- 各ノードの高さ z[i] [m]。既定0。z[0] を0以外にしてもよい
+  （「床からの高さ」等、絶対的な基準を直接入れたい場合）
+- 対距離（斜距離）:
+  - `d(0,1)` **必須**
+  - `d(0,k)`, `d(1,k)` (k=2..n-1) **必須**
+  - `d(2,k)` (k=3..n-1) **任意**。無いと y の符号（左右）が index2 と
+    同じ+y側に倒され、`sign_unresolved` フラグが立つ
+
+### 9.4 計算
+1. 高さ補正: 斜距離 d と高さ差 Δz から水平距離 h を出す
+   （`h_ij² = d_ij² − Δz²`。ピタゴラスの定理の逆算）
+2. 基準線: index0=(0,0,z0)、index1=(h01,0,z1)
+3. index k≥2: 余弦定理で x = (h01² + h0k² − h1k²) / (2·h01)、
+   ピタゴラスの定理で |y| = sqrt(h0k² − x²)
+4. y の符号: index2 は+y固定。index k≥3 は d(2,k) があれば、
+   (x, ±y, z_k) から index2 までの3次元距離の予測値のうち実測 d(2,k) に
+   近い方を採用
+
+根号の中身がわずかに負（**1cm² 以内**）になったときは巻尺の読み取り誤差とみなし
+0に丸めて計算を続ける（`clamped_pairs`/`clamped_nodes` で警告）。それを超える
+負値は測定同士の矛盾（三角不等式違反など）としてエラーにする。
+
+### 9.5 異常系
+| 事象 | 扱い |
+|---|---|
+| アンカー登録テーブルが3台未満 / 9台以上 | `UWB_SURVEY_TAPE_ERR_N_RANGE`。3〜8台で使える |
+| 必須の距離が未入力 | `UWB_SURVEY_TAPE_ERR_MISSING`。欠けている距離を**全部集めて**返す（`missing` ビットマスク。一問一答にしない） |
+| d(0,1) の水平距離が0以下（高さ差がd(0,1)以上） | `UWB_SURVEY_TAPE_ERR_BASELINE`。+X軸が定義できない |
+| 三角不等式違反・斜距離が高さ差より短い | `UWB_SURVEY_TAPE_ERR_INCONSISTENT`（`err_i`/`err_j` に該当ノード） |
+| d(2,k) が無い | 座標は出るが `sign_unresolved` で該当ノードを警告（左右が逆かもしれない） |
+| 根号がわずかに負（1cm²以内） | 0に丸めて続行。`clamped_pairs`（ペア）/`clamped_nodes`（ノード）で警告 |
+
+### 9.6 コンソールコマンド
+```
+survey dist <i> <j> <meters>   メジャーで測った距離を記録（RAMのみ、NVSへ保存しない）
+survey z <i> <meters>          アンカーの高さを記録（既定0、RAMのみ）
+survey show                    記録済みの入力一覧 + 計算可能なら座標プレビュー
+survey apply                   座標を計算してアンカー登録テーブルへ書き込む（save は別途必要）
+survey clear                   survey の入力を全消去
+```
+`i`, `j` は `anchor list` と同じ添字。`survey apply` は登録テーブルの
+`enabled` フラグには触れない（座標だけを決める機能なので、有効/無効の管理は
+`anchor enable`/`disable` に委ねる）。書き込み後は `anchor set` 等と同じ
+後処理（`evaluateMode()` 再評価 + `reinitEkf()`）を通す。
+
+### 9.7 実装
+| 対象 | 内容 |
+|---|---|
+| `components/uwb_survey/include/uwb_survey_tape.h`<br>`components/uwb_survey/src/uwb_survey_tape.c` | 閉形式計算の本体。ESP-IDF非依存・malloc不使用の C99（`uwb_survey.h`/`uwb_survey.c` の自己測量ソルバとは別ファイル） |
+| `firmware/tag/main/tag_console.cpp` | `survey dist/z/show/apply/clear` コマンド |
+| `tests/host/survey/test_survey_tape.c` | ホスト側検証（既知配置からの往復・高さ補正・符号解決・異常系） |
+
+**設計メモ（実装時の判断）**:
+- `firmware/tag/main/CMakeLists.txt` の `REQUIRES` に `uwb_survey` を追加した
+  （`tag_console.cpp` が `uwb_survey_tape.h` を使うため。他コンポーネントには
+  影響しない追加のみの変更）。
+- ESP-NOW経由の自己測量（§3のフレーム）とは独立に動く。両方を実装した場合、
+  排他制御（§3「排他制御」）は自己測量側のものがそのまま使え、こちらは
+  ESP-NOWを一切使わないので測位ループとの排他は元々不要。

@@ -31,12 +31,19 @@ DEFS ?= -DUWB_MAX_ANCHORS=8 -DUWB_MAX_MEAS=8
 INCLUDES = -I$(UWB_MATH_DIR)/include -I$(SURVEY_DIR)/include
 
 SRC = $(SURVEY_DIR)/src/uwb_survey.c \
+      $(SURVEY_DIR)/src/uwb_survey_tape.c \
       $(UWB_MATH_DIR)/src/uwb_math.c
 
 BUILD    = build
-OBJ      = $(BUILD)/uwb_survey.o $(BUILD)/uwb_math.o
-TEST_OBJ = $(BUILD)/test_survey.o
-TEST_BIN = $(BUILD)/test_survey
+OBJ      = $(BUILD)/uwb_survey.o $(BUILD)/uwb_survey_tape.o $(BUILD)/uwb_math.o
+TEST_OBJ      = $(BUILD)/test_survey.o
+TEST_BIN      = $(BUILD)/test_survey
+# メジャー実測値からの閉形式計算（uwb_survey_tape.c）のテスト。自己測量
+# ソルバ本体（test_survey.c）とは別バイナリにしてある（cost_atやLM等の
+# 大掛かりな道具を共有しないので、分けた方が見通しが良い）。`test`/`strict`/
+# `float`/`sanitize` はどちらも実行する。
+TAPE_TEST_OBJ = $(BUILD)/test_survey_tape.o
+TAPE_TEST_BIN = $(BUILD)/test_survey_tape
 
 # -MMD -MP (CFLAGS) が $(BUILD)/*.d にヘッダ依存を書き出す。ヘッダだけ
 # 直してもここで拾って再コンパイルされるので、古い .o のまま
@@ -46,12 +53,15 @@ TEST_BIN = $(BUILD)/test_survey
 
 .PHONY: all test strict float sanitize clean
 
-all: $(TEST_BIN)
+all: $(TEST_BIN) $(TAPE_TEST_BIN)
 
 $(BUILD):
 	mkdir -p $(BUILD)
 
 $(BUILD)/uwb_survey.o: $(SURVEY_DIR)/src/uwb_survey.c | $(BUILD)
+	$(CC) $(CFLAGS) $(WARN) $(DEFS) $(INCLUDES) -std=c99 -c $< -o $@
+
+$(BUILD)/uwb_survey_tape.o: $(SURVEY_DIR)/src/uwb_survey_tape.c | $(BUILD)
 	$(CC) $(CFLAGS) $(WARN) $(DEFS) $(INCLUDES) -std=c99 -c $< -o $@
 
 $(BUILD)/uwb_math.o: $(UWB_MATH_DIR)/src/uwb_math.c | $(BUILD)
@@ -63,8 +73,15 @@ $(TEST_OBJ): test_survey.c | $(BUILD)
 $(TEST_BIN): $(OBJ) $(TEST_OBJ)
 	$(CC) $(CFLAGS) $^ $(LDLIBS) -o $@
 
-test: $(TEST_BIN)
+$(TAPE_TEST_OBJ): test_survey_tape.c | $(BUILD)
+	$(CC) $(CFLAGS) $(WARN) $(DEFS) $(INCLUDES) -std=c99 -c $< -o $@
+
+$(TAPE_TEST_BIN): $(OBJ) $(TAPE_TEST_OBJ)
+	$(CC) $(CFLAGS) $^ $(LDLIBS) -o $@
+
+test: $(TEST_BIN) $(TAPE_TEST_BIN)
 	./$(TEST_BIN)
+	./$(TAPE_TEST_BIN)
 
 # 警告をすべてエラーにして通すか見る。uwb_survey は全部自前実装なので
 # uwb_loc のような third_party 由来の既知警告の除外は要らない。

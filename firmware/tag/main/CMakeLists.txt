@@ -36,6 +36,11 @@ idf_component_register(
         # NVS への設定永続化（アンカー登録テーブル）。コンソールを無効にしても
         # 「NVS に保存済みのテーブルで起動する」機能は残るので、常に必要。
         uwb_cfgstore
+        # メジャー実測値からのアンカー座標 閉形式計算 (survey dist/z/show/
+        # apply、tag_console.cpp のみが使う)。CONFIG_UWB_TAG_CONSOLE=n でも
+        # REQUIRES を条件分岐しない理由は上の console と同じ（early
+        # expansion の都合）。
+        uwb_survey
         # シリアルコンソール（linenoise + argtable3）。上のコメント参照。
         console
         # Wi-Fi + ブラウザダッシュボード + 無線コンソール（scratchpad/NET_SPEC.md）。
