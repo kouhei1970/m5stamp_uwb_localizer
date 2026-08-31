@@ -197,6 +197,27 @@ void uwb_port_irq_clear_pending(void);
  */
 bool uwb_port_irq_wait(uint32_t timeout_ms);
 
+
+/**
+ * USB-Serial/JTAG の先に「読み手のいるホスト (PC)」がいるかを返す。
+ * 給電専用アダプタ・モバイルバッテリでは SOF パケットが来ないため false になる
+ * (ESP-IDF driver/usb_serial_jtag.h の usb_serial_jtag_is_connected() 参照)。
+ * ホスト不在時にシリアルへ書き続けると、esp_console が入れた USJ ドライバの
+ * 送信バッファが一杯のままタスクが永久に待つ (2026-08-31 実機で全機能停止を確認)。
+ * Returns true when a real USB host (PC) is attached; power-only adapters and
+ * power banks never send SOF packets and yield false. Writing to the console
+ * with no host wedges the task once the USJ driver's TX buffer fills.
+ */
+bool uwb_port_usb_host_connected(void);
+
+/**
+ * ESP_LOGx の出力をホスト不在時に捨てる vprintf フックを登録する。
+ * esp_console の REPL 開始後 (= USJ ドライバ導入後) に一度呼ぶ。
+ * Installs a vprintf hook that drops ESP_LOG output while no USB host is
+ * attached. Call once after the console REPL has started.
+ */
+void uwb_port_console_guard_init(void);
+
 #ifdef __cplusplus
 }
 #endif

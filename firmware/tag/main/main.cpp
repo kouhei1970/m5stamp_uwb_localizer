@@ -54,6 +54,7 @@
 
 #include "uwb_cfgstore.hpp"
 #include "uwb_port.h"
+#include "nvs.h"
 #include "uwb_status_led.h"
 #include "uwb_qm33120.hpp"
 #include "uwb_qm33120_phy_kconfig.hpp" // docs/ARCHITECTURE_V2.md §4: phyConfigFromKconfig()
@@ -379,7 +380,9 @@ static void printAnchorsLine(const uwb::AnchorTable& table)
                    e.enabled ? "true" : "false");
     }
     jsonAppendClose(buf, JSON_BUF_SIZE, &off);
-    std::fputs(buf, stdout);
+    if (uwb_port_usb_host_connected()) {  // ホスト不在時は USB へ書かない (uwb_port.h 参照) / skip USB writes with no host
+        std::fputs(buf, stdout);
+    }
     uwb::net::publishLine(buf, off);
 }
 
@@ -408,7 +411,9 @@ static void printMeasLine(double t, const uwb::AnchorTable& table, const uwb::Ra
         first = false;
     }
     jsonAppendClose(buf, JSON_BUF_SIZE, &off);
-    std::fputs(buf, stdout);
+    if (uwb_port_usb_host_connected()) {  // ホスト不在時は USB へ書かない (uwb_port.h 参照) / skip USB writes with no host
+        std::fputs(buf, stdout);
+    }
     uwb::net::publishLine(buf, off);
 }
 
@@ -499,7 +504,9 @@ static void printFixLine(double t, uint32_t cycleMs, const uwb::AnchorTable& tab
         }
     }
     jsonAppendClose(buf, JSON_BUF_SIZE, &off);
-    std::fputs(buf, stdout);
+    if (uwb_port_usb_host_connected()) {  // ホスト不在時は USB へ書かない (uwb_port.h 参照) / skip USB writes with no host
+        std::fputs(buf, stdout);
+    }
     uwb::net::publishLine(buf, off);
 }
 
@@ -538,7 +545,9 @@ static void printStatsLine(double t, const uwb::AnchorTable& table, const uwb::R
                    static_cast<unsigned long>(s.retries), static_cast<unsigned long>(s.rescued));
     }
     jsonAppendClose(buf, JSON_BUF_SIZE, &off);
-    std::fputs(buf, stdout);
+    if (uwb_port_usb_host_connected()) {  // ホスト不在時は USB へ書かない (uwb_port.h 参照) / skip USB writes with no host
+        std::fputs(buf, stdout);
+    }
     uwb::net::publishLine(buf, off);
 }
 
@@ -726,6 +735,37 @@ static void uwbLogTask(void* argRaw)
  * app_main
  * ==================================================================== */
 
+
+/* ==================================================================== *
+ * 起動パンくず（給電のみ運用の凍結調査、2026-08-31。docs/HANDOFF.md 参照）
+ * 電源断でも消えない NVS に「起動回数」と「前回どの段階まで進んだか」を
+ * 記録する。PC なし給電で固まる問題の切り分け用（ブラウンアウトの再起動
+ * ループなら起動回数が増え続け、凍結なら段階が途中で止まって残る）。
+ * Boot breadcrumbs for diagnosing the standalone-power freeze: persist a
+ * boot counter and the last reached stage in NVS so the previous run's
+ * fate can be read back after a power cycle.
+ * ==================================================================== */
+static void bootBreadcrumb(uint8_t stage)
+{
+    nvs_handle_t h;
+    if (nvs_open("dbg", NVS_READWRITE, &h) != ESP_OK) {
+        return;
+    }
+    if (stage == 0) {  // 起動直後: 前回の記録を表示してから初期化 / at boot: report last run, then reset
+        uint32_t bootN = 0;
+        uint8_t last   = 0xFF;
+        nvs_get_u32(h, "boot_n", &bootN);
+        nvs_get_u8(h, "stage", &last);
+        ESP_LOGW(TAG, "breadcrumb: previous run: boot_n=%lu last_stage=%u "
+                      "(0=entry 1=console 2=net_start 3=net_ok 4=got_ip)",
+                 static_cast<unsigned long>(bootN), static_cast<unsigned>(last));
+        nvs_set_u32(h, "boot_n", bootN + 1);
+    }
+    nvs_set_u8(h, "stage", stage);
+    nvs_commit(h);
+    nvs_close(h);
+}
+
 extern "C" void app_main(void)
 {
 #ifdef BOARD_STATUS_LED_GPIO
@@ -742,6 +782,7 @@ extern "C" void app_main(void)
      * ConfigStore::init() が失敗しても loadAnchorTable() は必ず既定値を返すので、
      * ここでは戻り値を見て中断しない。NVS破損で起動しなくなるのを避ける方針。 */
     uwb::ConfigStore::init();
+    bootBreadcrumb(0);
     size_t entryCount = 0;
     const uwb::ConfigSource tableSource = uwb::ConfigStore::loadAnchorTable(
         kAnchors, kNumAnchors, g_workEntries, uwb::kMaxAnchors, &entryCount);
@@ -969,7 +1010,12 @@ extern "C" void app_main(void)
         consoleInfo.defaultCount = kNumAnchors;
         consoleInfo.applyPlacementPolicy = &applyPlacementPolicy;
         if (tagapp::sharedInit(table, service, consoleInfo)) {
-            const esp_err_t consoleErr = tagapp::consoleStart();
+            bootBreadcrumb(1);
+    const esp_err_t consoleErr = tagapp::consoleStart();
+    // REPL が USJ ドライバを入れた後に、ホスト不在時のログ抑止を有効化する
+    // (給電専用アダプタで送信バッファ満杯 → 全タスク停止を防ぐ)。
+    // After the REPL installed the USJ driver, arm the no-host log guard.
+    uwb_port_console_guard_init();
             if (consoleErr == ESP_OK) {
                 consoleReady = true;
                 ESP_LOGI(TAG, "シリアルコンソールを起動しました（help でコマンド一覧。"
@@ -1012,7 +1058,11 @@ extern "C" void app_main(void)
         netCfg.highRateMinIntervalMs = static_cast<uint32_t>(CONFIG_UWB_NET_HIGHRATE_MIN_INTERVAL_MS);
         netCfg.statusFn                 = &tagNetStatus;
         netCfg.statusUser               = nullptr;
+        bootBreadcrumb(2);
         const esp_err_t netErr = uwb::net::start(netCfg);
+        if (netErr == ESP_OK) {
+            bootBreadcrumb(3);
+        }
         if (netErr != ESP_OK) {
             ESP_LOGE(TAG, "uwb_net の起動に失敗しました (err=%s)。JSON出力・測位は継続します",
                      esp_err_to_name(netErr));

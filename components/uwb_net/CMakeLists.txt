@@ -30,6 +30,7 @@ idf_component_register(
     PRIV_INCLUDE_DIRS
         "src"
     REQUIRES
+        uwb_port
         esp_wifi
         esp_netif
         esp_event

@@ -14,6 +14,7 @@
  *     （stdoutへ"node"行を書くのはここだけ）。
  */
 #include "uwb_net_internal.hpp"
+#include "uwb_port.h"
 
 #include "sdkconfig.h"
 
@@ -207,7 +208,9 @@ void txTask(void* /*arg*/)
             const size_t nodeLen = buildNodeLine(nodeBuf, sizeof(nodeBuf));
             if (nodeLen > 0) {
                 // "node" 行を stdout へ出すのはここだけ（scratchpad/NET_SPEC.md §4）。
-                std::fputs(nodeBuf, stdout);
+                if (uwb_port_usb_host_connected()) {  // ホスト不在時は USB へ書かない / skip USB writes with no host
+                    std::fputs(nodeBuf, stdout);
+                }
                 sinkPushRaw(nodeBuf, nodeLen);
             }
         }

@@ -461,7 +461,9 @@ static void printAnchorStatsLine(const uwb::ResponderStats& s, double tSec, cons
         return;
     }
     const size_t len = (static_cast<size_t>(n) < sizeof(buf)) ? static_cast<size_t>(n) : (sizeof(buf) - 1);
-    std::fputs(buf, stdout);
+    if (uwb_port_usb_host_connected()) {  // ホスト不在時は USB へ書かない (uwb_port.h 参照) / skip USB writes with no host
+        std::fputs(buf, stdout);
+    }
     uwb::net::publishLine(buf, len);
 }
 
@@ -493,7 +495,9 @@ static void printRangeEventLine(const uwb::RangeEvent& ev, int64_t bootUs, const
         return;
     }
     const size_t len = (static_cast<size_t>(n) < sizeof(buf)) ? static_cast<size_t>(n) : (sizeof(buf) - 1);
-    std::fputs(buf, stdout);
+    if (uwb_port_usb_host_connected()) {  // ホスト不在時は USB へ書かない (uwb_port.h 参照) / skip USB writes with no host
+        std::fputs(buf, stdout);
+    }
     uwb::net::publishLine(buf, len);
 }
 #endif
@@ -697,6 +701,8 @@ extern "C" void app_main(void)
     consoleInfo.source      = addrSource;
     if (anchorapp::sharedInit(g_shortAddr, consoleInfo)) {
         const esp_err_t consoleErr = anchorapp::consoleStart();
+        // ホスト不在時のログ抑止 (uwb_port.h 参照) / arm the no-host log guard
+        uwb_port_console_guard_init();
         if (consoleErr == ESP_OK) {
             ESP_LOGI(TAG, "シリアルコンソールを起動しました（help でコマンド一覧）");
         } else {
