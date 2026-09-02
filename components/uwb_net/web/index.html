@@ -81,6 +81,12 @@ tr.disabled{opacity:.45}
 .viewTabs button.sel{background:var(--ink);color:var(--surface);border-color:var(--ink)}
 .planHead{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:2px}
 .planHead h2{margin-bottom:0}
+.planHeadR{display:flex;align-items:center;gap:8px}
+.planHeadR .viewTabs{margin-bottom:0}
+#btnPlanFs{padding:3px 10px;font-size:11px}
+/* 測位図の拡大表示（Fullscreen API のフォールバック兼用）/ plan-view enlarge (also the Fullscreen API fallback) */
+.fs{position:fixed;inset:0;z-index:1000;background:var(--page);padding:14px;border-radius:0}
+.fs #planBox{height:calc(100vh - 60px)}
 
 #conOut{height:180px;overflow-y:auto;background:var(--page);border:1px solid var(--border);border-radius:6px;
   padding:6px 8px;margin:0 0 6px;white-space:pre-wrap;word-break:break-word;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px}
@@ -186,12 +192,15 @@ details#rawDet summary{cursor:pointer;font-size:13px;color:var(--ink2);margin-bo
     <div class="chart-box"><canvas id="cvPos"></canvas></div>
   </section>
 
-  <section class="panel">
+  <section class="panel" id="planPanel">
     <div class="planHead">
-      <h2>位置図</h2>
-      <div class="viewTabs" id="viewTabs">
-        <button data-view="2d" id="btnView2D">2D</button>
-        <button data-view="3d" id="btnView3D" class="sel">3D</button>
+      <h2>測位図</h2>
+      <div class="planHeadR">
+        <div class="viewTabs" id="viewTabs">
+          <button data-view="2d" id="btnView2D">2D</button>
+          <button data-view="3d" id="btnView3D" class="sel">3D</button>
+        </div>
+        <button id="btnPlanFs">拡大</button>
       </div>
     </div>
     <div id="planBox"><canvas id="cvPlan"></canvas></div>
@@ -274,7 +283,7 @@ function noteDrawError(e){
   if(now-lastDrawErrorLoggedAt>5000){ lastDrawErrorLoggedAt=now; console.error('[draw]',e); }
 }
 
-// ---- 3D 位置図 / 3D plan view ----
+// ---- 3D 測位図 / 3D plan view ----
 let view3D = true;
 let cam3 = {yaw:-0.7, pitch:0.5, zoom:1}; // yaw/pitch [rad], zoom は等角投影の倍率
 function resetCam3(){ cam3.yaw=-0.7; cam3.pitch=0.5; cam3.zoom=1; }
@@ -824,7 +833,7 @@ function drawPos(){
   if(lastX){ ctx.fillStyle=COL.s1; ctx.fillText('x '+lastX[2].toFixed(2), lastX[0]+3, lastX[1]); }
   if(lastY){ ctx.fillStyle=COL.s2; ctx.fillText('y '+lastY[2].toFixed(2), lastY[0]+3, lastY[1]); }
 }
-// ---- 位置図のビュー枠ヒステリシス / plan-view bounds hysteresis (2D と 3D で共有) ----
+// ---- 測位図のビュー枠ヒステリシス / plan-view bounds hysteresis (2D と 3D で共有) ----
 // 内容(アンカー+距離円+軌跡)の範囲をそのまま毎フレーム反映すると、距離の揺らぎで枠が
 // 細かく震える(flicker)。拡大は即座、縮小は「内容が枠の70%未満」の状態が3秒続いてから、
 // 0.5mグリッドに丸めた目標へ指数的に滑らかに追従させることで枠を安定させる。
@@ -836,8 +845,8 @@ const PLAN_SHRINK_RATIO = 0.7;    // 内容スパンが枠スパンのこの比�
 const PLAN_SHRINK_HOLD_MS = 3000; // 縮小候補がこの時間[ms]続いたら実際に縮小へ向かう
 const PLAN_GRID_M = 0.5;          // 目標枠を外側へ丸める格子[m]（微小変化で枠が動かないように）
 const PLAN_EASE = 0.2;            // 描画tick(約100ms)ごとに目標へ寄せる割合（指数追従の係数）
-const planViewState2D = {view:null, shrinkSince:null}; // 2D位置図の現在枠 / 2D plan view state
-const planViewState3D = {view:null, shrinkSince:null}; // 3D位置図の現在枠 / 3D plan view state
+const planViewState2D = {view:null, shrinkSince:null}; // 2D測位図の現在枠 / 2D plan view state
+const planViewState3D = {view:null, shrinkSince:null}; // 3D測位図の現在枠 / 3D plan view state
 function updateViewBounds(state, box, now, axes){
   axes = axes || ['X','Y'];
   const tgt = {};
@@ -936,7 +945,7 @@ function drawPlan(){
   }
 }
 
-// ---- 描画: 3D 位置図（自前の直交投影） / 3D plan view (hand-rolled orthographic projection) ----
+// ---- 描画: 3D 測位図（自前の直交投影） / 3D plan view (hand-rolled orthographic projection) ----
 // z が up の世界座標を、ヨー(yaw)→ピッチ(pitch)の順に回転してから平行投影する。
 // world z-up: rotate by yaw then pitch, then drop the depth axis (parallel/orthographic projection).
 function proj3(pt, center, yaw, pitch){
@@ -954,7 +963,7 @@ function getBounds3D(){
   const box = { minX:Math.min(...xs)-pad, maxX:Math.max(...xs)+pad,
     minY:Math.min(...ys)-pad, maxY:Math.max(...ys)+pad,
     minZ:Math.min(0,Math.min(...zs))-0.2, maxZ:Math.max(0,Math.max(...zs))+pad };
-  // 2D位置図と同じヒステリシス(拡大即時/縮小3秒保持/0.5mグリッド)をXYZに適用して安定させる
+  // 2D測位図と同じヒステリシス(拡大即時/縮小3秒保持/0.5mグリッド)をXYZに適用して安定させる
   // apply the same hysteresis as the 2D view (immediate expand / 3s shrink hold / 0.5m grid) to XYZ
   return updateViewBounds(planViewState3D, box, performance.now(), ['X','Y','Z']);
 }
@@ -1112,7 +1121,7 @@ document.getElementById('statWinTabs').addEventListener('click', e=>{
   try{ renderRangingStats(); }catch(e){ noteDrawError(e); }
 });
 
-// ---- 3D 位置図の操作（ドラッグ回転・ホイールズーム・ダブルクリックでリセット） ----
+// ---- 3D 測位図の操作（ドラッグ回転・ホイールズーム・ダブルクリックでリセット） ----
 // 3D view controls: drag to rotate, wheel to zoom, dbl-click to reset. Pointer Events で
 // マウス・タッチを一本化（1本指=回転、2本指=ピンチズーム）。
 {
@@ -1156,6 +1165,30 @@ document.getElementById('viewTabs').addEventListener('click', e=>{
   document.getElementById('btnView3D').classList.toggle('sel', view3D);
   document.getElementById('cvPlan').classList.toggle('rot', view3D);
 });
+
+// ---- 測位図の拡大表示切替（Fullscreen API + .fs クラスのフォールバック併用） ----
+// plan-view fullscreen toggle (Fullscreen API, with the .fs class applied unconditionally as
+// a layout fallback for contexts where the API is unavailable or the request is rejected)
+{
+  const planPanel = document.getElementById('planPanel');
+  const btnPlanFs = document.getElementById('btnPlanFs');
+  const redrawPlan = ()=>{ try{ (view3D?drawPlan3D:drawPlan)(); }catch(e){ noteDrawError(e); } };
+  btnPlanFs.addEventListener('click', ()=>{
+    const goFs = !planPanel.classList.contains('fs');
+    planPanel.classList.toggle('fs', goFs);
+    btnPlanFs.textContent = goFs ? '戻る' : '拡大';
+    if(goFs){ if(planPanel.requestFullscreen) planPanel.requestFullscreen().catch(()=>{}); }
+    else if(document.fullscreenElement===planPanel){ document.exitFullscreen().catch(()=>{}); }
+    requestAnimationFrame(redrawPlan);
+  });
+  document.addEventListener('fullscreenchange', ()=>{
+    if(!document.fullscreenElement && planPanel.classList.contains('fs')){
+      planPanel.classList.remove('fs');
+      btnPlanFs.textContent = '拡大';
+      requestAnimationFrame(redrawPlan);
+    }
+  });
+}
 
 // ---- デモモード（?demo=1）/ demo mode: 実機なしで表示確認するための擬似データ生成 ----
 // WebSocket の代わりに handleLine() へ直接 JSON 行を流し込む（受信〜描画の経路をそのまま使う）。
