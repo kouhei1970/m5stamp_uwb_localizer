@@ -339,8 +339,21 @@ esp_err_t handleWsCommand(httpd_req_t* req) {
     // まず長さだけ取得する（max_len=0）。First call with max_len=0 just returns the frame length.
     esp_err_t ret = httpd_ws_recv_frame(req, &pkt, 0);
     if (ret != ESP_OK) {
-        ESP_LOGD(kTag, "ws recv (len probe) failed: %d", ret);
-        return ESP_OK;  // 切断ではなくハンドラの失敗にはしない。Don't tear down the socket over this.
+        // 読めないソケットは閉じる。ESP_FAIL を返すと httpd がこのセッションを削除する
+        // （httpd_process_session -> httpd_sess_delete）。
+        // 以前は「切断扱いにしない」ために ESP_OK を返していたが、それだと相手が
+        // RST で消えた接続（ブラウザの再読み込み後、配信送信が失敗した直後の状態）が
+        // 永遠に残る。ESP-IDF v5.5.2 の httpd_ws_get_frame_type() は recv() の負の
+        // 戻り値を size_t と比較して切断を見逃すため、ハンドラ側で閉じるしかない
+        // （2026-09-02 実機で確認: 切れた接続に対し recv エラー 104/128 を毎周期
+        // 繰り返す busy loop になり、配信が途切れ・生きているブラウザが LRU で追い出された）。
+        // Close unreadable sockets: returning ESP_FAIL makes httpd delete the session.
+        // Returning ESP_OK here left RST'd peers alive forever (IDF's
+        // httpd_ws_get_frame_type() compares the negative recv() result against a
+        // size_t and never flags the close), spinning the httpd task and evicting
+        // live browsers through the LRU purge.
+        ESP_LOGW(kTag, "ws recv (len probe) failed: %d, closing fd %d", ret, httpd_req_to_sockfd(req));
+        return ESP_FAIL;
     }
     if (pkt.type != HTTPD_WS_TYPE_TEXT || pkt.len == 0 || pkt.len > kWsRecvMaxLen) {
         // 制御フレームや大きすぎる/空のフレームは無視する。Ignore control frames and oversized/empty frames.
@@ -351,8 +364,10 @@ esp_err_t handleWsCommand(httpd_req_t* req) {
     pkt.payload = reinterpret_cast<uint8_t*>(raw);
     ret = httpd_ws_recv_frame(req, &pkt, pkt.len);
     if (ret != ESP_OK) {
-        ESP_LOGD(kTag, "ws recv (payload) failed: %d", ret);
-        return ESP_OK;
+        // 同上。ヘッダは読めたのに本体が読めないのも壊れた接続なので閉じる。
+        // Same as above: a frame whose payload cannot be read means a broken socket.
+        ESP_LOGW(kTag, "ws recv (payload) failed: %d, closing fd %d", ret, httpd_req_to_sockfd(req));
+        return ESP_FAIL;
     }
     raw[pkt.len] = '\0';
 
@@ -421,9 +436,18 @@ void broadcastWork(void* arg) {
                     continue;
                 }
                 if (httpd_ws_send_frame_async(gServer, fd, &frame) != ESP_OK) {
-                    // 切断済みなど。次の周期で httpd_get_client_list から消える想定なので無視する。
-                    // Client likely already gone; it will drop out of the next client-list call.
+                    // 送れない相手は閉じる。放置すると httpd の唯一のタスクが毎周期
+                    // send_wait_timeout（2 秒）だけ待たされ、他の全クライアントへの配信が止まる。
+                    // Close peers we cannot send to; otherwise the single httpd task
+                    // blocks for send_wait_timeout on every tick and starves everyone else.
                     ++gBroadcastSendFailCount;
+                    httpd_sess_trigger_close(gServer, fd);
+                } else {
+                    // 受信専用のブラウザは httpd の LRU では「未使用」のままになり、
+                    // 枠が埋まると真っ先に追い出される。配信できた接続を使用中として記録する。
+                    // A receive-only dashboard never touches the LRU counter and becomes the
+                    // purge victim; count a successful push as activity.
+                    httpd_sess_update_lru_counter(gServer, fd);
                 }
             }
         }
@@ -491,6 +515,13 @@ esp_err_t httpStart() {
     cfg.lru_purge_enable = true;
     cfg.send_wait_timeout = 2;
     cfg.recv_wait_timeout = 5;
+    // 通信が消えた相手（スリープした端末・圏外のスマホ）を TCP キープアライブで検出する。
+    // 5 秒無通信 → 5 秒間隔で 3 回 → 約 20 秒で切断。無効だと相手が消えても永遠に枠を占める。
+    // TCP keep-alive: detect peers that vanished without FIN in ~20 s instead of never.
+    cfg.keep_alive_enable   = true;
+    cfg.keep_alive_idle     = 5;
+    cfg.keep_alive_interval = 5;
+    cfg.keep_alive_count    = 3;
     cfg.server_port = config().httpPort;
 
     esp_err_t ret = httpd_start(&gServer, &cfg);
