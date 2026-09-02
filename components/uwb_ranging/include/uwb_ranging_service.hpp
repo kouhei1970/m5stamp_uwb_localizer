@@ -340,12 +340,24 @@ public:
      * resetStats() 同様、内部で tableMutex() を取るので、呼び出し側は
      * tableMutex() を離してから呼ぶこと。
      *
+     * table.ekfTuning()（uwb::EkfTuning、コンソールの `ekf` コマンドが
+     * table.setEkfTuning() で書き込む）も併せて読み、Q（sigmaA）・運動モデル・
+     * ゲートをそのチューニング値で組み直す。R（観測雑音）は
+     * AnchorTable::setEkfTuning() 側が既にアンカーごとの sigma0/sigma_per_m へ
+     * 反映済みなので、ここでは触らない（uwb_ranging_types.hpp EkfTuning 参照）。
+     *
      * Not in ARCHITECTURE_V2.md's member list. Needed so a caller that
      * just changed the anchor table's structure can ask the service to
      * rebuild its EKF's internal state, mirroring what main.cpp used to do
      * inline before the EKF moved inside this service. No-op when
      * ServiceConfig::enableEkf is false. Takes tableMutex() internally, so
      * release it first if you're already holding it.
+     *
+     * Also reads table.ekfTuning() (uwb::EkfTuning, written by the `ekf`
+     * console command via table.setEkfTuning()) and rebuilds Q (sigmaA),
+     * the motion model, and the gate from it. R (measurement noise) is left
+     * alone here since AnchorTable::setEkfTuning() already wrote the
+     * per-anchor sigma0/sigma_per_m.
      */
     void reinitEkf();
 

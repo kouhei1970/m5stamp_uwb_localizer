@@ -50,8 +50,12 @@ bool AnchorTable::update(size_t index, const AnchorEntry& entry)
     dst.p[2]             = static_cast<uwb_real>(entry.pos[2]);
     dst.enabled          = entry.enabled ? 1 : 0;
     dst.antenna_delay_m  = static_cast<uwb_real>(entry.antenna_delay_m);
-    dst.sigma0           = 0; // 0 => uwb_loc 側の既定 (0.1m) にフォールバック
-    dst.sigma_per_m       = 0;
+    // R（観測雑音）は setEkfTuning() で最後に渡されたチューニングを使う
+    // （既定は EkfTuning{} = sigma0 0.10m, per_m 0）。0にしないのは、
+    // uwb_loc 側の暗黙の0.1mフォールバックへ黙って頼らせないため
+    // （uwb_model.c uwb_sigma_of() 参照）。
+    dst.sigma0           = static_cast<uwb_real>(ekfTuning_.sigmaR0);
+    dst.sigma_per_m       = static_cast<uwb_real>(ekfTuning_.sigmaRPerM);
     // 座標 / enabled が変わったので、アンカー配置だけで決まる派生値
     // (同一平面判定のキャッシュ) を作り直す。呼ばなくても uwb_loc 側が
     // キャッシュの不一致を検出して毎回計算し直すので結果は変わらないが、
@@ -148,8 +152,9 @@ void AnchorTable::rebuildStorage()
         dst.p[2]             = static_cast<uwb_real>(src.pos[2]);
         dst.enabled          = src.enabled ? 1 : 0;
         dst.antenna_delay_m  = static_cast<uwb_real>(src.antenna_delay_m);
-        dst.sigma0           = 0; // 0 => uwb_loc 側の既定 (0.1m) にフォールバック
-        dst.sigma_per_m       = 0;
+        // update() と同じ理由で ekfTuning_ から埋める（上のコメント参照）。
+        dst.sigma0           = static_cast<uwb_real>(ekfTuning_.sigmaR0);
+        dst.sigma_per_m       = static_cast<uwb_real>(ekfTuning_.sigmaRPerM);
     }
     // 使わない残りのスロットもゼロクリアしておく（デバッグ時に古い値が
     // 残って混乱しないように。config_.n_anchors=count_ の範囲外なので
@@ -173,6 +178,17 @@ void AnchorTable::rebuildStorage()
         uwb_config_refresh(&config_);
     }
     configInitialized_ = true;
+}
+
+void AnchorTable::setEkfTuning(const EkfTuning& tuning)
+{
+    ekfTuning_ = tuning;
+    // 座標・enabled 等は変わらないので rebuildStorage() は呼ばない。
+    // R（観測雑音）の記憶域だけを、登録済み全アンカーぶん直接書き換える。
+    for (size_t i = 0; i < count_; ++i) {
+        storage_[i].sigma0     = static_cast<uwb_real>(ekfTuning_.sigmaR0);
+        storage_[i].sigma_per_m = static_cast<uwb_real>(ekfTuning_.sigmaRPerM);
+    }
 }
 
 } // namespace uwb

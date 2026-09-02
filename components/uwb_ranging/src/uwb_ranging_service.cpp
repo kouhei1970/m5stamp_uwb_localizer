@@ -11,6 +11,15 @@ namespace uwb {
 
 namespace {
 const char* kLogTag = "uwb_ranging_svc";
+
+/** EkfTuning::model (0=CV/1=CA) を uwb_motion へ変換する。
+ *  model は uwb_motion の値そのままに揃えてあるが（uwb_ranging_types.hpp
+ *  EkfTuning::model のコメント参照）、未知の値（NVS破損等）は安全側の
+ *  CV へ倒す。 */
+uwb_motion motionFromTuning(const EkfTuning& tuning)
+{
+    return (tuning.model == 1) ? UWB_MOTION_CA : UWB_MOTION_CV;
+}
 } // namespace
 
 RangingService::~RangingService()
@@ -186,8 +195,9 @@ void RangingService::reinitEkf()
     // resetStats() 同様、コンソールから呼ばれ得るので lockTable() の
     // 飢餓対策プロトコルを使う。
     lockTable();
-    if (pipeline_ != nullptr) {
-        pipeline_->initEkf();
+    if (pipeline_ != nullptr && table_ != nullptr) {
+        const EkfTuning& tuning = table_->ekfTuning();
+        pipeline_->initEkf(motionFromTuning(tuning), tuning.sigmaA, tuning.gate);
     }
     unlockTable();
 }
@@ -252,7 +262,10 @@ void RangingService::taskMain()
         // 起動直後の1回だけ組む。以後はアンカー表の構成が変わるたびに
         // reinitEkf() を呼び出し側（コンソール等）から呼んでもらう
         // （旧main.cppが `pipeline.initEkf()` を再度呼んでいたのと同じ考え方）。
-        pipeline_->initEkf();
+        // 呼び出し側（main.cpp）が service.start() より前に table.setEkfTuning()
+        // 済みであること — ここは table_->ekfTuning() をそのまま使う。
+        const EkfTuning& tuning = table_->ekfTuning();
+        pipeline_->initEkf(motionFromTuning(tuning), tuning.sigmaA, tuning.gate);
     }
 
     uint32_t seq              = 0;

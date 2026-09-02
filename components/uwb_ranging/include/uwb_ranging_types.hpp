@@ -90,6 +90,43 @@ struct AnchorStats {
     }
 };
 
+/**
+ * @brief タグの EKF（拡張カルマンフィルタ、Lv3）を実行時に調整するパラメータ。
+ *
+ * コンソールの `ekf` コマンド（firmware/tag/main/tag_console.cpp）で
+ * 実行時に書き換え、AnchorTable が保持する（NVS保存・reset-configの
+ * 対象をアンカー表・測位モードと同じ場所にまとめるため）。ここから
+ * 2箇所へ反映する:
+ *   - Q（プロセス雑音）とゲート: PositioningPipeline::initEkf() の
+ *     sigmaA/gate 引数へそのまま渡す
+ *   - R（観測雑音）: AnchorTable がアンカーごとの uwb_anchor.sigma0/
+ *     sigma_per_m を書くときに sigmaR0/sigmaRPerM を使う
+ *     （uwb_model.c の uwb_sigma_of() 参照）
+ */
+struct EkfTuning {
+    /** プロセス雑音: 最上位微分にかかる連続時間の白色雑音強度。
+     *  CVモデル(model==0)なら加速度 [m/s^2]、CAモデル(model==1)なら
+     *  加加速度 [m/s^3] の意味になる（uwb_ekf.c transition() のコメント参照）。 */
+    float sigmaA = 0.5f;
+
+    /** 観測雑音: 距離0mでの1sigma [m]。0にはしない（0だとuwb_loc側の
+     *  暗黙の0.1mフォールバックに頼ることになり、コンソール表示と実際の
+     *  Rが食い違って見えるため。下限は setEkfTuning() 呼び出し側で検査）。 */
+    float sigmaR0 = 0.10f;
+
+    /** 観測雑音: 距離1mあたりに増える分 [m/m]。R = (sigmaR0 + sigmaRPerM*d)^2。 */
+    float sigmaRPerM = 0.0f;
+
+    /** イノベーションゲート [sigma単位]。|残差| がこれを超える測距は
+     *  外れ値として棄却する（uwb_ekf.c の gate と同じ意味）。 */
+    float gate = 3.0f;
+
+    /** 運動モデル。0=CV（等速、位置+速度）、1=CA（等加速度、+加速度）。
+     *  uwb_motion（UWB_MOTION_CV=0/UWB_MOTION_CA=1、uwb_loc.h）と
+     *  値をそのまま合わせてある。 */
+    uint8_t model = 0;
+};
+
 /** PositioningPipeline の動作設定。 */
 struct PositioningConfig {
     /** solve() が level 引数省略時に使う既定レベル。 */

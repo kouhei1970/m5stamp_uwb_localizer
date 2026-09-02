@@ -972,6 +972,23 @@ extern "C" void app_main(void)
                                                                : "3d",
              static_cast<double>(zFixedM), uwb::configSourceName(modeSource));
 
+    /* --- NVS から EKF（拡張カルマンフィルタ）チューニングを読む ---
+     * 無ければ既定値（uwb::EkfTuning{} = sigma_a 0.5, sigma0 0.10m,
+     * per_m 0, gate 3.0, model CV）。アンカー登録テーブルと同じく、
+     * table.setEkfTuning() を applyAnchorTable() より前に呼ぶ
+     * （rebuildStorage() がこの時点の値でアンカーごとの sigma0/sigma_per_m
+     * を埋めるため。uwb_ranging_anchor_table.cpp の rebuildStorage() 参照）。
+     * enableEkf==false の構成でも読んでおいて損はない
+     * （後で `ekf` コマンドや CONFIG_UWB_TAG_ENABLE_EKF の切り替えに
+     * 備えて設定だけは保持しておく）。 */
+    const uwb::EkfTuning defaultEkfTuning; // = EkfTuning{} 既定値
+    uwb::EkfTuning ekfTuning;
+    const uwb::ConfigSource ekfSource = uwb::ConfigStore::loadEkfTuning(defaultEkfTuning, &ekfTuning);
+    ESP_LOGI(TAG, "ekf tuning: model=%s sigma_a=%.3f sigma0=%.3fm per_m=%.3f gate=%.1f (%s)",
+             (ekfTuning.model == 1) ? "ca" : "cv", static_cast<double>(ekfTuning.sigmaA),
+             static_cast<double>(ekfTuning.sigmaR0), static_cast<double>(ekfTuning.sigmaRPerM),
+             static_cast<double>(ekfTuning.gate), uwb::configSourceName(ekfSource));
+
     // static にする理由: RangingService::start() はこのオブジェクトへの
     // 生ポインタを保持し、専用タスクが動き続ける間ずっと参照する。
     // app_main はセットアップ後に return する（v1と違い無限ループでは
@@ -1071,6 +1088,9 @@ extern "C" void app_main(void)
     static uwb::AnchorTable table; // .bss へ置いて app_main のスタックを節約する
     table.setModeOverride(modeOverride);
     table.setZFixedM(zFixedM);
+    // applyAnchorTable() より先に反映する（table.set() 内の rebuildStorage() が
+    // この時点の ekfTuning() を使って各アンカーの sigma0/sigma_per_m を埋めるため）。
+    table.setEkfTuning(ekfTuning);
     if (!applyAnchorTable(table, g_workEntries, entryCount)) {
         return;
     }

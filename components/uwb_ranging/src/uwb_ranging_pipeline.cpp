@@ -116,9 +116,12 @@ PositionResult PositioningPipeline::solve(const RangingSample* samples, size_t n
     return result;
 }
 
-void PositioningPipeline::initEkf(uwb_motion motion, float sigmaA)
+void PositioningPipeline::initEkf(uwb_motion motion, float sigmaA, float gate)
 {
     uwb_ekf_init(&ekf_, &table_.config(), motion, static_cast<uwb_real>(sigmaA));
+    // uwb_ekf_init() は gate を既定3で埋めるので、実行時チューニング値で
+    // 上書きする（uwb::EkfTuning::gate 参照）。
+    ekf_.gate        = static_cast<uwb_real>(gate);
     ekfInitialized_ = true;
 }
 

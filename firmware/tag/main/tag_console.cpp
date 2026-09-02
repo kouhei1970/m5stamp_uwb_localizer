@@ -18,6 +18,11 @@
  *   survey show                               記録済みの入力一覧 + 計算可能なら座標プレビュー
  *   survey apply                              座標を計算してアンカー登録テーブルへ書き込む
  *   survey clear                              survey の入力を全消去
+ *   ekf                                        EKF(拡張カルマンフィルタ)のQ/R/ゲートを表示
+ *   ekf q <sigma_a>                            プロセス雑音Qの強さ [m/s^2]（範囲 0.01〜50）
+ *   ekf r <sigma0> [per_m]                     観測雑音R=(sigma0+per_m*距離)^2 [m]
+ *   ekf gate <k>                               イノベーションゲート [sigma]（範囲 0.5〜20）
+ *   ekf model cv|ca                            運動モデル（cv=等速、ca=等加速度）
  *   output <on|off>                           JSON Lines 出力の一時停止
  *   save                                      NVS へ保存（アンカー登録テーブル + 測位モード設定）
  *   reset-config                              NVS を消して kAnchors[] の既定値・モードAutoへ戻す
@@ -666,6 +671,209 @@ int cmdHeight(int argc, char** argv)
     return 0;
 }
 
+/* ------------------------------------------------------------ ekf コマンド */
+
+/* EKF(拡張カルマンフィルタ、Lv3)のQ(プロセス雑音)/R(観測雑音)/イノベーション
+ * ゲートを実行時に調整するコマンド。値は uwb::AnchorTable が保持する
+ * uwb::EkfTuning（components/uwb_ranging/include/uwb_ranging_types.hpp）に
+ * 書き込み、afterConfigEdit() 経由で g_service->reinitEkf() を呼んで
+ * PositioningPipeline::initEkf() をQ/ゲート込みで組み直す（R はアンカー
+ * ごとの uwb_anchor.sigma0/sigma_per_m へ AnchorTable::setEkfTuning() が
+ * 直接反映する）。cmdHeight() と同じ lockTable()/unlockTable() ->
+ * afterConfigEdit() の作法。 */
+
+void printUsageEkf()
+{
+    std::printf("使い方:\n");
+    std::printf("  ekf                      現在のQ/R/ゲートを表示\n");
+    std::printf("  ekf q <sigma_a>          プロセス雑音Qの強さ [m/s^2]（範囲 0.01〜50、例 ekf q 0.8）\n");
+    std::printf("  ekf r <sigma0> [per_m]   観測雑音 R=(sigma0+per_m*距離)^2 [m]"
+                "（sigma0 範囲 0.001〜10、per_m 範囲 0〜1、例 ekf r 0.05 0.01）\n");
+    std::printf("  ekf gate <k>             イノベーションゲート [sigma]（範囲 0.5〜20、例 ekf gate 4）\n");
+    std::printf("  ekf model cv|ca          運動モデル（cv=等速、ca=等加速度、既定cv）\n");
+}
+
+/** CVモデル(状態=位置+速度)のQ対角成分[位置 m^2, 速度 (m/s)^2]を dt・sigma_a
+ *  から計算する。components/uwb_loc/src/uwb_ekf.c transition() の k==2 分岐
+ *  （q1[0]=dt^3/3*sigma_a^2, q1[3]=dt*sigma_a^2）と同じ式。transition() は
+ *  static でここから呼べないため、表示専用にこの2項だけ複製してある
+ *  （実際にEKFが使う値は uwb_ekf_predict() 経由の transition() が本体）。 */
+void ekfQDiagCv(float sigmaA, float dt, double* qPos, double* qVel)
+{
+    const double s2 = static_cast<double>(sigmaA) * static_cast<double>(sigmaA);
+    const double d1 = static_cast<double>(dt);
+    const double d3 = d1 * d1 * d1;
+    *qPos = d3 / 3.0 * s2;
+    *qVel = d1 * s2;
+}
+
+/** 同上、CAモデル(状態=位置+速度+加速度)版。transition() の k==3 分岐
+ *  （q1[0]=dt^5/20*sigma_a^2, q1[4]=dt^3/3*sigma_a^2, q1[8]=dt*sigma_a^2）。 */
+void ekfQDiagCa(float sigmaA, float dt, double* qPos, double* qVel, double* qAcc)
+{
+    const double s2 = static_cast<double>(sigmaA) * static_cast<double>(sigmaA);
+    const double d1 = static_cast<double>(dt);
+    const double d3 = d1 * d1 * d1;
+    const double d5 = d3 * d1 * d1;
+    *qPos = d5 * 0.05 * s2;
+    *qVel = d3 / 3.0 * s2;
+    *qAcc = d1 * s2;
+}
+
+/** ekf コマンドの表示本体（サブコマンド無し、および各セッター実行後の
+ *  確認表示の両方で使う）。 */
+void printEkfStatus(const uwb::EkfTuning& t, bool saved)
+{
+    constexpr float kDisplayDtS = 0.025f; // Q表示用の代表周期 25ms（典型的な1周期）
+    constexpr float kDisplayDM  = 2.0f;   // R表示用の代表距離 2m
+    const bool isCa               = (t.model == 1);
+
+    std::printf("model    : %s (%s)\n", isCa ? "ca" : "cv",
+                isCa ? "等加速度モデル: 状態=位置+速度+加速度" : "等速モデル: 状態=位置+速度");
+
+    if (isCa) {
+        double qPos = 0.0, qVel = 0.0, qAcc = 0.0;
+        ekfQDiagCa(t.sigmaA, kDisplayDtS, &qPos, &qVel, &qAcc);
+        std::printf("q sigma_a: %.3f m/s^3  (加加速度の連続白色雑音。Q(dt=%.0fms) 位置 %.1e m^2, "
+                    "速度 %.1e (m/s)^2, 加速度 %.1e (m/s^2)^2)\n",
+                    static_cast<double>(t.sigmaA), static_cast<double>(kDisplayDtS) * 1000.0, qPos, qVel, qAcc);
+    } else {
+        double qPos = 0.0, qVel = 0.0;
+        ekfQDiagCv(t.sigmaA, kDisplayDtS, &qPos, &qVel);
+        std::printf("q sigma_a: %.3f m/s^2  (加速度の連続白色雑音。Q(dt=%.0fms) 位置 %.1e m^2, "
+                    "速度 %.1e (m/s)^2)\n",
+                    static_cast<double>(t.sigmaA), static_cast<double>(kDisplayDtS) * 1000.0, qPos, qVel);
+    }
+
+    const double rAtD = static_cast<double>(t.sigmaR0) +
+                        static_cast<double>(t.sigmaRPerM) * static_cast<double>(kDisplayDM);
+    std::printf("r sigma0 : %.3f m  per_m: %.3f  (R = (sigma0 + per_m*d)^2, d=%.0fm で %.1e m^2)\n",
+                static_cast<double>(t.sigmaR0), static_cast<double>(t.sigmaRPerM),
+                static_cast<double>(kDisplayDM), rAtD * rAtD);
+    std::printf("gate     : %.1f sigma (イノベーション棄却しきい値)\n", static_cast<double>(t.gate));
+    std::printf("NVS      : %s\n", saved ? "保存済み" : "未保存（save が必要）");
+}
+
+int cmdEkf(int argc, char** argv)
+{
+    if (g_table == nullptr || g_service == nullptr) {
+        std::printf("内部エラー: コンソールが初期化されていません\n");
+        return 1;
+    }
+
+    if (argc == 1) {
+        g_service->lockTable();
+        const uwb::EkfTuning t = g_table->ekfTuning();
+        g_service->unlockTable();
+        printEkfStatus(t, readSaved());
+        return 0;
+    }
+
+    const char* sub = argv[1];
+
+    if (std::strcmp(sub, "q") == 0) {
+        if (argc != 3) {
+            printUsageEkf();
+            return 1;
+        }
+        float v = 0.0f;
+        if (!parseReal(argv[2], 50.0f, &v) || v < 0.01f) {
+            std::printf("値が不正です（範囲 0.01〜50 m/s^2）: %s\n", argv[2]);
+            return 1;
+        }
+        g_service->lockTable();
+        uwb::EkfTuning t = g_table->ekfTuning();
+        t.sigmaA           = v;
+        g_table->setEkfTuning(t);
+        g_service->unlockTable();
+        afterConfigEdit();
+        printEkfStatus(t, readSaved());
+        std::printf("次の測位周期から反映されます。残すには save を実行してください\n");
+        return 0;
+    }
+
+    if (std::strcmp(sub, "r") == 0) {
+        if (argc != 3 && argc != 4) {
+            printUsageEkf();
+            return 1;
+        }
+        float sigma0 = 0.0f;
+        if (!parseReal(argv[2], 10.0f, &sigma0) || sigma0 < 0.001f) {
+            std::printf("sigma0 が不正です（範囲 0.001〜10 m）: %s\n", argv[2]);
+            return 1;
+        }
+        float perM       = 0.0f;
+        const bool havePerM = (argc == 4);
+        if (havePerM && (!parseReal(argv[3], 1.0f, &perM) || perM < 0.0f)) {
+            std::printf("per_m が不正です（範囲 0〜1）: %s\n", argv[3]);
+            return 1;
+        }
+
+        g_service->lockTable();
+        uwb::EkfTuning t = g_table->ekfTuning();
+        t.sigmaR0          = sigma0;
+        if (havePerM) {
+            t.sigmaRPerM = perM;
+        }
+        g_table->setEkfTuning(t);
+        g_service->unlockTable();
+        afterConfigEdit();
+        printEkfStatus(t, readSaved());
+        std::printf("次の測位周期から反映されます。残すには save を実行してください\n");
+        return 0;
+    }
+
+    if (std::strcmp(sub, "gate") == 0) {
+        if (argc != 3) {
+            printUsageEkf();
+            return 1;
+        }
+        float v = 0.0f;
+        if (!parseReal(argv[2], 20.0f, &v) || v < 0.5f) {
+            std::printf("値が不正です（範囲 0.5〜20 sigma）: %s\n", argv[2]);
+            return 1;
+        }
+        g_service->lockTable();
+        uwb::EkfTuning t = g_table->ekfTuning();
+        t.gate             = v;
+        g_table->setEkfTuning(t);
+        g_service->unlockTable();
+        afterConfigEdit();
+        printEkfStatus(t, readSaved());
+        std::printf("次の測位周期から反映されます。残すには save を実行してください\n");
+        return 0;
+    }
+
+    if (std::strcmp(sub, "model") == 0) {
+        if (argc != 3) {
+            printUsageEkf();
+            return 1;
+        }
+        uint8_t model = 0;
+        if (std::strcmp(argv[2], "cv") == 0) {
+            model = 0;
+        } else if (std::strcmp(argv[2], "ca") == 0) {
+            model = 1;
+        } else {
+            std::printf("運動モデルが不正です（cv または ca）: %s\n", argv[2]);
+            return 1;
+        }
+        g_service->lockTable();
+        uwb::EkfTuning t = g_table->ekfTuning();
+        t.model             = model;
+        g_table->setEkfTuning(t);
+        g_service->unlockTable();
+        afterConfigEdit();
+        printEkfStatus(t, readSaved());
+        std::printf("次の測位周期から反映されます（起動直後の1回だけ立ち上げ直します）。"
+                    "残すには save を実行してください\n");
+        return 0;
+    }
+
+    printUsageEkf();
+    return 1;
+}
+
 /* ------------------------------------------------------------ survey コマンド */
 
 /* メジャー実測値からの閉形式アンカー座標計算（components/uwb_survey/include/
@@ -1040,13 +1248,15 @@ int cmdSave(int argc, char** argv)
     size_t count = 0;
     uwb::ModeOverride override;
     float zFixedM = 0.0f;
+    uwb::EkfTuning ekfTuning;
     g_service->lockTable();
     count      = g_table->size();
     for (size_t i = 0; i < count; ++i) {
         snapshot[i] = g_table->entry(i);
     }
-    override = g_table->modeOverride();
-    zFixedM   = g_table->zFixedM();
+    override    = g_table->modeOverride();
+    zFixedM      = g_table->zFixedM();
+    ekfTuning    = g_table->ekfTuning();
     g_service->unlockTable();
 
     if (count == 0) {
@@ -1070,9 +1280,24 @@ int cmdSave(int argc, char** argv)
         return 1;
     }
 
+    // EKF(拡張カルマンフィルタ)チューニングも同じ save コマンドで永続化する。
+    // 上2つは既に保存できているので、こちらが失敗しても markSaved() は呼ばず
+    // 「一部だけ保存できた」状態を素直に報告する。
+    const esp_err_t ekfErr = uwb::ConfigStore::saveEkfTuning(ekfTuning);
+    if (ekfErr != ESP_OK) {
+        std::printf("アンカー登録テーブル・測位モード設定は保存しましたが、"
+                    "EKFチューニングの保存に失敗しました (err=%s)\n",
+                    esp_err_to_name(ekfErr));
+        return 1;
+    }
+
     markSaved();
-    std::printf("NVS へ保存しました: アンカー %u 件, mode=%s, height=%.3fm\n", static_cast<unsigned>(count),
-                overrideName(override), static_cast<double>(zFixedM));
+    std::printf("NVS へ保存しました: アンカー %u 件, mode=%s, height=%.3fm, "
+                "ekf=%s/sigma_a=%.3f/sigma0=%.3f/per_m=%.3f/gate=%.1f\n",
+                static_cast<unsigned>(count), overrideName(override), static_cast<double>(zFixedM),
+                (ekfTuning.model == 1) ? "ca" : "cv", static_cast<double>(ekfTuning.sigmaA),
+                static_cast<double>(ekfTuning.sigmaR0), static_cast<double>(ekfTuning.sigmaRPerM),
+                static_cast<double>(ekfTuning.gate));
     return 0;
 }
 
@@ -1093,6 +1318,11 @@ int cmdResetConfig(int argc, char** argv)
     if (g_info.defaults != nullptr && g_table != nullptr && g_service != nullptr) {
         restored = (g_info.defaultCount < uwb::kMaxAnchors) ? g_info.defaultCount : uwb::kMaxAnchors;
         g_service->lockTable();
+        // set() 内の rebuildStorage() がこの時点の ekfTuning() を使って
+        // 各アンカーの sigma0/sigma_per_m を埋めるため、set() より先に
+        // EKFチューニングを既定値（EkfTuning{} = sigma_a 0.5, sigma0 0.10m,
+        // per_m 0, gate 3.0, model CV）へ戻しておく。
+        g_table->setEkfTuning(uwb::EkfTuning{});
         const bool ok = g_table->set(g_info.defaults, restored);
         // 測位モード設定もコンパイル時の既定（override=Auto、高さ=Kconfig
         // UWB_TAG_FIXED_Z_MM）へ戻す。anchor set() が失敗した場合はテーブルが
@@ -1111,7 +1341,8 @@ int cmdResetConfig(int argc, char** argv)
             afterConfigEdit();
         }
     }
-    std::printf("NVS を消去し、kAnchors[] の既定値 %u 件・測位モード auto (height=%.3fm) に戻しました"
+    std::printf("NVS を消去し、kAnchors[] の既定値 %u 件・測位モード auto (height=%.3fm)・"
+                "ekf既定値 (cv/sigma_a=0.5/sigma0=0.10/per_m=0/gate=3.0) に戻しました"
                 "（次の測位周期から反映）\n",
                 static_cast<unsigned>(restored), static_cast<double>(g_info.defaultZFixedM));
     return 0;
@@ -1141,6 +1372,7 @@ int cmdInfo(int argc, char** argv)
         }
     }
     const uwb::ModeDecision modeDecision = g_table->modeDecision();
+    const uwb::EkfTuning ekfTuning         = g_table->ekfTuning();
     g_service->unlockTable();
 
     const bool saved  = readSaved();
@@ -1166,6 +1398,11 @@ int cmdInfo(int argc, char** argv)
         std::printf("  z_fixed=%.3fm", static_cast<double>(modeDecision.zFixedM));
     }
     std::printf("\n");
+    std::printf("  ekf          : model=%s sigma_a=%.3f sigma0=%.3fm per_m=%.3f gate=%.1f"
+                "（詳しくは ekf コマンド）\n",
+                (ekfTuning.model == 1) ? "ca" : "cv", static_cast<double>(ekfTuning.sigmaA),
+                static_cast<double>(ekfTuning.sigmaR0), static_cast<double>(ekfTuning.sigmaRPerM),
+                static_cast<double>(ekfTuning.gate));
     std::printf("  nvs          : %s\n", uwb::ConfigStore::isReady() ? "使用可" : "使用不可（既定値のみ）");
     std::printf("  json output  : %s\n", jsonOn ? "on" : "off");
     // 【v2での変更】RangingService は「累積の epoch数/ok数」を公開していない
@@ -1303,6 +1540,18 @@ void registerCommands()
         .context        = nullptr,
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&heightCmd));
+
+    const esp_console_cmd_t ekfCmd = {
+        .command  = "ekf",
+        .help     = "EKF(拡張カルマンフィルタ)のQ(プロセス雑音)/R(観測雑音)/イノベーションゲートの表示・変更"
+                    "（ekf q/r/gate/model）",
+        .hint     = " [q <sigma_a> | r <sigma0> [per_m] | gate <k> | model cv|ca]",
+        .func     = &cmdEkf,
+        .argtable = nullptr,
+        .func_w_context = nullptr,
+        .context        = nullptr,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&ekfCmd));
 
     const esp_console_cmd_t surveyCmd = {
         .command  = "survey",

@@ -54,9 +54,17 @@ public:
     // **必ず単一タスクから呼ぶこと**。Lv0/Lv2 (solve()) は無状態の純関数
     // なので、こちらは複数タスクから同時に呼んでも問題ない。
 
-    /** EKFを初期化する。呼び出し前に table に有効なアンカーが
-     *  登録されていること。 */
-    void initEkf(uwb_motion motion = UWB_MOTION_CV, float sigmaA = 0.5f);
+    /**
+     * @brief EKFを初期化する。呼び出し前に table に有効なアンカーが
+     * 登録されていること。
+     *
+     * @param gate イノベーションゲート [sigma単位]。uwb_ekf_init() 自体は
+     *             既定3を入れるが、呼び出し側（uwb::EkfTuning 経由）が
+     *             実行時に変えられるよう、初期化直後にこの値で上書きする
+     *             （components/uwb_loc/include/uwb_loc.h の uwb_ekf::gate
+     *             フィールドコメント参照）。
+     */
+    void initEkf(uwb_motion motion = UWB_MOTION_CV, float sigmaA = 0.5f, float gate = 3.0f);
 
     /** 状態を破棄して初期化直後に戻す（設定は保つ）。 */
     void resetEkf();

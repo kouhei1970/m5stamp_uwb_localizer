@@ -203,6 +203,11 @@ menu "UWB Tag Configuration"
                 mode [auto|2d|3d]   （測位モードの表示・手動切替）
                 height [<meters>]   （2D測位の固定高さの表示・変更）
                 survey dist/z/show/apply/clear （メジャー実測からの座標計算）
+                ekf [q <sigma_a> | r <sigma0> [per_m] | gate <k> | model cv|ca]
+                    （EKF拡張カルマンフィルタのQ・R・イノベーションゲートを
+                     実行時に調整。Q=プロセス雑音(sigma_aは加速度の白色雑音
+                     強度)、R=観測雑音((sigma0 + per_m×距離)の2乗)、
+                     gate=イノベーションがk sigmaを超えた測距を捨てるしきい値）
                 output <on|off>   （JSON Lines 出力の一時停止）
                 save / reset-config / info / reboot
 

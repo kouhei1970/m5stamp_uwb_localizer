@@ -127,6 +127,25 @@ public:
     /** 直近の evaluateMode() の結果。呼ぶ前は既定値（RangingOnly/TooFewAnchors）。 */
     const ModeDecision& modeDecision() const { return modeDecision_; }
 
+    /** 現在の EKF チューニング（既定はコンストラクタ既定値 = EkfTuning{} と同じ）。 */
+    const EkfTuning& ekfTuning() const { return ekfTuning_; }
+
+    /**
+     * @brief EKF チューニングを差し替える。
+     *
+     * ekfTuning() を更新し、登録済み全アンカー(0..size())の
+     * uwb_anchor.sigma0/sigma_per_m を tuning.sigmaR0/sigmaRPerM で
+     * 上書きする（座標・enabled 等は変えないので rebuildStorage() は
+     * 呼ばない）。Q（プロセス雑音）・ゲートへの反映は呼び出し側
+     * （RangingService::reinitEkf() が PositioningPipeline::initEkf() を
+     * 呼び直す）の仕事 — このクラスは R（観測雑音）の記憶域だけを持つ。
+     *
+     * @note set()/update() で新しいアンカーを登録・書き換えたときも、
+     *       ここで最後に渡したチューニングの sigmaR0/sigmaRPerM がそのまま
+     *       使われる（rebuildStorage()/update() の実装参照）。
+     */
+    void setEkfTuning(const EkfTuning& tuning);
+
 private:
     AnchorEntry entries_[kMaxAnchors]{};
     uwb_anchor storage_[kMaxAnchors]{}; //!< uwb_config.anchors が指す安定記憶域
@@ -138,6 +157,7 @@ private:
     ModeOverride modeOverride_ = ModeOverride::Auto; //!< setModeOverride() 参照
     float zFixedM_               = 0.0f;               //!< setZFixedM() 参照
     ModeDecision modeDecision_{};                        //!< evaluateMode() の最新結果
+    EkfTuning ekfTuning_{};                               //!< setEkfTuning() 参照
 
     /**
      * @brief entries_[0..count_) から storage_ を作り直し、uwb_config_init()

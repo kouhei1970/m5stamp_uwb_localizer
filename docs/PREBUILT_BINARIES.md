@@ -137,6 +137,7 @@ esp-idf-monitor -p /dev/cu.usbmodemXXXX
 | アンカーの有効/無効・台数 | `anchor enable/disable <idx>` / `anchor count <n>` | `tag` |
 | 測位モード（有効台数・配置で自動切替。手動強制も可） | `mode` （表示）/ `mode auto\|2d\|3d` → `save` | `tag` |
 | 2D測位の固定高さ | `height <meters>` → `save` | `tag` |
+| EKF（拡張カルマンフィルタ）のQ・R・ゲート | `ekf q\|r\|gate\|model` （表示は `ekf` のみ）→ `save` | `tag` |
 | JSON 出力の一時停止 | `output off` / `output on` | `tag` |
 | 設定の確認 | `info` / `anchor list` | 両方 |
 
@@ -149,7 +150,8 @@ esp-idf-monitor -p /dev/cu.usbmodemXXXX
 - **ピン割り当て**（`boards/*.h`）
 - ボードの種類、SS-TWR / DS-TWR の別
 - **IRQ の有効/無効、遅延プリセット**（既定は IRQ 有効 + `BothIrq`。`*-polling` 版も配布しています）
-- SPI クロック、EKF の有効化、2D フォールバックの挙動
+- SPI クロック、EKF の有効化（on/off そのもの。有効化後のQ/R/ゲートの
+  調整は上表の `ekf` コマンドで実行時に変えられます）、2D フォールバックの挙動
 
 これらを触るときは [`GETTING_STARTED.md` §2](GETTING_STARTED.md#setup) の手順で
 ESP-IDF を入れて自分でビルドしてください。

@@ -140,6 +140,40 @@ public:
      */
     static esp_err_t savePositioningMode(ModeOverride override, float zFixedM);
 
+    // --------------------------------------------------------- タグ側（EKFチューニング）
+
+    /** タグの EKF チューニング用 NVS キー。anchor_tbl/pos_mode と違い、
+     *  値ごとに独立したキーへ保存する（1つのCRC付きblobにまとめない）。
+     *  どのキーも15文字以内（NVSの制限）。 */
+    static constexpr const char* kKeyEkfSigmaA    = "ekf_sa";
+    static constexpr const char* kKeyEkfSigmaR0   = "ekf_r0";
+    static constexpr const char* kKeyEkfSigmaRPerM = "ekf_rpm";
+    static constexpr const char* kKeyEkfGate       = "ekf_gate";
+    static constexpr const char* kKeyEkfModel      = "ekf_model";
+
+    /**
+     * @brief EKF（拡張カルマンフィルタ）の実行時チューニングを読む。
+     *
+     * anchor_tbl/pos_mode（1つのCRC付きblobにまとめる方式）とは違い、
+     * sigmaA/sigmaR0/sigmaRPerM/gate/model を5つの独立キーとして読み書きする。
+     * キーごとに独立しているので、**キー単位で**既定値へフォールバックする
+     * （5つ全部を1つの塊として扱わない）。この機能を追加する前のNVS
+     * （どのキーも存在しない）から起動した場合は全キーが既定値になる。
+     *
+     * @param defaults NVS に無い/壊れている値に使う既定値
+     * @param out      結果。**必ず書き込まれる**（nullptr は不可）
+     * @return 1つでもNVSの値を採用したら Nvs、全キーが既定値へ落ちたら Default
+     */
+    static ConfigSource loadEkfTuning(const EkfTuning& defaults, EkfTuning* out);
+
+    /**
+     * @brief EKF チューニングを保存する。
+     * @return ESP_OK / ESP_ERR_INVALID_STATE（init 未了）/ NVS のエラー
+     *         （複数キーのうち1つでも失敗したら最後に見つかったエラーを返す。
+     *         それでも書けたキーはそのまま NVS に残る）
+     */
+    static esp_err_t saveEkfTuning(const EkfTuning& tuning);
+
     // ------------------------------------------------------------------ 消去
 
     /**

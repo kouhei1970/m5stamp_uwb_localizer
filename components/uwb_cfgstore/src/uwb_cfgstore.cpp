@@ -8,6 +8,7 @@
  */
 #include "uwb_cfgstore.hpp"
 
+#include <cmath>
 #include <cstring>
 
 #include "esp_log.h"
@@ -317,6 +318,108 @@ esp_err_t ConfigStore::savePositioningMode(ModeOverride override, float zFixedM)
     }
     nvs_close(handle);
     return err;
+}
+
+/* --------------------------------------------------------------------------
+ * タグ側: EKF（拡張カルマンフィルタ）チューニング
+ * -------------------------------------------------------------------------- */
+
+ConfigSource ConfigStore::loadEkfTuning(const EkfTuning& defaults, EkfTuning* out)
+{
+    if (out == nullptr) {
+        return ConfigSource::Default;
+    }
+    // 何があっても既定値が入った状態で返れるよう、先に既定値を入れておく。
+    *out = defaults;
+
+    if (!ready_) {
+        return ConfigSource::Default;
+    }
+
+    nvs_handle_t handle = 0;
+    esp_err_t err        = nvs_open(kNamespace, NVS_READONLY, &handle);
+    if (err != ESP_OK) {
+        // ESP_ERR_NVS_NOT_FOUND = 名前空間がまだ無い（＝未設定）。正常系。
+        if (err != ESP_ERR_NVS_NOT_FOUND) {
+            ESP_LOGW(kLogTag, "nvs_open() 失敗 (err=%s) 既定値を使います", esp_err_to_name(err));
+        }
+        return ConfigSource::Default;
+    }
+
+    // キーごとに独立してフォールバックする。1個のIEEE754単精度は
+    // 4バイトのblobとして読み書きする（NVSにネイティブなfloat型は無い）。
+    // 値の妥当性（有限・符号）もここで検査し、異常ならそのキーだけ既定値に倒す。
+    bool any = false;
+    float v  = 0.0f;
+    size_t len;
+
+    len = sizeof(v);
+    if (nvs_get_blob(handle, kKeyEkfSigmaA, &v, &len) == ESP_OK && len == sizeof(v) && std::isfinite(v) &&
+        v > 0.0f) {
+        out->sigmaA = v;
+        any           = true;
+    }
+    len = sizeof(v);
+    if (nvs_get_blob(handle, kKeyEkfSigmaR0, &v, &len) == ESP_OK && len == sizeof(v) && std::isfinite(v) &&
+        v > 0.0f) {
+        out->sigmaR0 = v;
+        any            = true;
+    }
+    len = sizeof(v);
+    if (nvs_get_blob(handle, kKeyEkfSigmaRPerM, &v, &len) == ESP_OK && len == sizeof(v) && std::isfinite(v) &&
+        v >= 0.0f) {
+        out->sigmaRPerM = v;
+        any               = true;
+    }
+    len = sizeof(v);
+    if (nvs_get_blob(handle, kKeyEkfGate, &v, &len) == ESP_OK && len == sizeof(v) && std::isfinite(v) &&
+        v > 0.0f) {
+        out->gate = v;
+        any         = true;
+    }
+    uint8_t model = 0;
+    if (nvs_get_u8(handle, kKeyEkfModel, &model) == ESP_OK && model <= 1) {
+        out->model = model;
+        any          = true;
+    }
+
+    nvs_close(handle);
+    return any ? ConfigSource::Nvs : ConfigSource::Default;
+}
+
+esp_err_t ConfigStore::saveEkfTuning(const EkfTuning& tuning)
+{
+    if (!ready_) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    nvs_handle_t handle = 0;
+    esp_err_t err        = nvs_open(kNamespace, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    // 1つ失敗しても他のキーは書き続ける（部分的にでも保存できたほうが、
+    // ここで諦めて全部既定値に戻すより実害が小さい）。最後に見つかった
+    // エラーを呼び出し側へ返す。
+    esp_err_t rc = ESP_OK;
+    esp_err_t e;
+    e = nvs_set_blob(handle, kKeyEkfSigmaA, &tuning.sigmaA, sizeof(tuning.sigmaA));
+    if (e != ESP_OK) rc = e;
+    e = nvs_set_blob(handle, kKeyEkfSigmaR0, &tuning.sigmaR0, sizeof(tuning.sigmaR0));
+    if (e != ESP_OK) rc = e;
+    e = nvs_set_blob(handle, kKeyEkfSigmaRPerM, &tuning.sigmaRPerM, sizeof(tuning.sigmaRPerM));
+    if (e != ESP_OK) rc = e;
+    e = nvs_set_blob(handle, kKeyEkfGate, &tuning.gate, sizeof(tuning.gate));
+    if (e != ESP_OK) rc = e;
+    e = nvs_set_u8(handle, kKeyEkfModel, tuning.model);
+    if (e != ESP_OK) rc = e;
+
+    if (rc == ESP_OK) {
+        rc = nvs_commit(handle);
+    }
+    nvs_close(handle);
+    return rc;
 }
 
 /* -------------------------------------------------------------------------- */
