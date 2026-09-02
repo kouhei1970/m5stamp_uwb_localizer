@@ -137,6 +137,43 @@ details#rawDet summary{cursor:pointer;font-size:13px;color:var(--ink2);margin-bo
   </section>
 
   <section class="panel full">
+    <div class="planHead">
+      <h2>測距統計</h2>
+      <div class="viewTabs" id="statWinTabs">
+        <button data-win="10" id="btnStatWin10" class="sel">10s</button>
+        <button data-win="60" id="btnStatWin60">60s</button>
+      </div>
+    </div>
+    <div class="twrap">
+      <table>
+        <thead><tr>
+          <th>a</th><th>n</th><th>中央値 [m]</th><th>平均 [m]</th><th>標準偏差 [mm]</th>
+          <th>最小 [m]</th><th>最大 [m]</th><th>飛び値 (件)</th><th>1周期前との相関</th>
+        </tr></thead>
+        <tbody id="rangingStatTbody"></tbody>
+      </table>
+    </div>
+    <div class="twrap" style="margin-top:8px">
+      <table>
+        <thead><tr>
+          <th></th><th>n</th><th>x 平均 [m]</th><th>y 平均 [m]</th><th>x 標準偏差 [mm]</th><th>y 標準偏差 [mm]</th>
+          <th>1周期移動量 中央値 [mm]</th><th>1周期移動量 最大 [mm]</th>
+        </tr></thead>
+        <tbody id="posStatTbody"></tbody>
+      </table>
+    </div>
+    <div class="twrap" style="margin-top:8px">
+      <table>
+        <thead><tr><th>残差・診断（直近窓）</th><th>値</th></tr></thead>
+        <tbody id="residualStatTbody"></tbody>
+      </table>
+    </div>
+    <div class="muted" style="margin-top:6px;font-size:11px">
+      統計はブラウザ側で計算（直近の窓）。静止時の標準偏差＝雑音、飛び値＝前後9周期の中央値から 0.25 m 超
+    </div>
+  </section>
+
+  <section class="panel full">
     <h2>チャート（直近60秒）</h2>
     <div class="legend" id="chartLegend"></div>
     <div class="chart-title muted">距離 d <code>meas.d</code> [m]</div>
@@ -207,6 +244,9 @@ const cycleSeries = [];            // [{t,val,band}]
 const posSeriesNls = [];           // [{t,x,y}] fix.p（Lv2 NLS, o.ok のとき）
 const posSeriesEkf = [];           // [{t,x,y}] fix.lv3.p（EKF, o.lv3.ok のとき）
 const fixTrail = [];               // [{x,y}] 最大200点
+const resSeries = [];              // [{t,r}] fix.residual_rms [m]（o.ok のときのみ）60秒保持
+const fixFlagSeries = [];          // [{t,ok,excluded}] 全 fix 行、60秒保持（測距統計パネル用）
+let statsWindowMs = 10000;         // 測距統計パネルの集計窓 [ms]（10s/60s トグル、既定10s）
 
 const rawBuf = [];                 // [{raw,type}] 最大100件
 let recording = false, recLines = [], recBytes = 0, recCount = 0;
@@ -382,6 +422,12 @@ function onFix(o){
     posSeriesEkf.push({t, x:o.lv3.p[0], y:o.lv3.p[1]});
     while(posSeriesEkf.length && posSeriesEkf[0].t < t-60000) posSeriesEkf.shift();
   }
+  if(o.ok && typeof o.residual_rms==='number'){
+    resSeries.push({t, r:o.residual_rms});
+    while(resSeries.length && resSeries[0].t < t-60000) resSeries.shift();
+  }
+  fixFlagSeries.push({t, ok:!!o.ok, excluded:o.excluded});
+  while(fixFlagSeries.length && fixFlagSeries[0].t < t-60000) fixFlagSeries.shift();
   for(const a of (o.anchors||[])) if(a && a.a) fixAnchorsLatest.set(a.a, a);
 }
 function onStats(o){
@@ -543,6 +589,112 @@ function renderRaw(){
   const f = document.getElementById('rawFilter').value.trim().toLowerCase();
   const shown = f ? rawBuf.filter(e=>e.type.toLowerCase().includes(f)) : rawBuf;
   document.getElementById('rawOut').textContent = shown.map(e=>e.raw).join('\n');
+}
+
+// ---- 測距統計パネル / ranging-statistics panel (10s/60s window, computed client-side) ----
+function median(nums){
+  if(!nums.length) return NaN;
+  const s = nums.slice().sort((a,b)=>a-b);
+  const n = s.length, mid = n>>1;
+  return (n%2) ? s[mid] : (s[mid-1]+s[mid])/2;
+}
+// アンカー1本の distSeries 窓内サンプルから統計を1パスで計算（外れ値判定は前後4点=9点窓の中央値との差）
+// one-pass stats for one anchor's windowed samples; spike test compares each point to the median of its 9-sample neighbourhood
+function computeAnchorRangingStat(pts){
+  const n = pts.length; if(!n) return null;
+  let sum=0, min=Infinity, max=-Infinity;
+  for(const p of pts){ sum+=p.d; if(p.d<min) min=p.d; if(p.d>max) max=p.d; }
+  const mean = sum/n;
+  let sq=0; for(const p of pts) sq += (p.d-mean)*(p.d-mean);
+  const std = Math.sqrt(sq/n);
+  const med = median(pts.map(p=>p.d));
+  let corr = null;
+  if(n>=10){
+    let num=0, den=0;
+    for(let i=0;i<n;i++){ const dv=pts[i].d-mean; den+=dv*dv; if(i>0) num+=dv*(pts[i-1].d-mean); }
+    corr = den>0 ? num/den : null;
+  }
+  let spikeN=0, spikeTested=0;
+  for(let i=4;i<n-4;i++){
+    const med9 = median([pts[i-4].d,pts[i-3].d,pts[i-2].d,pts[i-1].d,pts[i].d,pts[i+1].d,pts[i+2].d,pts[i+3].d,pts[i+4].d]);
+    spikeTested++;
+    if(Math.abs(pts[i].d-med9)>0.25) spikeN++;
+  }
+  return {n, med, mean, std, min, max, spikeN, spikeTested, corr};
+}
+function rangingStatRowHtml(id, windowMs, now){
+  const arr = distSeries.get(id) || [];
+  const pts = arr.filter(p=>p.t>=now-windowMs);
+  const dot = `<span class="dot" style="background:${getColor(id)}"></span>`;
+  const st = computeAnchorRangingStat(pts);
+  if(!st) return `<tr><td>${dot}${esc(id)}</td><td>0</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>`;
+  const spikeTxt = st.spikeTested>0 ? `${st.spikeN} (${(st.spikeN/st.spikeTested*100).toFixed(1)}%)` : '—';
+  const corrTxt = st.corr!=null ? st.corr.toFixed(2) : '—';
+  return `<tr><td>${dot}${esc(id)}</td><td>${st.n}</td><td>${st.med.toFixed(3)}</td><td>${st.mean.toFixed(3)}</td>`+
+    `<td>${(st.std*1000).toFixed(1)}</td><td>${st.min.toFixed(3)}</td><td>${st.max.toFixed(3)}</td>`+
+    `<td>${spikeTxt}</td><td>${corrTxt}</td></tr>`;
+}
+function renderRangingStatTable(){
+  const now = performance.now(), windowMs = statsWindowMs;
+  const order = anchorsCfg.filter(a=>a&&a.id).map(a=>a.id);
+  for(const id of distSeries.keys()) if(!order.includes(id)) order.push(id);
+  const rows = order.filter(id=>{ const arr=distSeries.get(id); return arr && arr.some(p=>p.t>=now-windowMs); });
+  document.getElementById('rangingStatTbody').innerHTML = rows.length ?
+    rows.map(id=>rangingStatRowHtml(id, windowMs, now)).join('') :
+    `<tr><td colspan="9" class="muted">データなし</td></tr>`;
+}
+// 位置系列（NLS/EKF）の窓内統計。1周期移動量は連続点間の距離 [m]
+// windowed stats for a position series (NLS/EKF); step = distance between consecutive fixes [m]
+function computeSeriesStat(pts){
+  const n = pts.length; if(!n) return null;
+  let sx=0, sy=0;
+  for(const p of pts){ sx+=p.x; sy+=p.y; }
+  const mx=sx/n, my=sy/n;
+  let vx=0, vy=0;
+  for(const p of pts){ vx+=(p.x-mx)*(p.x-mx); vy+=(p.y-my)*(p.y-my); }
+  const sdx=Math.sqrt(vx/n), sdy=Math.sqrt(vy/n);
+  const steps=[];
+  for(let i=1;i<n;i++) steps.push(Math.hypot(pts[i].x-pts[i-1].x, pts[i].y-pts[i-1].y));
+  return {n, mx, my, sdx, sdy, stepMed: steps.length?median(steps):null, stepMax: steps.length?Math.max(...steps):null};
+}
+function posStatRowHtml(label, pts){
+  const st = computeSeriesStat(pts);
+  if(!st) return `<tr><td>${esc(label)}</td><td>0</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>`;
+  return `<tr><td>${esc(label)}</td><td>${st.n}</td><td>${st.mx.toFixed(3)}</td><td>${st.my.toFixed(3)}</td>`+
+    `<td>${(st.sdx*1000).toFixed(1)}</td><td>${(st.sdy*1000).toFixed(1)}</td>`+
+    `<td>${st.stepMed!=null?(st.stepMed*1000).toFixed(1):'—'}</td><td>${st.stepMax!=null?(st.stepMax*1000).toFixed(1):'—'}</td></tr>`;
+}
+function renderPosStatTable(){
+  const now = performance.now(), windowMs = statsWindowMs;
+  document.getElementById('posStatTbody').innerHTML =
+    posStatRowHtml('通常解', posSeriesNls.filter(p=>p.t>=now-windowMs)) +
+    posStatRowHtml('EKF', posSeriesEkf.filter(p=>p.t>=now-windowMs));
+}
+function renderResidualStats(){
+  const now = performance.now(), windowMs = statsWindowMs;
+  const res = resSeries.filter(p=>p.t>=now-windowMs).map(p=>p.r);
+  const flags = fixFlagSeries.filter(p=>p.t>=now-windowMs);
+  let medR='—', p90R='—', maxR='—';
+  if(res.length){
+    const s = res.slice().sort((a,b)=>a-b);
+    medR = (median(res)*1000).toFixed(1);
+    p90R = (s[Math.min(s.length-1, Math.ceil(0.9*s.length)-1)]*1000).toFixed(1);
+    maxR = (s[s.length-1]*1000).toFixed(1);
+  }
+  const total = flags.length;
+  const notOk = flags.filter(f=>!f.ok).length;
+  const excluded = flags.filter(f=>f.excluded && f.excluded!=='0x00000000').length;
+  document.getElementById('residualStatTbody').innerHTML =
+    `<tr><td>残差 RMS 中央値 [mm]</td><td>${medR}</td></tr>`+
+    `<tr><td>残差 RMS 90パーセンタイル [mm]</td><td>${p90R}</td></tr>`+
+    `<tr><td>残差 RMS 最大 [mm]</td><td>${maxR}</td></tr>`+
+    `<tr><td>解けなかった周期 (ok:false)</td><td>${total?`${notOk} / ${total}`:'—'}</td></tr>`+
+    `<tr><td>除外あり周期 (excluded≠0)</td><td>${total?`${excluded} / ${total}`:'—'}</td></tr>`;
+}
+function renderRangingStats(){
+  renderRangingStatTable();
+  renderPosStatTable();
+  renderResidualStats();
 }
 
 // ---- 描画: canvas チャート / chart canvases (throttled to <=10fps) ----
@@ -912,7 +1064,7 @@ function uiTick(){
         try{ ws.close(); }catch(e){}
       }
     }
-    renderHeader(); renderCards(); renderAnchorTable(); renderRaw();
+    renderHeader(); renderCards(); renderAnchorTable(); renderRangingStats(); renderRaw();
   }catch(e){ noteMsgError(e); }
 }
 function rateTick(){
@@ -952,6 +1104,13 @@ document.getElementById('conQuick').addEventListener('click', e=>{
 });
 document.getElementById('rawFilter').addEventListener('input', renderRaw);
 document.getElementById('rawDet').addEventListener('toggle', renderRaw);
+document.getElementById('statWinTabs').addEventListener('click', e=>{
+  const b = e.target.closest('button'); if(!b) return;
+  statsWindowMs = Number(b.dataset.win)*1000;
+  document.getElementById('btnStatWin10').classList.toggle('sel', statsWindowMs===10000);
+  document.getElementById('btnStatWin60').classList.toggle('sel', statsWindowMs===60000);
+  try{ renderRangingStats(); }catch(e){ noteDrawError(e); }
+});
 
 // ---- 3D 位置図の操作（ドラッグ回転・ホイールズーム・ダブルクリックでリセット） ----
 // 3D view controls: drag to rotate, wheel to zoom, dbl-click to reset. Pointer Events で
