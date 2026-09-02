@@ -498,6 +498,11 @@ survey z <i> <meters>          アンカーの高さを記録（既定0、RAMの
 survey show                    記録済みの入力一覧 + 計算可能なら座標プレビュー
 survey apply                   座標を計算してアンカー登録テーブルへ書き込む（save は別途必要）
 survey clear                   survey の入力を全消去
+ekf                            モデル・プロセス雑音 sigma_a（Q）・観測雑音 sigma0/per_m（R）・ゲート係数・有効な Q と R を表示
+ekf q <sigma_a>                プロセス雑音パラメータを設定（加速度白色雑音強度、0.01〜50 m/s²）→ save
+ekf r <sigma0> [per_m]         観測雑音パラメータを設定（sigma0: 0.001〜10 m、per_m: 0〜1）→ save
+ekf gate <k>                   イノベーション・ゲート係数を設定（0.5〜20。innovation² > k²·S の測距を棄却）→ save
+ekf model cv|ca                推定器の内部モデルを選択（cv: 定速度、ca: 定加速度）→ save
 ```
 `i`, `j` は `anchor list` と同じ添字。`survey apply` は登録テーブルの
 `enabled` フラグには触れない（座標だけを決める機能なので、有効/無効の管理は
@@ -508,7 +513,7 @@ survey clear                   survey の入力を全消去
 | 対象 | 内容 |
 |---|---|
 | `components/uwb_survey/include/uwb_survey_tape.h`<br>`components/uwb_survey/src/uwb_survey_tape.c` | 閉形式計算の本体。ESP-IDF非依存・malloc不使用の C99（`uwb_survey.h`/`uwb_survey.c` の自己測量ソルバとは別ファイル） |
-| `firmware/tag/main/tag_console.cpp` | `survey dist/z/show/apply/clear` コマンド |
+| `firmware/tag/main/tag_console.cpp` | `survey dist/z/show/apply/clear` / `ekf q/r/gate/model` コマンド |
 | `tests/host/survey/test_survey_tape.c` | ホスト側検証（既知配置からの往復・高さ補正・符号解決・異常系） |
 
 **設計メモ（実装時の判断）**:
