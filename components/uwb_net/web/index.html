@@ -145,6 +145,8 @@ details#rawDet summary{cursor:pointer;font-size:13px;color:var(--ink2);margin-bo
     <div class="chart-box"><canvas id="cvRate"></canvas></div>
     <div class="chart-title muted">cycle_ms <code>fix.cycle_ms</code>（薄い帯=直近1秒の最大）</div>
     <div class="chart-box"><canvas id="cvCycle"></canvas></div>
+    <div class="chart-title muted">位置 fix.p / lv3.p [m]（実線=EKF 太線 / 細線=通常解）</div>
+    <div class="chart-box"><canvas id="cvPos"></canvas></div>
   </section>
 
   <section class="panel">
@@ -202,6 +204,8 @@ const rateSeries = new Map();      // a -> [{t,inst,cum}]
 const fixAnchorsLatest = new Map();// a -> latest fix.anchors[] entry
 let fixLatest = null;
 const cycleSeries = [];            // [{t,val,band}]
+const posSeriesNls = [];           // [{t,x,y}] fix.p（Lv2 NLS, o.ok のとき）
+const posSeriesEkf = [];           // [{t,x,y}] fix.lv3.p（EKF, o.lv3.ok のとき）
 const fixTrail = [];               // [{x,y}] 最大200点
 
 const rawBuf = [];                 // [{raw,type}] 最大100件
@@ -371,6 +375,12 @@ function onFix(o){
     const z = o.p.length>2 ? o.p[2] : (typeof o.z_fixed==='number' ? o.z_fixed : 0);
     fixTrail.push({x:o.p[0], y:o.p[1], z});
     if(fixTrail.length>200) fixTrail.shift();
+    posSeriesNls.push({t, x:o.p[0], y:o.p[1]});
+    while(posSeriesNls.length && posSeriesNls[0].t < t-60000) posSeriesNls.shift();
+  }
+  if(o.lv3 && o.lv3.ok && Array.isArray(o.lv3.p)){
+    posSeriesEkf.push({t, x:o.lv3.p[0], y:o.lv3.p[1]});
+    while(posSeriesEkf.length && posSeriesEkf[0].t < t-60000) posSeriesEkf.shift();
   }
   for(const a of (o.anchors||[])) if(a && a.a) fixAnchorsLatest.set(a.a, a);
 }
@@ -633,6 +643,35 @@ function drawCycle(){
       ctx.fillText(last[2].toFixed(0)+' ms', last[0]+3, last[1]); }
   }
 }
+function drawPos(){
+  const fc = fitCanvas(document.getElementById('cvPos')); if(!fc) return;
+  const {ctx,w,h} = fc, now = performance.now(), windowMs = 60000;
+  const ptsEkf = posSeriesEkf.filter(p=>p.t>=now-windowMs);
+  const ptsNls = posSeriesNls.filter(p=>p.t>=now-windowMs);
+  if(!ptsEkf.length && !ptsNls.length){ ctx.clearRect(0,0,w,h); return; }
+  let ymin=Infinity, ymax=-Infinity;
+  for(const p of ptsEkf.concat(ptsNls)){
+    if(p.x<ymin) ymin=p.x; if(p.x>ymax) ymax=p.x;
+    if(p.y<ymin) ymin=p.y; if(p.y>ymax) ymax=p.y;
+  }
+  const padv = Math.max(0.05, (ymax-ymin)*0.15);
+  ymin -= padv; ymax += padv;
+  const {toPx} = drawAxes(ctx,w,h,ymin,ymax,windowMs,now,v=>v.toFixed(2));
+  const drawLine=(pts,key,col,lw)=>{
+    ctx.strokeStyle=col; ctx.lineWidth=lw; ctx.beginPath();
+    let started=false, last=null;
+    for(const p of pts){ const [x,y]=toPx(p.t,p[key]); if(!started){ ctx.moveTo(x,y); started=true; } else ctx.lineTo(x,y); last=[x,y,p[key]]; }
+    if(started) ctx.stroke();
+    return last;
+  };
+  drawLine(ptsNls,'x',COL.s1,1);
+  drawLine(ptsNls,'y',COL.s2,1);
+  const lastX = drawLine(ptsEkf,'x',COL.s1,2.5);
+  const lastY = drawLine(ptsEkf,'y',COL.s2,2.5);
+  ctx.font='10px system-ui'; ctx.textAlign='left'; ctx.textBaseline='middle';
+  if(lastX){ ctx.fillStyle=COL.s1; ctx.fillText('x '+lastX[2].toFixed(2), lastX[0]+3, lastX[1]); }
+  if(lastY){ ctx.fillStyle=COL.s2; ctx.fillText('y '+lastY[2].toFixed(2), lastY[0]+3, lastY[1]); }
+}
 // ---- 位置図のビュー枠ヒステリシス / plan-view bounds hysteresis (2D と 3D で共有) ----
 // 内容(アンカー+距離円+軌跡)の範囲をそのまま毎フレーム反映すると、距離の揺らぎで枠が
 // 細かく震える(flicker)。拡大は即座、縮小は「内容が枠の70%未満」の状態が3秒続いてから、
@@ -857,7 +896,7 @@ function tick(ts){
   requestAnimationFrame(tick);
   if(ts - lastDraw >= 100){
     lastDraw = ts;
-    for(const fn of [drawDist, drawRate, drawCycle, view3D?drawPlan3D:drawPlan]){
+    for(const fn of [drawDist, drawRate, drawCycle, drawPos, view3D?drawPlan3D:drawPlan]){
       try{ fn(); }catch(e){ noteDrawError(e); }
     }
   }
