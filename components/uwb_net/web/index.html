@@ -894,10 +894,15 @@ function drawPlan(){
   if(cbMaxX-cbMinX<1){ const c=(cbMaxX+cbMinX)/2; cbMinX=c-0.5; cbMaxX=c+0.5; }
   if(cbMaxY-cbMinY<1){ const c=(cbMaxY+cbMinY)/2; cbMinY=c-0.5; cbMaxY=c+0.5; }
   const view = updateViewBounds(planViewState2D, {minX:cbMinX,maxX:cbMaxX,minY:cbMinY,maxY:cbMaxY}, performance.now());
-  const {minX,maxX,minY,maxY} = view;
   const iw=w-pad*2, ih=h-pad*2;
-  const scale = Math.max(0.001, Math.min(iw/(maxX-minX), ih/(maxY-minY)));
-  const ox = pad+(iw-(maxX-minX)*scale)/2, oy = pad+(ih-(maxY-minY)*scale)/2;
+  // 等尺(x/y同スケール)を保ったまま中心基準で範囲を拡張し、描画領域を余白なく埋める(state.viewへは書き戻さない)
+  // expand bounds about their centre (equal x/y scale) to fill the area with no margins; view itself is not mutated
+  let {minX,maxX,minY,maxY} = view;
+  const spanX=maxX-minX, spanY=maxY-minY;
+  if(spanX*ih > spanY*iw){ const s=spanX*ih/iw, c=(minY+maxY)/2; minY=c-s/2; maxY=c+s/2; }
+  else { const s=spanY*iw/ih, c=(minX+maxX)/2; minX=c-s/2; maxX=c+s/2; }
+  const scale = Math.max(0.001, iw/(maxX-minX));
+  const ox = pad, oy = pad;
   const toPx=(x,y)=>[ox+(x-minX)*scale, h-oy-(y-minY)*scale];
 
   ctx.strokeStyle=COL.grid; ctx.lineWidth=1; ctx.font='9px system-ui'; ctx.fillStyle=COL.muted;
