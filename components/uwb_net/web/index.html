@@ -32,6 +32,8 @@ input[type=text],input:not([type]){background:var(--surface);border:1px solid va
 .muted{color:var(--muted)}
 .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:middle}
 .dot.ok{background:var(--good)}.dot.bad{background:var(--bad)}.dot.warn{background:var(--warn)}
+.warnText{color:var(--warn);font-size:11px}
+.errText{color:var(--bad);font-size:11px}
 
 header{position:sticky;top:0;z-index:5;background:var(--surface);border-bottom:1px solid var(--border);
   padding:8px 14px;display:flex;flex-wrap:wrap;align-items:center;gap:6px 18px}
@@ -101,7 +103,11 @@ details#rawDet summary{cursor:pointer;font-size:13px;color:var(--ink2);margin-bo
   <div id="hdrInfo" class="muted"></div>
   <div id="hdrUptime" class="muted"></div>
   <div class="spacer"></div>
-  <div><span id="connDot" class="dot warn"></span><span id="connText" class="muted">接続中&hellip;</span></div>
+  <div><span id="connDot" class="dot warn"></span><span id="connText" class="muted">接続中&hellip;</span>
+    <span id="lastMsgText" class="warnText" hidden></span>
+    <span id="errText" class="errText" hidden></span>
+    <span id="drawErrText" class="errText" hidden></span>
+  </div>
   <div id="rateText" class="muted"></div>
   <div id="modeBadge" class="badge">—</div>
   <div class="actions">
@@ -207,6 +213,23 @@ const conBuf = [];
 let ws = null, connState = 'connecting', reconnectTimer = null;
 const isDemo = new URLSearchParams(location.search).get('demo')==='1';
 
+// ---- 死活監視・エラー計測 / liveness watchdog & error counters ----
+// 「WebSocket 接続中のまま画面が固まる」不具合の切り分け用。受信・描画の両方を監視する。
+// diagnostics for the "still says connected but frozen" bug: watch both message receipt and rendering.
+let lastMsgAt = 0, lastFixAt = 0, stalled = false;
+let msgErrors = 0, lastMsgError = '', lastMsgErrorLoggedAt = 0;
+let drawErrors = 0, lastDrawError = '', lastDrawErrorLoggedAt = 0;
+function noteMsgError(e){
+  msgErrors++; lastMsgError = String((e&&e.message)||e);
+  const now = performance.now();
+  if(now-lastMsgErrorLoggedAt>5000){ lastMsgErrorLoggedAt=now; console.error('[msg]',e); }
+}
+function noteDrawError(e){
+  drawErrors++; lastDrawError = String((e&&e.stack)||(e&&e.message)||e);
+  const now = performance.now();
+  if(now-lastDrawErrorLoggedAt>5000){ lastDrawErrorLoggedAt=now; console.error('[draw]',e); }
+}
+
 // ---- 3D 位置図 / 3D plan view ----
 let view3D = true;
 let cam3 = {yaw:-0.7, pitch:0.5, zoom:1}; // yaw/pitch [rad], zoom は等角投影の倍率
@@ -258,7 +281,7 @@ function connect(){
   try{ sock = new WebSocket(`ws://${location.host}/ws`); }
   catch(e){ scheduleReconnect(); return; }
   ws = sock;
-  ws.onopen = ()=>{ connState='open'; };
+  ws.onopen = ()=>{ connState='open'; lastMsgAt = performance.now(); stalled = false; };
   ws.onmessage = onMessage;
   ws.onclose = ()=>{ connState='reconnecting'; scheduleReconnect(); };
   ws.onerror = ()=>{ try{ sock.close(); }catch(e){} };
@@ -268,14 +291,18 @@ function scheduleReconnect(){
   reconnectTimer = setTimeout(()=>{ reconnectTimer=null; connect(); }, 2000);
 }
 function onMessage(ev){
-  if(typeof ev.data !== 'string') return;
-  curBytes += utf8Len(ev.data);
-  const parts = ev.data.split('\n');
-  for(const raw of parts){
-    if(!raw) continue;
-    curLines++;
-    handleLine(raw);
-  }
+  lastMsgAt = performance.now();
+  stalled = false;
+  try{
+    if(typeof ev.data !== 'string') return;
+    curBytes += utf8Len(ev.data);
+    const parts = ev.data.split('\n');
+    for(const raw of parts){
+      if(!raw) continue;
+      curLines++;
+      handleLine(raw);
+    }
+  }catch(e){ noteMsgError(e); }
 }
 
 // ---- 行の処理 / line handling ----
@@ -333,6 +360,7 @@ function onMeas(o){
 }
 function onFix(o){
   const t = performance.now();
+  lastFixAt = t; // ok:false でも受信自体は生存の証拠として記録 / record receipt even when ok:false
   fixLatest = o;
   const val = (typeof o.cycle_ms==='number') ? o.cycle_ms : 0;
   let band = val;
@@ -417,6 +445,17 @@ function renderHeader(){
   const txt = document.getElementById('connText');
   dot.className = 'dot ' + (isDemo || connState==='open' ? 'ok':'warn');
   txt.textContent = isDemo ? 'デモモード' : (connState==='open' ? 'WebSocket 接続中' : (connState==='reconnecting' ? '再接続中…' : '接続中…'));
+  const lastMsgEl = document.getElementById('lastMsgText');
+  const silenceS = (performance.now()-lastMsgAt)/1000;
+  if(stalled){ lastMsgEl.hidden=false; lastMsgEl.textContent='受信停止 → 再接続中'; }
+  else if(!isDemo && lastMsgAt>0 && silenceS>2){ lastMsgEl.hidden=false; lastMsgEl.textContent=`最終受信 ${silenceS.toFixed(1)}s 前`; }
+  else lastMsgEl.hidden=true;
+  const errEl = document.getElementById('errText');
+  if(msgErrors>0){ errEl.hidden=false; errEl.textContent=`JS エラー ${msgErrors}`; errEl.title=lastMsgError; }
+  else errEl.hidden=true;
+  const drawErrEl = document.getElementById('drawErrText');
+  if(drawErrors>0){ drawErrEl.hidden=false; drawErrEl.textContent=`描画エラー ${drawErrors}: ${lastDrawError.slice(0,120)}`; drawErrEl.title=lastDrawError; }
+  else drawErrEl.hidden=true;
   document.getElementById('rateText').textContent = `${rateLinesShown} 行/秒 ・ ${(rateBytesShown/1024).toFixed(1)} KB/秒`;
   document.getElementById('recInfo').textContent = recCount ? `${recCount} 行 / ${fmtBytes(recBytes)}` : '';
   document.getElementById('btnSave').disabled = recCount===0;
@@ -456,7 +495,8 @@ function cardHtml(n, now){
     rows.push(kv('再起動/Finalタイムアウト','', `${n.restarts??'-'} / ${n.final_timeouts??'-'}`));
     rows.push(kv('RXエラー/TX失敗','', `${n.rx_errors??'-'} / ${n.tx_failures??'-'}`));
     rows.push(kv('Poll→Resp/Resp→Final/Result率','', `${pct(n.responses,n.polls)} / ${pct(n.finals,n.responses)} / ${pct(n.results,n.polls)}`));
-    rows.push(kv('距離','dist_mean_m', (n.dist_n? `${n.dist_mean_m.toFixed(3)} ± ${n.dist_std_m.toFixed(3)} m (n=${n.dist_n})` : '-')));
+    rows.push(kv('距離','dist_mean_m', (n.dist_n && typeof n.dist_mean_m==='number' && typeof n.dist_std_m==='number') ?
+      `${n.dist_mean_m.toFixed(3)} ± ${n.dist_std_m.toFixed(3)} m (n=${n.dist_n})` : '-'));
   }
   const dot = anchorColorIdx.has(n.addr) ? `<span class="dot" style="background:${getColor(n.addr)}"></span>` : '';
   return `<div class="card${stale?' stale':''}"><h3>${dot}${esc(n.name||n.addr||'?')}<span class="muted">${esc(n.addr||'')}</span></h3><dl>${rows.join('')}</dl></div>`;
@@ -478,7 +518,7 @@ function rowHtml(id){
   const pos = (cfg && Array.isArray(cfg.p)) ? cfg.p.map(v=>Number(v).toFixed(2)).join(', ') : '—';
   return `<tr class="${en?'':'disabled'}"><td><span class="dot" style="background:${getColor(id)}"></span>${esc(id)}</td>` +
     `<td>${att??'—'}</td><td>${succ??'—'}</td><td>${rate}</td><td>${retries??'—'}</td><td>${rescued??'—'}</td>` +
-    `<td>${first}</td><td>${m? m.d.toFixed(3):'—'}</td><td>${(fa&&fa.elapsed_ms!=null)? fa.elapsed_ms:'—'}</td>` +
+    `<td>${first}</td><td>${(m && typeof m.d==='number')? m.d.toFixed(3):'—'}</td><td>${(fa&&fa.elapsed_ms!=null)? fa.elapsed_ms:'—'}</td>` +
     `<td>${en?'有効':'無効'}</td><td>${pos}</td></tr>`;
 }
 function renderAnchorTable(){
@@ -546,7 +586,7 @@ function drawDist(){
       last=[x,y,p.d];
     }
     ctx.stroke();
-    if(last){ ctx.fillStyle=col; ctx.font='10px system-ui'; ctx.textAlign='left'; ctx.textBaseline='middle';
+    if(last && typeof last[2]==='number'){ ctx.fillStyle=col; ctx.font='10px system-ui'; ctx.textAlign='left'; ctx.textBaseline='middle';
       ctx.fillText(last[2].toFixed(2), Math.min(last[0]+3,padL+iw-2), last[1]); }
   }
 }
@@ -593,6 +633,49 @@ function drawCycle(){
       ctx.fillText(last[2].toFixed(0)+' ms', last[0]+3, last[1]); }
   }
 }
+// ---- 位置図のビュー枠ヒステリシス / plan-view bounds hysteresis (2D と 3D で共有) ----
+// 内容(アンカー+距離円+軌跡)の範囲をそのまま毎フレーム反映すると、距離の揺らぎで枠が
+// 細かく震える(flicker)。拡大は即座、縮小は「内容が枠の70%未満」の状態が3秒続いてから、
+// 0.5mグリッドに丸めた目標へ指数的に滑らかに追従させることで枠を安定させる。
+// Refitting the axes from the raw content extent every frame makes the view jitter with each
+// distance sample. Expand immediately; shrink only once "content < 70% of view span" has held
+// for 3 s; snap the target to a 0.5 m grid; ease current bounds toward the target exponentially.
+// チューニング値 / tunables:
+const PLAN_SHRINK_RATIO = 0.7;    // 内容スパンが枠スパンのこの比率未満なら「縮小候補」
+const PLAN_SHRINK_HOLD_MS = 3000; // 縮小候補がこの時間[ms]続いたら実際に縮小へ向かう
+const PLAN_GRID_M = 0.5;          // 目標枠を外側へ丸める格子[m]（微小変化で枠が動かないように）
+const PLAN_EASE = 0.2;            // 描画tick(約100ms)ごとに目標へ寄せる割合（指数追従の係数）
+const planViewState2D = {view:null, shrinkSince:null}; // 2D位置図の現在枠 / 2D plan view state
+const planViewState3D = {view:null, shrinkSince:null}; // 3D位置図の現在枠 / 3D plan view state
+function updateViewBounds(state, box, now, axes){
+  axes = axes || ['X','Y'];
+  const tgt = {};
+  for(const ax of axes){ tgt['min'+ax]=Math.floor(box['min'+ax]/PLAN_GRID_M)*PLAN_GRID_M; tgt['max'+ax]=Math.ceil(box['max'+ax]/PLAN_GRID_M)*PLAN_GRID_M; }
+  if(!state.view){ state.view = tgt; return state.view; } // 初回はそのまま採用（既存の初期値相当）
+  const view = state.view;
+  let needExpand = false;
+  for(const ax of axes) if(tgt['min'+ax]<view['min'+ax] || tgt['max'+ax]>view['max'+ax]) needExpand = true;
+  let shrinkCandidate = !needExpand;
+  for(const ax of axes){
+    const spanV=view['max'+ax]-view['min'+ax], spanB=tgt['max'+ax]-tgt['min'+ax];
+    if(!(spanB < spanV*PLAN_SHRINK_RATIO)) shrinkCandidate = false;
+  }
+  if(shrinkCandidate){ if(state.shrinkSince==null) state.shrinkSince = now; } else state.shrinkSince = null;
+  const shrinkReady = shrinkCandidate && (now-state.shrinkSince >= PLAN_SHRINK_HOLD_MS);
+  let next;
+  if(needExpand){
+    // マーカーが画面外に出ないよう、拡大方向は即スナップ / snap immediately so nothing goes off-screen
+    next = {};
+    for(const ax of axes){ next['min'+ax]=Math.min(view['min'+ax],tgt['min'+ax]); next['max'+ax]=Math.max(view['max'+ax],tgt['max'+ax]); }
+  } else if(shrinkReady){
+    next = {};
+    for(const ax of axes){ next['min'+ax]=view['min'+ax]+(tgt['min'+ax]-view['min'+ax])*PLAN_EASE; next['max'+ax]=view['max'+ax]+(tgt['max'+ax]-view['max'+ax])*PLAN_EASE; }
+  } else {
+    next = view; // 縮小条件が未成立/未達なら枠を動かさない(震え防止) / hold still, avoids jitter
+  }
+  state.view = next;
+  return next;
+}
 function drawPlan(){
   const fc = fitCanvas(document.getElementById('cvPlan')); if(!fc) return;
   const {ctx,w,h} = fc;
@@ -607,9 +690,11 @@ function drawPlan(){
     if(m){ xs.push(a.p[0]-m.d, a.p[0]+m.d); ys.push(a.p[1]-m.d, a.p[1]+m.d); }
   }
   for(const p of fixTrail){ xs.push(p.x); ys.push(p.y); }
-  let minX=Math.min(...xs)-0.5, maxX=Math.max(...xs)+0.5, minY=Math.min(...ys)-0.5, maxY=Math.max(...ys)+0.5;
-  if(maxX-minX<1){ const c=(maxX+minX)/2; minX=c-0.5; maxX=c+0.5; }
-  if(maxY-minY<1){ const c=(maxY+minY)/2; minY=c-0.5; maxY=c+0.5; }
+  let cbMinX=Math.min(...xs)-0.5, cbMaxX=Math.max(...xs)+0.5, cbMinY=Math.min(...ys)-0.5, cbMaxY=Math.max(...ys)+0.5;
+  if(cbMaxX-cbMinX<1){ const c=(cbMaxX+cbMinX)/2; cbMinX=c-0.5; cbMaxX=c+0.5; }
+  if(cbMaxY-cbMinY<1){ const c=(cbMaxY+cbMinY)/2; cbMinY=c-0.5; cbMaxY=c+0.5; }
+  const view = updateViewBounds(planViewState2D, {minX:cbMinX,maxX:cbMaxX,minY:cbMinY,maxY:cbMaxY}, performance.now());
+  const {minX,maxX,minY,maxY} = view;
   const iw=w-pad*2, ih=h-pad*2;
   const scale = Math.max(0.001, Math.min(iw/(maxX-minX), ih/(maxY-minY)));
   const ox = pad+(iw-(maxX-minX)*scale)/2, oy = pad+(ih-(maxY-minY)*scale)/2;
@@ -651,9 +736,12 @@ function drawPlan(){
   }
   if(fixLatest && fixLatest.ok && Array.isArray(fixLatest.p)){
     const [x,y] = toPx(fixLatest.p[0], fixLatest.p[1]);
+    const stale = performance.now()-lastFixAt>2000; // 受信が止まっているのに描画だけ動いて見えないように
+    if(stale) ctx.globalAlpha = 0.35;
     ctx.strokeStyle=COL.ink; ctx.lineWidth=1.5;
     ctx.beginPath(); ctx.moveTo(x-7,y); ctx.lineTo(x+7,y); ctx.moveTo(x,y-7); ctx.lineTo(x,y+7); ctx.stroke();
     ctx.beginPath(); ctx.arc(x,y,4,0,TAU); ctx.fillStyle=COL.ink; ctx.fill();
+    if(stale) ctx.globalAlpha = 1;
   }
 }
 
@@ -672,9 +760,12 @@ function getBounds3D(){
   for(const a of anchorsCfg) if(a && Array.isArray(a.p)){ xs.push(a.p[0]); ys.push(a.p[1]); zs.push(a.p[2]||0); }
   for(const p of fixTrail) if(p.z!=null){ xs.push(p.x); ys.push(p.y); zs.push(p.z); }
   const pad=0.6;
-  return { minX:Math.min(...xs)-pad, maxX:Math.max(...xs)+pad,
+  const box = { minX:Math.min(...xs)-pad, maxX:Math.max(...xs)+pad,
     minY:Math.min(...ys)-pad, maxY:Math.max(...ys)+pad,
     minZ:Math.min(0,Math.min(...zs))-0.2, maxZ:Math.max(0,Math.max(...zs))+pad };
+  // 2D位置図と同じヒステリシス(拡大即時/縮小3秒保持/0.5mグリッド)をXYZに適用して安定させる
+  // apply the same hysteresis as the 2D view (immediate expand / 3s shrink hold / 0.5m grid) to XYZ
+  return updateViewBounds(planViewState3D, box, performance.now(), ['X','Y','Z']);
 }
 function drawPlan3D(){
   const fc = fitCanvas(document.getElementById('cvPlan')); if(!fc) return;
@@ -743,13 +834,15 @@ function drawPlan3D(){
   if(fixLatest && fixLatest.ok && Array.isArray(fixLatest.p)){
     const z = fixLatest.p.length>2 ? fixLatest.p[2] : (typeof fixLatest.z_fixed==='number' ? fixLatest.z_fixed : 0);
     const wp=[fixLatest.p[0],fixLatest.p[1],z], s=toScr(wp), gp=toScr([wp[0],wp[1],0]);
+    const stale = performance.now()-lastFixAt>2000; // 受信が止まっているのに描画だけ動いて見えないように
     items.push({depth:s.depth, draw:()=>{
       ctx.strokeStyle=COL.ink; ctx.globalAlpha=0.5; ctx.setLineDash([3,3]); ctx.lineWidth=1.2;
       ctx.beginPath(); ctx.moveTo(s.x,s.y); ctx.lineTo(gp.x,gp.y); ctx.stroke();
-      ctx.setLineDash([]); ctx.globalAlpha=1;
+      ctx.setLineDash([]); ctx.globalAlpha = stale ? 0.35 : 1;
       ctx.fillStyle=COL.ink; ctx.beginPath(); ctx.arc(s.x,s.y,5,0,TAU); ctx.fill();
       ctx.strokeStyle=COL.ink; ctx.lineWidth=1.5;
       ctx.beginPath(); ctx.moveTo(s.x-7,s.y); ctx.lineTo(s.x+7,s.y); ctx.moveTo(s.x,s.y-7); ctx.lineTo(s.x,s.y+7); ctx.stroke();
+      ctx.globalAlpha=1;
     }});
   }
   items.sort((p,q)=>p.depth-q.depth);
@@ -759,18 +852,35 @@ function drawPlan3D(){
 // ---- 更新ループ / update loops ----
 let lastDraw = 0;
 function tick(ts){
+  // 再スケジュールを最初に行う：どれか1つの描画が例外を投げてもループは止まらない
+  // re-arm the next frame first, so a single throwing draw call can never kill the loop
+  requestAnimationFrame(tick);
   if(ts - lastDraw >= 100){
     lastDraw = ts;
-    drawDist(); drawRate(); drawCycle(); if(view3D) drawPlan3D(); else drawPlan();
+    for(const fn of [drawDist, drawRate, drawCycle, view3D?drawPlan3D:drawPlan]){
+      try{ fn(); }catch(e){ noteDrawError(e); }
+    }
   }
-  requestAnimationFrame(tick);
 }
 function uiTick(){
-  renderHeader(); renderCards(); renderAnchorTable(); renderRaw();
+  try{
+    // 5秒以上メッセージが来ないのに ws が open のままなら「接続中と表示されたまま固まる」状態
+    // → いったん close して既存の onclose→scheduleReconnect 経路に再接続させる
+    if(ws && ws.readyState===WebSocket.OPEN && performance.now()-lastMsgAt>5000){
+      if(!stalled){
+        stalled = true;
+        console.warn(`[watchdog] no message for ${((performance.now()-lastMsgAt)/1000).toFixed(1)}s, reconnecting`);
+        try{ ws.close(); }catch(e){}
+      }
+    }
+    renderHeader(); renderCards(); renderAnchorTable(); renderRaw();
+  }catch(e){ noteMsgError(e); }
 }
 function rateTick(){
-  rateLinesShown = curLines; rateBytesShown = curBytes;
-  curLines = 0; curBytes = 0;
+  try{
+    rateLinesShown = curLines; rateBytesShown = curBytes;
+    curLines = 0; curBytes = 0;
+  }catch(e){ noteMsgError(e); }
 }
 
 // ---- UI 配線 / UI wiring ----
