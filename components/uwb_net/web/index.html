@@ -162,7 +162,7 @@ details#rawDet summary{cursor:pointer;font-size:13px;color:var(--ink2);margin-bo
     <div class="twrap" style="margin-top:8px">
       <table>
         <thead><tr>
-          <th></th><th>n</th><th>x 平均 [m]</th><th>y 平均 [m]</th><th>x 標準偏差 [mm]</th><th>y 標準偏差 [mm]</th>
+          <th></th><th>n</th><th>x 平均 [m]</th><th>y 平均 [m]</th><th>x 標準偏差 [mm]</th><th>y 標準偏差 [mm]</th><th>z 標準偏差 [mm]</th>
           <th>1周期移動量 中央値 [mm]</th><th>1周期移動量 最大 [mm]</th>
         </tr></thead>
         <tbody id="posStatTbody"></tbody>
@@ -188,7 +188,7 @@ details#rawDet summary{cursor:pointer;font-size:13px;color:var(--ink2);margin-bo
     <div class="chart-box"><canvas id="cvRate"></canvas></div>
     <div class="chart-title muted">cycle_ms <code>fix.cycle_ms</code>（薄い帯=直近1秒の最大）</div>
     <div class="chart-box"><canvas id="cvCycle"></canvas></div>
-    <div class="chart-title muted">位置 fix.p / lv3.p [m]（実線=EKF 太線 / 細線=通常解）</div>
+    <div class="chart-title muted">位置 fix.p / lv3.p [m]（太線=EKF / 細線=通常解、x, y, z: z は 3D 測位時のみ）</div>
     <div class="chart-box"><canvas id="cvPos"></canvas></div>
   </section>
 
@@ -250,8 +250,10 @@ const rateSeries = new Map();      // a -> [{t,inst,cum}]
 const fixAnchorsLatest = new Map();// a -> latest fix.anchors[] entry
 let fixLatest = null;
 const cycleSeries = [];            // [{t,val,band}]
-const posSeriesNls = [];           // [{t,x,y}] fix.p（Lv2 NLS, o.ok のとき）
-const posSeriesEkf = [];           // [{t,x,y}] fix.lv3.p（EKF, o.lv3.ok のとき）
+const posSeriesNls = [];           // [{t,x,y,z}] fix.p（Lv2 NLS, o.ok のとき。z は 3D fix (p が3成分) のときだけ入る）
+                                    // {t,x,y,z}, from fix.p (Lv2 NLS, when o.ok); z present only for a 3D fix (3-component p)
+const posSeriesEkf = [];           // [{t,x,y,z}] fix.lv3.p（EKF, o.lv3.ok のとき。z は同上）
+                                    // {t,x,y,z}, from fix.lv3.p (EKF, when o.lv3.ok); z as above
 const fixTrail = [];               // [{x,y}] 最大200点
 const resSeries = [];              // [{t,r}] fix.residual_rms [m]（o.ok のときのみ）60秒保持
 const fixFlagSeries = [];          // [{t,ok,excluded}] 全 fix 行、60秒保持（測距統計パネル用）
@@ -426,11 +428,18 @@ function onFix(o){
     const z = o.p.length>2 ? o.p[2] : (typeof o.z_fixed==='number' ? o.z_fixed : 0);
     fixTrail.push({x:o.p[0], y:o.p[1], z});
     if(fixTrail.length>200) fixTrail.shift();
-    posSeriesNls.push({t, x:o.p[0], y:o.p[1]});
+    // p[2] は 2D モードでも「内部で使う固定高さ」として常に入っている（main.cpp 側は3成分固定フォーマット）
+    // ので、z 系列には mode==='3d' のときだけ入れる（2D混入で平線/偽の標準偏差が出るのを防ぐ）。
+    // p[2] is always present even in 2D mode (the fixed height used internally; main.cpp always
+    // formats p with 3 components), so only record z when mode==='3d' — otherwise 2D data would
+    // leak in as a flat line / a bogus std-dev.
+    const is3d = o.mode==='3d';
+    posSeriesNls.push({t, x:o.p[0], y:o.p[1], z: (is3d && o.p.length>2) ? o.p[2] : undefined});
     while(posSeriesNls.length && posSeriesNls[0].t < t-60000) posSeriesNls.shift();
   }
   if(o.lv3 && o.lv3.ok && Array.isArray(o.lv3.p)){
-    posSeriesEkf.push({t, x:o.lv3.p[0], y:o.lv3.p[1]});
+    const is3d = o.mode==='3d';
+    posSeriesEkf.push({t, x:o.lv3.p[0], y:o.lv3.p[1], z: (is3d && o.lv3.p.length>2) ? o.lv3.p[2] : undefined});
     while(posSeriesEkf.length && posSeriesEkf[0].t < t-60000) posSeriesEkf.shift();
   }
   if(o.ok && typeof o.residual_rms==='number'){
@@ -658,21 +667,24 @@ function renderRangingStatTable(){
 // windowed stats for a position series (NLS/EKF); step = distance between consecutive fixes [m]
 function computeSeriesStat(pts){
   const n = pts.length; if(!n) return null;
-  let sx=0, sy=0;
-  for(const p of pts){ sx+=p.x; sy+=p.y; }
-  const mx=sx/n, my=sy/n;
-  let vx=0, vy=0;
-  for(const p of pts){ vx+=(p.x-mx)*(p.x-mx); vy+=(p.y-my)*(p.y-my); }
-  const sdx=Math.sqrt(vx/n), sdy=Math.sqrt(vy/n);
+  let sx=0, sy=0, sz=0, nz=0;
+  for(const p of pts){ sx+=p.x; sy+=p.y; if(typeof p.z==='number'){ sz+=p.z; nz++; } }
+  const mx=sx/n, my=sy/n, mz = nz?sz/nz:null;
+  let vx=0, vy=0, vz=0;
+  for(const p of pts){ vx+=(p.x-mx)*(p.x-mx); vy+=(p.y-my)*(p.y-my); if(typeof p.z==='number') vz+=(p.z-mz)*(p.z-mz); }
+  // z 標準偏差は窓内の全点に z がある(=3D)ときだけ算出。一部でも欠けていれば null（2D混在は出さない）
+  // z std-dev only when every point in the window has z (3D); if any is missing, null (avoid mixing in 2D)
+  const sdx=Math.sqrt(vx/n), sdy=Math.sqrt(vy/n), sdz = (nz===n) ? Math.sqrt(vz/nz) : null;
   const steps=[];
   for(let i=1;i<n;i++) steps.push(Math.hypot(pts[i].x-pts[i-1].x, pts[i].y-pts[i-1].y));
-  return {n, mx, my, sdx, sdy, stepMed: steps.length?median(steps):null, stepMax: steps.length?Math.max(...steps):null};
+  return {n, mx, my, sdx, sdy, sdz, stepMed: steps.length?median(steps):null, stepMax: steps.length?Math.max(...steps):null};
 }
 function posStatRowHtml(label, pts){
   const st = computeSeriesStat(pts);
-  if(!st) return `<tr><td>${esc(label)}</td><td>0</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>`;
+  if(!st) return `<tr><td>${esc(label)}</td><td>0</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>`;
   return `<tr><td>${esc(label)}</td><td>${st.n}</td><td>${st.mx.toFixed(3)}</td><td>${st.my.toFixed(3)}</td>`+
     `<td>${(st.sdx*1000).toFixed(1)}</td><td>${(st.sdy*1000).toFixed(1)}</td>`+
+    `<td>${st.sdz!=null?(st.sdz*1000).toFixed(1):'—'}</td>`+
     `<td>${st.stepMed!=null?(st.stepMed*1000).toFixed(1):'—'}</td><td>${st.stepMax!=null?(st.stepMax*1000).toFixed(1):'—'}</td></tr>`;
 }
 function renderPosStatTable(){
@@ -812,10 +824,17 @@ function drawPos(){
   const ptsEkf = posSeriesEkf.filter(p=>p.t>=now-windowMs);
   const ptsNls = posSeriesNls.filter(p=>p.t>=now-windowMs);
   if(!ptsEkf.length && !ptsNls.length){ ctx.clearRect(0,0,w,h); return; }
+  // z は「最新 fix が 3D モード」かつ「窓内に z を持つ点がある」ときだけ描く。
+  // 2D モードの z は固定高さの平線になるだけなので出さない。
+  // draw z only when the latest fix is in 3D mode AND the window has z samples;
+  // in 2D mode z is just the fixed height (a flat line), so omit it.
+  const hasZ = !!(fixLatest && fixLatest.mode==='3d') &&
+    (ptsNls.some(p=>typeof p.z==='number') || ptsEkf.some(p=>typeof p.z==='number'));
   let ymin=Infinity, ymax=-Infinity;
   for(const p of ptsEkf.concat(ptsNls)){
     if(p.x<ymin) ymin=p.x; if(p.x>ymax) ymax=p.x;
     if(p.y<ymin) ymin=p.y; if(p.y>ymax) ymax=p.y;
+    if(hasZ && typeof p.z==='number'){ if(p.z<ymin) ymin=p.z; if(p.z>ymax) ymax=p.z; }
   }
   const padv = Math.max(0.05, (ymax-ymin)*0.15);
   ymin -= padv; ymax += padv;
@@ -823,17 +842,26 @@ function drawPos(){
   const drawLine=(pts,key,col,lw)=>{
     ctx.strokeStyle=col; ctx.lineWidth=lw; ctx.beginPath();
     let started=false, last=null;
-    for(const p of pts){ const [x,y]=toPx(p.t,p[key]); if(!started){ ctx.moveTo(x,y); started=true; } else ctx.lineTo(x,y); last=[x,y,p[key]]; }
+    for(const p of pts){
+      if(typeof p[key]!=='number') continue; // z が無い点(2D時など)はスキップ / skip points without this key (e.g. z in 2D)
+      const [x,y]=toPx(p.t,p[key]); if(!started){ ctx.moveTo(x,y); started=true; } else ctx.lineTo(x,y); last=[x,y,p[key]];
+    }
     if(started) ctx.stroke();
     return last;
   };
-  drawLine(ptsNls,'x',COL.s1,1);
-  drawLine(ptsNls,'y',COL.s2,1);
-  const lastX = drawLine(ptsEkf,'x',COL.s1,2.5);
-  const lastY = drawLine(ptsEkf,'y',COL.s2,2.5);
+  const lastNlsX = drawLine(ptsNls,'x',COL.s1,1);
+  const lastNlsY = drawLine(ptsNls,'y',COL.s2,1);
+  const lastNlsZ = hasZ ? drawLine(ptsNls,'z',COL.s3,1) : null;
+  const lastEkfX = drawLine(ptsEkf,'x',COL.s1,2.5);
+  const lastEkfY = drawLine(ptsEkf,'y',COL.s2,2.5);
+  const lastEkfZ = hasZ ? drawLine(ptsEkf,'z',COL.s3,2.5) : null;
+  // ラベルは EKF（太線）の末端を優先し、無ければ通常解（細線）の末端を使う
+  // label the end of the EKF (thick) line when available, else fall back to the NLS (thin) line
+  const lastX = lastEkfX || lastNlsX, lastY = lastEkfY || lastNlsY, lastZ = lastEkfZ || lastNlsZ;
   ctx.font='10px system-ui'; ctx.textAlign='left'; ctx.textBaseline='middle';
   if(lastX){ ctx.fillStyle=COL.s1; ctx.fillText('x '+lastX[2].toFixed(2), lastX[0]+3, lastX[1]); }
   if(lastY){ ctx.fillStyle=COL.s2; ctx.fillText('y '+lastY[2].toFixed(2), lastY[0]+3, lastY[1]); }
+  if(lastZ){ ctx.fillStyle=COL.s3; ctx.fillText('z '+lastZ[2].toFixed(2), lastZ[0]+3, lastZ[1]); }
 }
 // ---- 測位図のビュー枠ヒステリシス / plan-view bounds hysteresis (2D と 3D で共有) ----
 // 内容(アンカー+距離円+軌跡)の範囲をそのまま毎フレーム反映すると、距離の揺らぎで枠が
@@ -1210,13 +1238,15 @@ function startDemo(){
   const feed = o=>handleLine(JSON.stringify(o));
   const t0 = performance.now();
   let seq = 0;
+  let ekfP = null; // EKF(lv3)はNLS(tp)を軽く平滑化した軌跡として模擬 / simulate lv3 as a lightly-smoothed trace of tp
   feed({type:'node', addr:'A0000', role:'tag', name:'TAG-DEMO', wifi:{mode:'STA',ssid:'demo',ip:'192.0.2.1',rssi:-52}, uptime_s:0, heap_free:180000, drops:0, ws_clients:1, udp_tx:0, udp_rx:0});
   feed({type:'anchors', mode:'3d', anchors: anchors.map(a=>({id:a.id, p:a.p, enabled:true}))});
   setInterval(()=>{
     const t = (performance.now()-t0)/1000;
     const tp = [2.5+2*Math.cos(t*0.4), 2+2*Math.sin(t*0.4), 0.9+0.5*Math.sin(t*0.7)];
+    ekfP = ekfP ? ekfP.map((v,i)=>v+(tp[i]-v)*0.3) : tp.slice();
     feed({type:'meas', meas: anchors.map(a=>({a:a.id, d: dist3(a.p,tp)+(Math.random()-0.5)*0.02}))});
-    feed({type:'fix', ok:true, mode:'3d', p:tp, cycle_ms: 30+Math.random()*5, gdop:2.1, residual_m:0.02,
+    feed({type:'fix', ok:true, mode:'3d', p:tp, lv3:{ok:true, p:ekfP}, cycle_ms: 30+Math.random()*5, gdop:2.1, residual_m:0.02,
       anchors: anchors.map(a=>({a:a.id, elapsed_ms: 5+Math.random()*2}))});
     seq++;
     if(seq%20===0){
