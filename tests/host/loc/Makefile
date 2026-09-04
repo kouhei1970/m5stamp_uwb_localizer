@@ -74,6 +74,34 @@ REF_WARN ?= $(WARN)
 
 DEFS ?= $(ANCHORS8_DEFS)
 
+# --------------------------------------------------- 反証テスト (handedness)
+# 「測位ソルバがアンカー座標と同じ右手系で解を返すか (鏡像を返さないか)」
+# を確かめる自己完結型のテスト (test_handedness.c、既存の test_uwb.c /
+# test_regress.c とは独立)。uwb_survey_tape.c のテープ測量ソルバも
+# 対象に含むため、uwb_survey/ のソースをここだけ追加でコンパイルする
+# (SRC/LIB は変えない。オブジェクト名を handedness_ 接頭辞にして
+# $(OBJ) の静的パターンルールと衝突しないようにしてある)。
+UWB_SURVEY_DIR      = $(ROOT)/components/uwb_survey
+HANDEDNESS_SRC      = test_handedness.c
+HANDEDNESS_BIN      = $(BUILD)/test_handedness
+HANDEDNESS_INCLUDES = $(INCLUDES) -I$(UWB_SURVEY_DIR)/include
+HANDEDNESS_EXTRA_OBJ = $(BUILD)/handedness_uwb_survey.o $(BUILD)/handedness_uwb_survey_tape.o
+
+.PHONY: handedness
+
+$(BUILD)/handedness_uwb_survey.o: $(UWB_SURVEY_DIR)/src/uwb_survey.c | $(BUILD)
+	$(CC) $(CFLAGS) $(WARN) $(DEFS) $(HANDEDNESS_INCLUDES) -std=c99 -c $< -o $@
+
+$(BUILD)/handedness_uwb_survey_tape.o: $(UWB_SURVEY_DIR)/src/uwb_survey_tape.c | $(BUILD)
+	$(CC) $(CFLAGS) $(WARN) $(DEFS) $(HANDEDNESS_INCLUDES) -std=c99 -c $< -o $@
+
+$(HANDEDNESS_BIN): $(HANDEDNESS_SRC) $(LIB) $(HANDEDNESS_EXTRA_OBJ)
+	$(CC) $(CFLAGS) $(WARN) $(DEFS) $(HANDEDNESS_INCLUDES) -std=c99 $(HANDEDNESS_SRC) $(LIB) $(HANDEDNESS_EXTRA_OBJ) $(LDLIBS) -o $@
+
+# 単独実行用。test/regress とは別建てで、既存ターゲットの依存には入れない。
+handedness: $(HANDEDNESS_BIN)
+	./$(HANDEDNESS_BIN)
+
 # -MMD -MP (CFLAGS) が $(BUILD)/*.d / $(BUILD)/ref/*.d にヘッダ依存を
 # 書き出す。ヘッダだけ直してもここで拾って再コンパイルされるので、
 # 古い .o のまま「通ってはいけないものが通る」事故を防ぐ（初回ビルドでは
