@@ -203,6 +203,9 @@ details#rawDet summary{cursor:pointer;font-size:13px;color:var(--ink2);margin-bo
         <button id="btnPlanFs">拡大</button>
       </div>
     </div>
+    <!-- 印・軌跡は fix.lv3.p（EKF）が既定。EKF 無効時のみ fix.p（通常解）にフォールバックする -->
+    <!-- marker/trail default to fix.lv3.p (EKF); fall back to fix.p (NLS) only when no EKF is present -->
+    <div class="chart-title muted">印・軌跡 = EKF 解（薄い丸 = 通常解）。EKF が無いときは通常解</div>
     <div id="planBox"><canvas id="cvPlan"></canvas></div>
   </section>
 
@@ -249,12 +252,15 @@ const statsLatestByA = new Map();  // a -> latest stats.anchors[] entry
 const rateSeries = new Map();      // a -> [{t,inst,cum}]
 const fixAnchorsLatest = new Map();// a -> latest fix.anchors[] entry
 let fixLatest = null;
+let ekfLatest = null;              // fix.lv3（o.lv3.ok && p が配列のときのみ非null）+ z（p[2] か z_fixed で解決済み）。測位図の主表示に使う
+                                    // fix.lv3, set only when o.lv3.ok && p is an array, plus a resolved z (p[2] or z_fixed); the plan view's primary marker/trail source
 const cycleSeries = [];            // [{t,val,band}]
 const posSeriesNls = [];           // [{t,x,y,z}] fix.p（Lv2 NLS, o.ok のとき。z は 3D fix (p が3成分) のときだけ入る）
                                     // {t,x,y,z}, from fix.p (Lv2 NLS, when o.ok); z present only for a 3D fix (3-component p)
 const posSeriesEkf = [];           // [{t,x,y,z}] fix.lv3.p（EKF, o.lv3.ok のとき。z は同上）
                                     // {t,x,y,z}, from fix.lv3.p (EKF, when o.lv3.ok); z as above
-const fixTrail = [];               // [{x,y}] 最大200点
+const fixTrail = [];               // [{x,y,z}] 通常解(NLS)の軌跡。最大200点
+const ekfTrail = [];               // [{x,y,z}] EKF(lv3)の軌跡。fixTrail と同じ形・上限200点。測位図はこちらを優先表示
 const resSeries = [];              // [{t,r}] fix.residual_rms [m]（o.ok のときのみ）60秒保持
 const fixFlagSeries = [];          // [{t,ok,excluded}] 全 fix 行、60秒保持（測距統計パネル用）
 let statsWindowMs = 10000;         // 測距統計パネルの集計窓 [ms]（10s/60s トグル、既定10s）
@@ -271,7 +277,7 @@ const isDemo = new URLSearchParams(location.search).get('demo')==='1';
 // ---- 死活監視・エラー計測 / liveness watchdog & error counters ----
 // 「WebSocket 接続中のまま画面が固まる」不具合の切り分け用。受信・描画の両方を監視する。
 // diagnostics for the "still says connected but frozen" bug: watch both message receipt and rendering.
-let lastMsgAt = 0, lastFixAt = 0, stalled = false;
+let lastMsgAt = 0, lastFixAt = 0, lastEkfAt = 0, stalled = false;
 let msgErrors = 0, lastMsgError = '', lastMsgErrorLoggedAt = 0;
 let drawErrors = 0, lastDrawError = '', lastDrawErrorLoggedAt = 0;
 function noteMsgError(e){
@@ -441,6 +447,17 @@ function onFix(o){
     const is3d = o.mode==='3d';
     posSeriesEkf.push({t, x:o.lv3.p[0], y:o.lv3.p[1], z: (is3d && o.lv3.p.length>2) ? o.lv3.p[2] : undefined});
     while(posSeriesEkf.length && posSeriesEkf[0].t < t-60000) posSeriesEkf.shift();
+    // 測位図の主表示用: z は fixTrail と同じ規則（p[2] があればそれ、無ければ z_fixed、無ければ0）で解決する
+    // for the plan view's primary marker: resolve z the same way as fixTrail (p[2] if present, else z_fixed, else 0)
+    const ekfZ = o.lv3.p.length>2 ? o.lv3.p[2] : (typeof o.z_fixed==='number' ? o.z_fixed : 0);
+    ekfLatest = Object.assign({}, o.lv3, {z: ekfZ});
+    lastEkfAt = t;
+    ekfTrail.push({x:o.lv3.p[0], y:o.lv3.p[1], z: ekfZ});
+    if(ekfTrail.length>200) ekfTrail.shift();
+  } else {
+    // EKF が今回無効/未提供なら、古いマーカーが残り続けないよう即座に消す
+    // no valid EKF this time: clear immediately so a stale marker never lingers
+    ekfLatest = null;
   }
   if(o.ok && typeof o.residual_rms==='number'){
     resSeries.push({t, r:o.residual_rms});
@@ -920,6 +937,7 @@ function drawPlan(){
     if(m){ xs.push(a.p[0]-m.d, a.p[0]+m.d); ys.push(a.p[1]-m.d, a.p[1]+m.d); }
   }
   for(const p of fixTrail){ xs.push(p.x); ys.push(p.y); }
+  for(const p of ekfTrail){ xs.push(p.x); ys.push(p.y); }
   let cbMinX=Math.min(...xs)-0.5, cbMaxX=Math.max(...xs)+0.5, cbMinY=Math.min(...ys)-0.5, cbMaxY=Math.max(...ys)+0.5;
   if(cbMaxX-cbMinX<1){ const c=(cbMaxX+cbMinX)/2; cbMinX=c-0.5; cbMaxX=c+0.5; }
   if(cbMaxY-cbMinY<1){ const c=(cbMaxY+cbMinY)/2; cbMinY=c-0.5; cbMaxY=c+0.5; }
@@ -955,9 +973,12 @@ function drawPlan(){
     ctx.strokeStyle=getColor(a.id); ctx.globalAlpha=0.25; ctx.lineWidth=1;
     ctx.beginPath(); ctx.arc(cx,cy,m.d*scale,0,TAU); ctx.stroke(); ctx.globalAlpha=1;
   }
-  if(fixTrail.length>1){
+  // 軌跡は EKF が有効ならそちらを主表示、無ければ通常解(NLS)にフォールバック
+  // trail: prefer the EKF when available, else fall back to the NLS solution
+  const mainTrail2D = ekfLatest ? ekfTrail : fixTrail;
+  if(mainTrail2D.length>1){
     ctx.strokeStyle=COL.ink; ctx.globalAlpha=0.3; ctx.lineWidth=1.5; ctx.beginPath();
-    fixTrail.forEach((p,i)=>{ const [x,y]=toPx(p.x,p.y); if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y); });
+    mainTrail2D.forEach((p,i)=>{ const [x,y]=toPx(p.x,p.y); if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y); });
     ctx.stroke(); ctx.globalAlpha=1;
   }
   for(const a of validAnchors){
@@ -969,14 +990,25 @@ function drawPlan(){
     ctx.font='10px system-ui'; ctx.textAlign='left'; ctx.textBaseline='bottom';
     ctx.fillText(a.id, x+6, y-4);
   }
-  if(fixLatest && fixLatest.ok && Array.isArray(fixLatest.p)){
-    const [x,y] = toPx(fixLatest.p[0], fixLatest.p[1]);
-    const stale = performance.now()-lastFixAt>2000; // 受信が止まっているのに描画だけ動いて見えないように
+  // 主マーカーは EKF 優先、無ければ通常解(NLS)にフォールバック（今まで通り）
+  // main marker: prefer the EKF, else fall back to the NLS solution (unchanged from before)
+  const hasNls2D = fixLatest && fixLatest.ok && Array.isArray(fixLatest.p);
+  if(ekfLatest || hasNls2D){
+    const usingEkf = !!ekfLatest;
+    const [x,y] = usingEkf ? toPx(ekfLatest.p[0], ekfLatest.p[1]) : toPx(fixLatest.p[0], fixLatest.p[1]);
+    const stale = performance.now()-(usingEkf?lastEkfAt:lastFixAt)>2000; // 受信が止まっているのに描画だけ動いて見えないように
     if(stale) ctx.globalAlpha = 0.35;
     ctx.strokeStyle=COL.ink; ctx.lineWidth=1.5;
     ctx.beginPath(); ctx.moveTo(x-7,y); ctx.lineTo(x+7,y); ctx.moveTo(x,y-7); ctx.lineTo(x,y+7); ctx.stroke();
     ctx.beginPath(); ctx.arc(x,y,4,0,TAU); ctx.fillStyle=COL.ink; ctx.fill();
     if(stale) ctx.globalAlpha = 1;
+    // EKF が主表示のときは、比較用に通常解(NLS)を薄い中空丸で重ねる（軌跡・ラベルは無し）
+    // when the EKF is the main marker, overlay the NLS solution as a small faint hollow circle for comparison (no trail/label)
+    if(usingEkf && hasNls2D){
+      const [nx,ny] = toPx(fixLatest.p[0], fixLatest.p[1]);
+      ctx.save(); ctx.globalAlpha=0.35; ctx.strokeStyle=COL.ink; ctx.lineWidth=1;
+      ctx.beginPath(); ctx.arc(nx,ny,4,0,TAU); ctx.stroke(); ctx.restore();
+    }
   }
 }
 
@@ -998,6 +1030,7 @@ function getBounds3D(){
   let xs=[0], ys=[0], zs=[0];
   for(const a of anchorsCfg) if(a && Array.isArray(a.p)){ xs.push(a.p[0]); ys.push(a.p[1]); zs.push(a.p[2]||0); }
   for(const p of fixTrail) if(p.z!=null){ xs.push(p.x); ys.push(p.y); zs.push(p.z); }
+  for(const p of ekfTrail) if(p.z!=null){ xs.push(p.x); ys.push(p.y); zs.push(p.z); }
   const pad=0.6;
   const box = { minX:Math.min(...xs)-pad, maxX:Math.max(...xs)+pad,
     minY:Math.min(...ys)-pad, maxY:Math.max(...ys)+pad,
@@ -1058,7 +1091,10 @@ function drawPlan3D(){
       ctx.fillText(a.id, s.x+6, s.y-4);
     }});
   }
-  const trail = fixTrail.filter(p=>p.z!=null).slice(-60); // 直近数十点をフェード表示 / fade the last few dozen fixes
+  // 軌跡は EKF が有効ならそちらを主表示、無ければ通常解(NLS)にフォールバック
+  // trail: prefer the EKF when available, else fall back to the NLS solution
+  const mainTrail3D = ekfLatest ? ekfTrail : fixTrail;
+  const trail = mainTrail3D.filter(p=>p.z!=null).slice(-60); // 直近数十点をフェード表示 / fade the last few dozen fixes
   if(trail.length>1){
     const pts = trail.map(p=>toScr([p.x,p.y,p.z]));
     const dAvg = pts.reduce((s,p)=>s+p.depth,0)/pts.length;
@@ -1070,10 +1106,15 @@ function drawPlan3D(){
       ctx.globalAlpha=1;
     }});
   }
-  if(fixLatest && fixLatest.ok && Array.isArray(fixLatest.p)){
-    const z = fixLatest.p.length>2 ? fixLatest.p[2] : (typeof fixLatest.z_fixed==='number' ? fixLatest.z_fixed : 0);
-    const wp=[fixLatest.p[0],fixLatest.p[1],z], s=toScr(wp), gp=toScr([wp[0],wp[1],0]);
-    const stale = performance.now()-lastFixAt>2000; // 受信が止まっているのに描画だけ動いて見えないように
+  // 主マーカー(+床への破線)は EKF 優先、無ければ通常解(NLS)にフォールバック（今まで通り）
+  // main marker (+ dashed drop line to the floor): prefer the EKF, else fall back to the NLS solution (unchanged from before)
+  const hasNls3D = fixLatest && fixLatest.ok && Array.isArray(fixLatest.p);
+  const nlsZ3D = hasNls3D ? (fixLatest.p.length>2 ? fixLatest.p[2] : (typeof fixLatest.z_fixed==='number' ? fixLatest.z_fixed : 0)) : 0;
+  if(ekfLatest || hasNls3D){
+    const usingEkf = !!ekfLatest;
+    const wp = usingEkf ? [ekfLatest.p[0],ekfLatest.p[1],ekfLatest.z] : [fixLatest.p[0],fixLatest.p[1],nlsZ3D];
+    const s=toScr(wp), gp=toScr([wp[0],wp[1],0]);
+    const stale = performance.now()-(usingEkf?lastEkfAt:lastFixAt)>2000; // 受信が止まっているのに描画だけ動いて見えないように
     items.push({depth:s.depth, draw:()=>{
       ctx.strokeStyle=COL.ink; ctx.globalAlpha=0.5; ctx.setLineDash([3,3]); ctx.lineWidth=1.2;
       ctx.beginPath(); ctx.moveTo(s.x,s.y); ctx.lineTo(gp.x,gp.y); ctx.stroke();
@@ -1083,6 +1124,15 @@ function drawPlan3D(){
       ctx.beginPath(); ctx.moveTo(s.x-7,s.y); ctx.lineTo(s.x+7,s.y); ctx.moveTo(s.x,s.y-7); ctx.lineTo(s.x,s.y+7); ctx.stroke();
       ctx.globalAlpha=1;
     }});
+    // EKF が主表示のときは、比較用に通常解(NLS)を薄い中空丸で重ねる（軌跡・ラベルは無し）
+    // when the EKF is the main marker, overlay the NLS solution as a small faint hollow circle for comparison (no trail/label)
+    if(usingEkf && hasNls3D){
+      const ns = toScr([fixLatest.p[0], fixLatest.p[1], nlsZ3D]);
+      items.push({depth:ns.depth, draw:()=>{
+        ctx.save(); ctx.globalAlpha=0.35; ctx.strokeStyle=COL.ink; ctx.lineWidth=1;
+        ctx.beginPath(); ctx.arc(ns.x,ns.y,4,0,TAU); ctx.stroke(); ctx.restore();
+      }});
+    }
   }
   items.sort((p,q)=>p.depth-q.depth);
   for(const it of items) it.draw();
