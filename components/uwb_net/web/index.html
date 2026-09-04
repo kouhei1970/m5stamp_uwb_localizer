@@ -205,7 +205,7 @@ details#rawDet summary{cursor:pointer;font-size:13px;color:var(--ink2);margin-bo
     </div>
     <!-- 印・軌跡は fix.lv3.p（EKF）が既定。EKF 無効時のみ fix.p（通常解）にフォールバックする -->
     <!-- marker/trail default to fix.lv3.p (EKF); fall back to fix.p (NLS) only when no EKF is present -->
-    <div class="chart-title muted">印・軌跡 = EKF 解（薄い丸 = 通常解）。EKF が無いときは通常解</div>
+    <div class="chart-title muted">印・軌跡 = EKF 解（EKF が無いときだけ通常解）</div>
     <div id="planBox"><canvas id="cvPlan"></canvas></div>
   </section>
 
@@ -259,8 +259,8 @@ const posSeriesNls = [];           // [{t,x,y,z}] fix.p（Lv2 NLS, o.ok のと�
                                     // {t,x,y,z}, from fix.p (Lv2 NLS, when o.ok); z present only for a 3D fix (3-component p)
 const posSeriesEkf = [];           // [{t,x,y,z}] fix.lv3.p（EKF, o.lv3.ok のとき。z は同上）
                                     // {t,x,y,z}, from fix.lv3.p (EKF, when o.lv3.ok); z as above
-const fixTrail = [];               // [{x,y,z}] 通常解(NLS)の軌跡。最大200点
-const ekfTrail = [];               // [{x,y,z}] EKF(lv3)の軌跡。fixTrail と同じ形・上限200点。測位図はこちらを優先表示
+const fixTrail = [];               // [{x,y,z}] 通常解(NLS)の軌跡。最大600点（約30Hzで約20秒）/ NLS trail, 600 points (~20 s at ~30 Hz)
+const ekfTrail = [];               // [{x,y,z}] EKF(lv3)の軌跡。fixTrail と同じ形・上限600点。測位図はこちらを優先表示
 const resSeries = [];              // [{t,r}] fix.residual_rms [m]（o.ok のときのみ）60秒保持
 const fixFlagSeries = [];          // [{t,ok,excluded}] 全 fix 行、60秒保持（測距統計パネル用）
 let statsWindowMs = 10000;         // 測距統計パネルの集計窓 [ms]（10s/60s トグル、既定10s）
@@ -433,7 +433,7 @@ function onFix(o){
   if(o.ok && Array.isArray(o.p)){
     const z = o.p.length>2 ? o.p[2] : (typeof o.z_fixed==='number' ? o.z_fixed : 0);
     fixTrail.push({x:o.p[0], y:o.p[1], z});
-    if(fixTrail.length>200) fixTrail.shift();
+    if(fixTrail.length>600) fixTrail.shift();
     // p[2] は 2D モードでも「内部で使う固定高さ」として常に入っている（main.cpp 側は3成分固定フォーマット）
     // ので、z 系列には mode==='3d' のときだけ入れる（2D混入で平線/偽の標準偏差が出るのを防ぐ）。
     // p[2] is always present even in 2D mode (the fixed height used internally; main.cpp always
@@ -453,7 +453,7 @@ function onFix(o){
     ekfLatest = Object.assign({}, o.lv3, {z: ekfZ});
     lastEkfAt = t;
     ekfTrail.push({x:o.lv3.p[0], y:o.lv3.p[1], z: ekfZ});
-    if(ekfTrail.length>200) ekfTrail.shift();
+    if(ekfTrail.length>600) ekfTrail.shift();
   } else {
     // EKF が今回無効/未提供なら、古いマーカーが残り続けないよう即座に消す
     // no valid EKF this time: clear immediately so a stale marker never lingers
@@ -1002,13 +1002,6 @@ function drawPlan(){
     ctx.beginPath(); ctx.moveTo(x-7,y); ctx.lineTo(x+7,y); ctx.moveTo(x,y-7); ctx.lineTo(x,y+7); ctx.stroke();
     ctx.beginPath(); ctx.arc(x,y,4,0,TAU); ctx.fillStyle=COL.ink; ctx.fill();
     if(stale) ctx.globalAlpha = 1;
-    // EKF が主表示のときは、比較用に通常解(NLS)を薄い中空丸で重ねる（軌跡・ラベルは無し）
-    // when the EKF is the main marker, overlay the NLS solution as a small faint hollow circle for comparison (no trail/label)
-    if(usingEkf && hasNls2D){
-      const [nx,ny] = toPx(fixLatest.p[0], fixLatest.p[1]);
-      ctx.save(); ctx.globalAlpha=0.35; ctx.strokeStyle=COL.ink; ctx.lineWidth=1;
-      ctx.beginPath(); ctx.arc(nx,ny,4,0,TAU); ctx.stroke(); ctx.restore();
-    }
   }
 }
 
@@ -1094,7 +1087,7 @@ function drawPlan3D(){
   // 軌跡は EKF が有効ならそちらを主表示、無ければ通常解(NLS)にフォールバック
   // trail: prefer the EKF when available, else fall back to the NLS solution
   const mainTrail3D = ekfLatest ? ekfTrail : fixTrail;
-  const trail = mainTrail3D.filter(p=>p.z!=null).slice(-60); // 直近数十点をフェード表示 / fade the last few dozen fixes
+  const trail = mainTrail3D.filter(p=>p.z!=null).slice(-180); // 直近約6秒分をフェード表示 / fade the last ~6 s of fixes
   if(trail.length>1){
     const pts = trail.map(p=>toScr([p.x,p.y,p.z]));
     const dAvg = pts.reduce((s,p)=>s+p.depth,0)/pts.length;
@@ -1124,15 +1117,6 @@ function drawPlan3D(){
       ctx.beginPath(); ctx.moveTo(s.x-7,s.y); ctx.lineTo(s.x+7,s.y); ctx.moveTo(s.x,s.y-7); ctx.lineTo(s.x,s.y+7); ctx.stroke();
       ctx.globalAlpha=1;
     }});
-    // EKF が主表示のときは、比較用に通常解(NLS)を薄い中空丸で重ねる（軌跡・ラベルは無し）
-    // when the EKF is the main marker, overlay the NLS solution as a small faint hollow circle for comparison (no trail/label)
-    if(usingEkf && hasNls3D){
-      const ns = toScr([fixLatest.p[0], fixLatest.p[1], nlsZ3D]);
-      items.push({depth:ns.depth, draw:()=>{
-        ctx.save(); ctx.globalAlpha=0.35; ctx.strokeStyle=COL.ink; ctx.lineWidth=1;
-        ctx.beginPath(); ctx.arc(ns.x,ns.y,4,0,TAU); ctx.stroke(); ctx.restore();
-      }});
-    }
   }
   items.sort((p,q)=>p.depth-q.depth);
   for(const it of items) it.draw();
