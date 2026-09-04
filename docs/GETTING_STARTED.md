@@ -41,7 +41,7 @@ UWB（Ultra-Wideband、超広帯域無線）測位を動かすまでの完全手
 |---|---:|---|
 | **M5Stamp UWB Module with FPC (QM33120W)**（SKU `S017-F`） | **6** | Qorvo QM33120W (DW3720) 搭載。**FPC コネクタ実装済み・0.5mm 12P FPC ケーブル付属が必須**（半田パッドを使わないため。無印 `S017` は FPC コネクタが無く挿せない） |
 | **M5StampS3A** | **6** | タグ（移動体）1 台 + アンカー（固定局）5 台のホスト。**旧 M5StampS3（A 無し）と完全互換** |
-| **StampS3 BreakOut** | **6** | M5StampS3A の 1.27mm ピンを 2.54mm へ変換する基板。**M5StampS3A 本体は同梱されない**（上の行と別に数える）。露出 IO 23 本、G0/EN にタクトスイッチ。出典: <https://docs.m5stack.com/en/stamp/StampS3BreakOut> |
+| **StampS3 BreakOut** | **6** | M5StampS3A の 1.27mm ピンを 2.54mm へ変換する基板。**M5StampS3A 本体は同梱されない**（上の行と別に数える）。引き出されている IO 23 本、G0/EN にタクトスイッチ。出典: <https://docs.m5stack.com/en/stamp/StampS3BreakOut> |
 | **0.5mm 12P FPC→DIP 変換基板** | **6** | UWB モジュール付属の FPC ケーブルを BreakOut の 2.54mm ヘッダへ渡す。**型番は本リポジトリでは未確定**（[11.2](#limitations)） |
 | USB-C ケーブル（データ通信対応） | 1〜 | 充電専用ケーブルでは書き込めない |
 | USB 電源（アンカー給電用） | 5 | モバイルバッテリ・USB ハブ等 |
@@ -362,7 +362,8 @@ idf.py build
 > （効くのは**レスポンダ側＝アンカーの折り返し時間**です）。配線するなら上表の
 > **G7 (DW_IRQ)**。経路Aはジャンパ線での接続なので、**後から IRQ 線を 1 本足すだけで
 > 有効化を試せます**（経路Bの半田付けと違い、後戻りが利かないという制約はありません）。
-> 既定では無効（極性が実機未検証のため）。→ [`docs/IRQ_POLICY.md`](IRQ_POLICY.md)、
+> 既定で有効です（2026-08-30 に実機で極性を確認済み。未配線の場合は自動でポーリングへ
+> フォールバックしますが、配線を推奨します）。→ [`docs/IRQ_POLICY.md`](IRQ_POLICY.md)、
 > 有効化の手順は [`docs/EXPERIMENT_PLAN.md`](EXPERIMENT_PLAN.md) 実験7
 
 #### 経路Bを選ぶ場合
@@ -435,7 +436,7 @@ idf.py build
 
 #### 経路Bを選ぶ場合
 
-- **配線長は 10cm 以内**を目安に。SPI を 16MHz で走らせます。
+- **配線長は 10cm 以内**を目安に。SPI を 16MHz で動かします。
 - すべての線をできるだけ同じ長さに揃え、**GND 線を SPI 線と束ねる**。
 - **途中にブレッドボードを挟まない。** 接触抵抗と容量が 16MHz に効きます。
 - 16MHz で不安定なら、`boards/stamps3.h` の
@@ -578,7 +579,7 @@ I (xxx) uwb_probe: L1 (periodic): raw DEV_ID = 0xDECA0314
 
 **到達までの経緯（原因は未確定）:** 最初は L1 / L2 とも FAIL で、`raw DEV_ID` が
 `0x00000000` と `0xFFFFFFFF` の間をふらついていた。`components/uwb_port` は MISO に
-プルを設定しないので、これは **MISO が浮いている**ことの直接証拠である。
+プルを設定しないので、これは **MISO が浮いている**ことの直接証拠です。
 3V3 は実測で来ていたため配線側を疑い、**変換基板の差し込みを挿し直した**ところ
 PASS した。**半田付けはやり直していない。**「差し込みが 1 ピンずれていた可能性」が
 挙がっているが、ずれた状態を直接観測していないので**原因は未確定**。機械的ストレスで
@@ -601,7 +602,7 @@ PASS した。**半田付けはやり直していない。**「差し込みが 1
 | L1 は OK だが L2 が FAIL | `dwt_probe()` の wakeup シーケンス／SPI の再現性 | RSTn へのプルアップは付けない（DS で `Must not be pulled high` と禁止されている。詳細は [3.6](#extra-parts)）。配線長・GND 戻り経路を見直す |
 | **DEV_ID は読めるのに `begin()` が `CONFIG_FAILED`**（`firmware/twr`/`tag`/`anchor` で発生。書き込み直後の再起動で起き、USB 抜き差しで直る） | RST 未配線のとき、UWB チップが前回の動作状態（受信中など）を引きずったまま MCU だけ再起動した | 本リポジトリは `begin()` の中でソフトリセットする実装なので起きないはず。起きたら `Config::soft_reset_on_begin` が `true` か、`pin_rst` を配線している場合はリセットパルスが出ているかを確認する。最終手段は電源断（外部報告と同じ症状・同じ対策） |
 | **全く反応しない** | 電源・向き | **配線を外して [3.1](#orientation) の導通試験からやり直す**。3.3V を実測。FPC で接続している場合はコネクタの挿し込み／半田付けの浮きと、パッド番号・FPC 番号の取り違え（3.0 参照）も確認 |
-| 電源を入れた瞬間に熱い | **電源逆接** | ただちに外す。モジュールが死んでいる可能性が高い |
+| 電源を入れた瞬間に熱い | **電源逆接** | ただちに外す。モジュールが故障している可能性が高い |
 
 ### 4.4 通ったら記録する
 
@@ -950,7 +951,7 @@ I (xxx) uwb_anchor: uwb_radio task started (core=1 prio=20 stack=8192), short_ad
 反映**されます。
 
 タグを USB で PC につなぎ、`idf.py -p /dev/cu.usbmodemXXXX monitor` で接続します。
-タグは毎周期 JSON を 2 行吐くので、**作業前に `output off` で出力を止めておくと
+タグは毎周期 JSON を 2 行出力するので、**作業前に `output off` で出力を止めておくと
 打ちやすくなります**。終わったら `output on` で戻します。
 
 ```
@@ -1030,7 +1031,7 @@ static const uwb::AnchorEntry kAnchors[] = {
 
 > **既定値は 5m × 5m の部屋の例です。そのまま使わないでください。**
 > この例は配置ルールを満たすように作ってあります（高さ 2.4m が 3 台、0.2m が 2 台
-> → 同一平面でない。最低高さ 0.2m → 平面が原点を通らない）。
+> → 同一平面になりません。最低高さ 0.2m → 平面が原点を通りません）。
 > 実測値に置き換えるときも、**高さを 2 段以上に散らす**構造は保ってください。
 
 台数を減らす／増やす場合は配列の要素を増減するだけです（上限は `UWB_LOC_MAX_ANCHORS`、既定 8）。
@@ -1204,7 +1205,7 @@ jq -r 'select(.type=="fix") | [.t, .ok, .ambiguous, .p[0], .p[1], .p[2], .gdop, 
 
 > `"anchors"` / `"meas"` 行は上流 [uwb_localizer](https://github.com/kouhei1970/uwb_localizer) の
 > `JsonLinesHal` がそのまま読める形式です。`"fix"` は本プロジェクト独自の追加で、
-> `JsonLinesHal` は未知の `type` を黙って読み捨てるので共存できます。
+> `JsonLinesHal` は未知の `type` を警告なく読み捨てるので共存できます。
 
 <a id="first-checks"></a>
 
@@ -1228,7 +1229,7 @@ jq -r 'select(.type=="fix") | [.t, .ok, .ambiguous, .p[0], .p[1], .p[2], .gdop, 
 `uwb::RangingService`（[`uwb_ranging_service.hpp`](../components/uwb_ranging/include/uwb_ranging_service.hpp)）です。
 
 `firmware/tag` 自体も v2 からこの `RangingService` を使っています。**電波
-（UWBチップ）を触るのは `RangingService` が起こす専用のタスク（`uwb_ranging_svc`）
+（UWBチップ）を触るのは `RangingService` が起動する専用のタスク（`uwb_ranging_svc`）
 1本だけ**で、測距・測位の結果は次の2通りの受け渡し口から取り出せます
 （「タスク」は FreeRTOS の並行実行単位、「キュー」は先入れ先出しの受け渡し箱、
 「ミューテックス」は複数のタスクが同じデータを同時に触らないための排他ロック
@@ -1547,7 +1548,7 @@ DW3720 の OTP アドレス `0x0B` は "Antenna Delay – RFLoop" とされて�
 | 項目 | 状況 |
 |---|---|
 | **NVS への実際の読み書き（`uwb_cfgstore`、アンカー座標・アドレス）** | **確認済み**（2026-09-02・09-04。`anchor set`/`addr set`＋`save`で保存し、再起動後も座標・アドレスが保持されることを2D/3D測位で確認。ホスト側でもNVSに置くバイト列の往復・境界値・破損データの検算を実施済み） |
-| **USB-Serial/JTAG 上の REPL** | **確認済み**（2026-08-27〜31、`idf.py monitor` 経由で全ファームの検証に使用）。2026-08-31 には、USB ホスト不在時に read フックが busy loop に陥り Wi-Fi 起動タスクを飢餓させる不具合を実機で発見・修正した（`598525c`）。linenoise の端末制御・JSON 出力とコンソール入力の混在は問題なく使えている |
+| **USB-Serial/JTAG 上の REPL** | **確認済み**（2026-08-27〜31、`idf.py monitor` 経由で全ファームの検証に使用）。2026-08-31 には、USB ホスト不在時に read フックが busy loop に陥り Wi-Fi 起動タスクの処理が回ってこない状態（スタベーション）にする不具合を実機で発見・修正した（`598525c`）。linenoise の端末制御・JSON 出力とコンソール入力の混在は問題なく使えている |
 | **コンソールから設定を変えたときの測距・測位の継続性** | `addr set` / `anchor set` 実行中に測距が途切れずに続くかどうかの厳密な計測は**未確認**（設定自体の保存・反映は上記のとおり確認済み）。一方、アンカーテーブルのロックを取る読み取り系コマンド（`info` / `anchor list`、USB・TCP・WebSocket 経由）は、実行中に測距を短時間（通常1〜3ms、上限20ms）足止めするだけで継続性を壊さないことを2026-08-31 に実機確認済み（`docs/HANDOFF.md` §0-D 項目8） |
 | **一次コンソールを UART から USB-Serial/JTAG へ変更した影響** | **確認済み**。`CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y` は `firmware/tag` / `firmware/anchor` の既定であり、2026-08-27 以降の全実機セッションの起動ログ確認・書き込み手順がこの設定で行われている |
 

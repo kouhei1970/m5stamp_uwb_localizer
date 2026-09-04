@@ -116,7 +116,7 @@ StampFly への統合はその成果物を利用する下流作業。
   アンカー = M5StampS3A + StampS3 BreakOut ×5（既定 Kconfig `UWB_ANCHOR_BOARD_STAMPS3`）**
 
 ### 対応ホストボード
-- **M5StampS3A + StampS3 BreakOut**（ESP32-S3、GPIO 露出多い。アンカーの既定構成であり、
+- **M5StampS3A + StampS3 BreakOut**（ESP32-S3、引き出されている GPIO が多い。アンカーの既定構成であり、
   タグ単体構成（StampFly を持たない場合）にも使う。`boards/stamps3.h`）
 - （下流）**StampFly**（M5StampS3A を搭載したドローン機体本体。タグとして背面 12P FPC
   経由で接続する。`boards/stampfly.h`）
@@ -185,11 +185,11 @@ app 層 `uwb_localizer` → 実名 `uwb_ranging`。新設: `uwb_cfgstore`（NVS 
   | `uwb_loc` | C99 | **上流 `uwb_localizer` を凍結し、最終状態（`ab23b33`）を取り込んだ。以後 `components/uwb_loc/` は本リポジトリで独立して開発する。** ESP32-S3 向けの最適化（float 化・スカラー展開など）をソースに直接入れてよい |
   | `uwb_localizer`(app層) | C++ | 上位ロジック。**実名 `uwb_ranging`** |
   移植性は「ハード依存が `uwb_port` 1枚に閉じている」ことで担保され、言語では担保しない。
-  stampfly_ecosystem は元々 C++ なので統合も素直（`namespace stampfly` ラッパを被せる）
+  stampfly_ecosystem は元々 C++ なので統合も単純（`namespace stampfly` ラッパを被せる）
 - **ハード依存は uwb_port の関数テーブル1枚に隔離**。ESP-IDF 以外へも移植可能に
 - **ボード差はヘッダのピン定義だけ**。コードは共通
 - **SPI バスは二重初期化耐性**を持たせる（stampfly_ecosystem の既存流儀。
-  単独利用時は自分で `spi_bus_initialize`、`ESP_ERR_INVALID_STATE` は許容してスキップ）
+  単独利用時はそれ自身で `spi_bus_initialize` を呼び、`ESP_ERR_INVALID_STATE` は許容してスキップ）
 - **IRQ はオプショナル**。ポーリング動作でも成立させる
   （StampFly の GROVE 2系統案では IRQ 線が取れないため。TWR の時間критиカルな部分は
     チップ内の遅延送信で処理されるので、ホストのポーリング遅延は主に更新レートに効き、

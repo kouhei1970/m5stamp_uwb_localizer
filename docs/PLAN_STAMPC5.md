@@ -17,7 +17,7 @@ StampFly は本計画の対象外。
 | 配線 | **UWB モジュールと Stamp-C5 を 0.5 mm 12P の FPC ケーブル 1 本で直結できる見込み**。電源・GND の位置が両者で完全に一致し、信号も 1 対 1 で対応する（§2）。BreakOut も手配線も不要 |
 | ビルド | 現行ソースのまま `idf.py set-target esp32c5` で**タグ・アンカーともビルドは通る**（2026-09-05 確認、アンカー 1.24 MB・タグ 1.34 MB）。ただしピン定義とコア固定が S3 用のままなので、そのままでは動かない |
 | 最大の技術リスク | ESP32-C5 は**シングルコア**。現行設計は「電波を扱うタスクをコア 1 に隔離し、Wi-Fi・ダッシュボードをコア 0 に置く」前提（§3.3） |
-| 利点 | 電池入力（3.7 V、充電回路内蔵）でアンカーの電池駆動が素直にできる。5 GHz Wi-Fi が使える。配線ゼロ |
+| 利点 | 電池入力（3.7 V、充電回路内蔵）でアンカーの電池駆動が無理なくできる。5 GHz Wi-Fi が使える。配線ゼロ |
 | 見積もり | 机上・ビルド 1〜2 日、実機 probe/twr 1 日、anchor/tag 実運用 1〜2 日、文書 半日（§6） |
 
 ## 1. Stamp-C5 の要点
@@ -95,7 +95,7 @@ FPC→DIP 変換基板から手配線する。現行の経路 A（WIRING.md §2�
 | `firmware/anchor/main/Kconfig.projbuild` | choice が STAMPS3 のみ。STAMPC5 を追加 |
 | `firmware/anchor/main/main.cpp:89-92` | `boards/stamps3.h` を無条件 include している。`#if` 分岐にする |
 | `firmware/{tag,twr,probe,devtest}/main/main.cpp` の `#if CONFIG_UWB_*_BOARD_STAMPFLY / #else` | STAMPC5 の分岐を追加（`BOARD_UWB_PORT_CONFIG` / `BOARD_NAME` / `BOARD_STATUS_LED_GPIO`） |
-| `tools/docs_check/verify_docs.py:42,84,121` | ボードヘッダの一覧が 3 か所にハードコード。`boards/stampc5.h` を追加しないと文書検査から黙って外れる |
+| `tools/docs_check/verify_docs.py:42,84,121` | ボードヘッダの一覧が 3 か所にハードコード。`boards/stampc5.h` を追加しないと文書検査から気づかれずに外れる |
 
 ### 3.3 シングルコア対応（最大の変更点）
 

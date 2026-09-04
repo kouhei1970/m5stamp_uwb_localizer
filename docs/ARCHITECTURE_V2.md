@@ -36,15 +36,15 @@
 - **電波（チップ）を触るタスクは 1 つ**（所有権）。他のタスクは統計のスナップショット（コピー）
   とキューを通してだけ関わる。
 - **待ちは IRQ 通知を基本**（`uwb_port_irq_wait()`）。IRQ が使えない構成では SPI ポーリング。
-  待ちのタイムアウトは「生存確認のための目覚まし」であって「再設定の合図」ではない。
-  目覚めたときにチップが受信状態でなければ、そのときだけ再有効化する（回数を数える）。
-- **判読の経路は 1 本**。IRQ の有無で変わるのは「待ち方」（セマフォで眠るか、回るか）だけで、
+  待ちのタイムアウトは「生存確認のための定期確認（Tick）」であって「再設定の合図」ではない。
+  Tick 発生時にチップが受信状態でなければ、そのときだけ再有効化する（回数を数える）。
+- **判読の経路は 1 本**。IRQ の有無で変わるのは「待ち方」（セマフォでスリープするか、ポーリングで回るか）だけで、
   状態レジスタ（`SYS_STATUS`）を読んで事象を分類し FSM に渡す部分は同一コードを通す。
   Qorvo SDK の `dwt_isr()` / コールバックは使わない（`docs/IRQ_POLICY.md` の方針を継承）。
 - **エッジ取りこぼしへの備え**: IRQ 線は「状態ビットが立っている間 High」で GPIO は立ち上がり
   エッジ検出のため、状態を読んでから消すまでの間に起きた事象はエッジが来ないことがある。
-  起きたら「状態を読む → 空になるまで処理 → 眠る直前にもう一度読む」の順にして競合を潰し、
-  目覚まし（`idleTickMs`）は 20 ms 程度の短い保険にする（Listen 中の SPI 読み 1 回/20 ms は
+  スリープから復帰したら「状態を読む → 空になるまで処理 → スリープに入る直前にもう一度読む」の順にして競合を潰し、
+  定期確認（`idleTickMs`）は 20 ms 程度の短い保険にする（Listen 中の SPI 読み 1 回/20 ms は
   無視できるコスト）。
 - **ホストタイムアウト**（`hostTimeoutMs`）の役割は「1 回の交換の上限」に限定する。
 - **判断ロジックは純粋関数**にしてホストテストで検証する（状態・受信フレームの要約 → 次の
@@ -68,13 +68,13 @@
 
 - 統計 `ResponderStats` は radio タスクだけが更新し、他タスクは `snapshot()` でコピーを得る
   （`portMUX` の臨界区間で構造体コピー）。
-- 交換ごとの結果 `RangeEvent`（相手アドレス・seq・距離・所要時間・時刻）は長さ 8 の
+- 交換ごとの結果 `RangeEvent`（相手局アドレス・seq・距離・所要時間・時刻）は長さ 8 の
   キューに入れる。**満杯なら捨てる**（radio タスクは決してブロックしない）。
 
 ### 2.2 ステートマシン
 
 状態: `Listen`、`WaitFinal{peer, seq, timestamps, deadline}`。
-事象: `RxFrame(good)`、`RxError(status)`、`RxTimeout`（W4R の RXFTO）、`TxDone`、`Tick`（待ちの目覚まし）。
+事象: `RxFrame(good)`、`RxError(status)`、`RxTimeout`（W4R の RXFTO）、`TxDone`、`Tick`（待ちの定期確認）。
 
 | 状態 | 事象 | 動作 | 次状態 |
 |---|---|---|---|
@@ -83,21 +83,21 @@
 | Listen | Poll 以外の良フレーム／RX エラー | RX 再有効化（数える: `other` / `rxErrors`） | Listen |
 | Listen | Tick | `SYS_STATE` を読み、受信状態でなければ RX 再有効化（`rearms`） | Listen |
 | WaitFinal | Final（peer と seq が一致） | 距離を計算 → Result（DWD）送信 → RX 再有効化。`RangeEvent` を発行 | Listen |
-| WaitFinal | **Poll（どの相手からでも）** | 進行中の交換を捨てて Listen+Poll と同じ動作（`restarts`） | WaitFinal(新) |
-| WaitFinal | それ以外の良フレーム／RX エラー | 期限（Response 送信時刻 + W4R + `rxTimeoutUus` + 余裕）内なら RX 再有効化して待ち続ける。期限超過なら諦める | WaitFinal／Listen |
-| WaitFinal | RxTimeout（RXFTO） | 諦める（`finalTimeouts`） | Listen |
+| WaitFinal | **Poll（どの相手局からでも）** | 進行中の交換を捨てて Listen+Poll と同じ動作（`restarts`） | WaitFinal(新) |
+| WaitFinal | それ以外の良フレーム／RX エラー | 期限（Response 送信時刻 + W4R + `rxTimeoutUus` + 余裕）内なら RX 再有効化して待ち続ける。期限超過なら打ち切る | WaitFinal／Listen |
+| WaitFinal | RxTimeout（RXFTO） | 打ち切る（`finalTimeouts`） | Listen |
 | 任意 | 遅延送信の失敗（HPDWARN／wedged） | `forcetrxoff` → RX 再有効化（`txFailures`） | Listen |
 
 補足:
 
-- **受信窓の基準点**: W4R は「自分の送信完了」基準、遅延送信は「相手フレームの RMARKER」基準
+- **受信窓の基準点**: W4R は「自局の送信完了」基準、遅延送信は「相手局フレームの RMARKER」基準
   （`docs/TIMING_PRESETS.md` §2.4「受信窓の基準点」）。プリセットはこの規則で導出されたものを使う。
 - 【2026-08-30 実機で判明、§5.1 参照】**W4R 遅延は受信 OFF の空白になる。** Responder は
   Response 送信直後に受信を開き、遅延ぶんをタイムアウトに繰り入れる。初版の実装は
   Response 送信完了から W4R 遅延（`finalRxAfterResponseTxDelayUus`、850 kbps/256 で
   ≈1.5 ms）の間、受信機を OFF のままにしており、その間に届いたタグの再試行 Poll を
   丸ごと取りこぼしていた（`docs/HANDOFF.md` §0-D）。
-- 複数タグ: Final は「Response を返した相手」からのものだけ受理する。他タグの Poll が来たら
+- 複数タグ: Final は「Response を返した相手局」からのものだけ受理する。他タグの Poll が来たら
   進行中の交換を捨てて応じる（後着優先）。公平性が問題になったら、`WaitFinal` 中の他タグ Poll を
   無視する設定（`restartOnForeignPoll=false`）で切り替えられるようにしておく。
 - RX エラー後の自動再有効化: DW3000 の `SYS_CFG.RXAUTR` が「RX エラー後に受信機を自動で
@@ -327,7 +327,7 @@ BMI270（IMU）、BMM150（磁気）、BMP280（気圧）、VL53L3CX（ToF、下
 
 ### 8.2 採用候補（尖らせる順）
 
-| # | 手法 | 固定の事実 | 期待する効果 | 検証手段 |
+| # | 手法 | 固定の事実 | 想定する効果 | 検証手段 |
 |---|---|---|---|---|
 | S1 | **逐次スカラー更新 + 決定論的遅れの一次補正** $d' = d + (\mathbf{v}\cdot\mathbf{u})\tau$（τ は既知の 4 ms） | 1 | 遅れ 22 ms → ≈0、移動中の誤差 1 m/s で −0.8 cm。バッファ不要 | シミュレーション（巻き戻し方式と同一乱数比較）→ ホストテスト |
 | S2 | **IMU 密結合 EKF**（状態: 位置・速度・姿勢誤差・加速度／ジャイロバイアス、予測は IMU レート）。距離はスカラー更新、逆行列不要 | 1, 5 | 旋回（求心加速度 2.7 m/s²）で等速モデルが破綻する問題の解消 | シミュレーション（円運動で検定の誤棄却が消えること） |

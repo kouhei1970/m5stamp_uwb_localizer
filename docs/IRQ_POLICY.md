@@ -25,7 +25,7 @@
 
 1. `pin_irq` を配線しない個体・構成があり得る
 2. ISR 登録に失敗しても測距だけは続けられるようにしておきたい
-3. （2026-08-28 追加）ISR 登録に成功しても IRQ 線が実際に生きているとは限らない。
+3. （2026-08-28 追加）ISR 登録に成功しても IRQ 線が実際に動作しているとは限らない。
    `verifyIrqLine()` の実測に落ちても測距だけは続けられるようにしておきたい
    （詳細は下記「実装要件 1」）
 
@@ -69,9 +69,9 @@ device will not enter sleep」から active は HIGH と類推）だけに置い
 `Config::downgrade_timing_profile_when_polling` 既定 `true`）。待ちが
 ポーリングへ落ちたときは、`AnchorIrq`/`BothIrq` を要求していても `init()` が
 自動的に `PollingBoth` へ降格するため、既定のままなら「IRQ が期待どおり
-動かないまま `BothIrq` の遅延で走る」状態にはならない。この既定を `false`
+動かないまま `BothIrq` の遅延で動作する」状態にはならない。この既定を `false`
 にして旧方針（自動で変えない・警告のみ）へ戻した場合は、従来どおり
-**IRQ が期待どおり動かないまま `BothIrq` の遅延で走ると測距が全く成立
+**IRQ が期待どおり動かないまま `BothIrq` の遅延で動作すると測距が全く成立
 しない**ままなので注意（`docs/TIMING_PRESETS.md` §4(b)）。
 
 ### 測距が出ないときの切り分け
@@ -110,7 +110,7 @@ device will not enter sleep」から active は HIGH と類推）だけに置い
 **IRQ が使えないときはポーリングへ自動的にフォールバックする。**
 `pin_irq == UWB_PORT_PIN_UNUSED`、ISR（Interrupt Service Routine、割り込みが
 起きたときに呼ばれる処理）の登録失敗に加えて、**（2026-08-28 追加）
-`Qm33120::verifyIrqLine()` による実測で IRQ 線が生きていないと判定された場合**
+`Qm33120::verifyIrqLine()` による実測で IRQ 線が動作していないと判定された場合**
 も、設定に関わらずポーリングへ落ちる。判定条件の全体像・2段階の実測手順の
 詳細は `docs/TIMING_PRESETS.md` §4(a) を参照。
 
@@ -120,7 +120,7 @@ device will not enter sleep」から active は HIGH と類推）だけに置い
 側の `pin_irq` に物理的に配線されているか、極性（アクティブ HIGH の想定）が
 合っているかまでは検出できない。従来はこの状態でも `irqActive()` が true を
 返し、起動ログには `irq=active` と出ていたが、実際には全ての待ちが 1 ms タイム
-アウトへ黙って劣化していた（症状に気づく手段が無かった）。`verifyIrqLine()` は
+アウトへ何の兆候もなく劣化していた（症状を検知する手段が無かった）。`verifyIrqLine()` は
 `init()` の直後に実際にエッジが届くかを能動的に測ることで、この検出漏れを
 塞ぐ。**2026-08-29 の拡張 probe 実行で、2 台とも自己診断が通ること
 （`L5=PASS(irq=active)`）を実機確認済み。**
@@ -138,7 +138,7 @@ device will not enter sleep」から active は HIGH と類推）だけに置い
 ### 3. 【重要】遅延値はタグとアンカーで一致していなければならない
 片側だけ変えると測距が成立しない。しかも症状は「距離が出ない」だけで
 どちらが悪いのかログからは分からないため、フレームに版番号と種別を載せて
-相手と比較し、不一致なら警告する仕組みが入っている
+相手局の値と比較し、不一致なら警告する仕組みが入っている
 （測距自体は続行する。`docs/TIMING_PRESETS.md`）。
 
 ---
@@ -183,7 +183,7 @@ device will not enter sleep」から active は HIGH と類推）だけに置い
   （`requestRange` / `respondRange` / `requestDSRange` / `respondDSRange`）
   すべての受信待ちループで `vTaskDelay(pdMS_TO_TICKS(1))` を
   `(void)uwb_port_irq_wait(1)` に置き換え、各ループの直前で
-  `uwb_port_irq_clear_pending()` を呼ぶ。自分の送信完了
+  `uwb_port_irq_clear_pending()` を呼ぶ。自分自身の送信完了
   （`DWT_INT_TXFRS_BIT_MASK`）を待つループ（`respondRange()` の
   Response送信後、`respondDSRange()` のDWD結果送信後）や結果フレーム
   再送間隔（`resultRepeatGapMs`）の `vTaskDelay` は対象外

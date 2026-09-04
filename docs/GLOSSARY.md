@@ -45,7 +45,7 @@
 | **SS-TWR** | **S**ingle-**S**ided TWR（片側二方向測距） | Poll → Response の1往復だけ。速いが、**両機のクロック誤差がそのまま距離誤差になる** |
 | **DS-TWR** | **D**ouble-**S**ided TWR（両側二方向測距） | さらに Final を足した2往復。**クロック誤差が一次の項で相殺される**ので精度が高い。**本プロジェクトの本番方式** |
 | **ToF** | **T**ime **o**f **F**light（飛行時間） | 電波が片道を飛ぶ時間。距離 = ToF × 光速。**⚠ 同じ略語が距離センサの意味でも使われる。§9 参照** |
-| **RTD** | **R**ound-**T**rip **D**elay（往復遅延） | 送信してから応答が返るまでの実測時間。ToF = (RTD − 相手の折返し時間) / 2 |
+| **RTD** | **R**ound-**T**rip **D**elay（往復遅延） | 送信してから応答が返るまでの実測時間。ToF = (RTD − 相手局の折返し時間) / 2 |
 | **initiator / responder** | — | 測距を開始する側 / 応える側。本プロジェクトではタグ = initiator、アンカー = responder |
 | **アンテナ遅延** | antenna delay | 信号がチップ内部とアンテナの間を通るのにかかる時間。**タイムスタンプに丸ごと乗る**ので、引かないと距離が一定量長く出る。**1 ns のずれ = 30 cm の誤差**（Qorvo APS014）。校正手順は `docs/GETTING_STARTED.md` §9 |
 | **クロックオフセット** | clock offset / CFO (Carrier Frequency Offset) | 2機の発振器のずれ（ppm）。SS-TWR では距離誤差に直結するため、`dwt_readclockoffset()` で補正する（`RangeConfig::enableClockOffsetCorrection`） |
@@ -93,7 +93,7 @@
 | **STS** | **S**crambled **T**imestamp **S**equence | なりすまし対策の暗号化タイムスタンプ列。本実装の既定は `StsMode::Off` |
 | **CIR** | **C**hannel **I**mpulse **R**esponse（チャネルインパルス応答） | 受信波形そのもの。NLOS 判定や品質評価に使える診断情報 |
 | **PAN ID** | **P**ersonal **A**rea **N**etwork ID | IEEE 802.15.4 のネットワーク識別子。本実装の既定は `0xDECA` |
-| **フレームフィルタ** | frame filtering | 宛先が自分でないフレームをチップが自動で捨てる機能。**Qorvo 公式 TWR サンプルも使っていない**ため、本実装でも使わない（`docs/HANDOFF.md` 誤り 1） |
+| **フレームフィルタ** | frame filtering | 宛先が自局でないフレームをチップが自動で捨てる機能。**Qorvo 公式 TWR サンプルも使っていない**ため、本実装でも使わない（`docs/HANDOFF.md` 誤り 1） |
 | **PLL** | **P**hase-**L**ocked **L**oop（位相同期回路） | 搬送波を作る回路。ch9 では温度変化で再校正が要る（R10） |
 
 ---
@@ -151,7 +151,7 @@
 | **QM33120W** | Qorvo の UWB トランシーバ IC（WLCSP52 パッケージ、PDoA［Phase Difference of Arrival、到来波の位相差から角度を測る方式］対応）。**本モジュールに搭載されているチップ本体**。Device ID = `0xDECA0314`（`DWT_QM33120_PDOA_DEV_ID`）。**DW3720** は同じシリコンの Decawave 時代のコードネームで、Qorvo 改称後の QM33120W データシートには登場しないが、ドライバのファイル名（`dw3720_device.c` 等）に今も残る。PDoA 非対応の姉妹品番は **QM33110W** |
 | **DW3000 系 / DW1000** | Decawave（現 Qorvo）の UWB IC の世代。DW1000 が旧世代、**DW3000 系**が現行世代（本モジュール搭載の QM33120W もこの系列）。DW3720 は DW3000 系の中の QM33120W 固有のコードネームであり、系列名ではない（→ 上の「QM33120W」の行）。**単位系の定数が世代で違うので混同注意**（`docs/GLOSSARY.md`） |
 | **M5StampS3A** | ESP32-S3 の小型ボード。**唯一のホスト（タグ・アンカーとも）**。据置機は **StampS3 BreakOut** に載せて使う（`UWB_*_BOARD_STAMPS3` が既定）。StampFly 搭載タグは背面 12P FPC 経由（`UWB_TAG_BOARD_STAMPFLY`）。旧 M5StampS3 と互換 |
-| **StampS3 BreakOut** | M5StampS3A の 1.27mm ピンを 2.54mm へ変換する M5Stack 純正の拡張基板。露出 IO 23本（G0-G15, G39-G44, G46）は M5StampS3A 単体と同じで、BreakOut を使っても使わなくてもピン定義は同一。Grove ポートは **G13/G15** に配線されており、**G13 は UWB の SPI MISO と衝突する**ので ToF 増設等は Grove に挿すだけでは済まない（`boards/stamps3.h`、`docs/SURVEY_SPEC.md` §3.5）。G0/EN のタクトスイッチ付きで書き込みモードに入りやすい |
+| **StampS3 BreakOut** | M5StampS3A の 1.27mm ピンを 2.54mm へ変換する M5Stack 純正の拡張基板。引き出されている IO 23本（G0-G15, G39-G44, G46）は M5StampS3A 単体と同じで、BreakOut を使っても使わなくてもピン定義は同一。Grove ポートは **G13/G15** に配線されており、**G13 は UWB の SPI MISO と衝突する**ので ToF 増設等は Grove に挿すだけでは済まない（`boards/stamps3.h`、`docs/SURVEY_SPEC.md` §3.5）。G0/EN のタクトスイッチ付きで書き込みモードに入りやすい |
 | **StampFly** | M5StampS3A を積んだマルチコプター機体。**本リポジトリは非依存だが、タグの配線だけ互換を保つ**（`docs/PLAN.md` §1） |
 | **ESP-IDF** | Espressif **I**o**T** **D**evelopment **F**ramework。ESP32 系の公式 SDK。本プロジェクトのビルド環境 |
 | **uwb_localizer** | 測位ソルバの上流リポジトリ（本プロジェクト作者のもの）。`components/uwb_loc/` として無改造で取り込んでいる |

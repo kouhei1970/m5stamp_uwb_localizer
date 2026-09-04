@@ -169,13 +169,13 @@ n=6・σ=5cm で 1% 程度の偽陽性がある（同一平面の見逃しは 0.
 **σ はデータから推定せず 5cm を仮定する**。冗長度 2 では残差に 2 自由度しか無く
 「無雑音 + 小さい外れ値」と「5cm ノイズ」を区別できないこと、MAD や他リンクの Δ の中央値は
 マスキングで膨らむこと、外したあとの残差は 2 本目の外れ値で膨らむことが理由。
-`cost_full ≤ 0.04` なら Δ もそれ以下なので leave-one-out は走らせない（外れ値の無い入力は
+`cost_full ≤ 0.04` なら Δ もそれ以下なので leave-one-out は実行しない（外れ値の無い入力は
 ほぼここで終わり、計算量の増加は無い）。
 
 検出できる大きさ: `Δ_k ≈ (1−h_k)·ε²` なので `|ε| > 4σ / sqrt(1−h_k)`。平均の 1−h は
 冗長度 / リンク数（n=6 で 0.13、n=8 で 0.32）。てこ比の高いリンクでは ±0.5m は落ちない
 （n=6 では 15 本中 7 本。落ちなければ 0.1〜0.4m の座標誤差が残る）。±2m は n=7/8 の全位置、
-n=6 では 15 本中 14 本で落ちる（残る 1 本は別の局所解が 4cm RMS で吸収してしまい、
+n=6 では 15 本中 14 本で落ちる（残る 1 本は別の局所解が 4cm RMS で吸収し、
 `cost_full` が 0.03 でしきい値に届かない = 5cm ノイズと区別できない）。
 
 限界（`uwb_survey_result.outlier_ambiguous` で知らせる）:
@@ -313,9 +313,9 @@ survey chirality cw|ccw
 ### フレーム（ブロードキャスト）
 | 種別 | 向き | 内容 |
 |---|---|---|
-| `SURVEY_HELLO` | coord → all | 測量開始。参加ノードは自分の ID を返す |
-| `SURVEY_HELLO_ACK` | node → coord | 自分の short_addr |
-| `SURVEY_ASSIGN` | coord → all | 「次のイニシエータは addr=X、相手は addr=Y」 |
+| `SURVEY_HELLO` | coord → all | 測量開始。参加ノードは自局の ID を返す |
+| `SURVEY_HELLO_ACK` | node → coord | 自局の short_addr |
+| `SURVEY_ASSIGN` | coord → all | 「次のイニシエータは addr=X、相手局は addr=Y」 |
 | `SURVEY_RESULT` | node → coord | 測距結果（addr ペア、距離 mm、成否、試行回数） |
 | `SURVEY_DONE` | coord → all | 収集完了。測量モード終了 |
 | `CONFIG_PUSH` | coord → all | 確定した座標テーブルと遅延を配信 |

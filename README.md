@@ -3,7 +3,7 @@
 ![m5stamp_uwb_localizer](assets/social_card.png)
 
 **M5Stamp UWB Module (QM33120W)**（通称 **M5Stamp UWB**）を **ESP32-S3** から
-**ESP-IDF** で使い、**屋内の 3 次元位置**を求めて JSON Lines で吐くスタックです。
+**ESP-IDF** で使い、**屋内の 3 次元位置**を求めて JSON Lines で出力するスタックです。
 タグ 1 台 + アンカー 4 台以上で動きます。実機での検証状況は
 [`docs/HANDOFF.md`](docs/HANDOFF.md) §1 にまとめています。
 
@@ -235,7 +235,7 @@ m5stamp_uwb_localizer/
 ├── tests/
 │   ├── Makefile             host/*/Makefile を自動検出して一括実行（`make test strict float`）
 │   └── host/
-│       ├── loc/              測位ソルバのホスト検証（`make test`、77件 + 新旧比較回帰591,199件）
+│       ├── loc/              測位ソルバのホスト検証（`make test`、77件 + 新旧比較の退行テスト591,199件）
 │       ├── math/              線形代数（uwb_math）のホスト検証（`make test`、10,781件）
 │       ├── pipeline/          測位パイプラインのホスト検証（実機不要、`make test`、200件）
 │       ├── responder_fsm/     アンカー応答の状態遷移（uwb::decide()）のホスト検証（`make test`、41件）
