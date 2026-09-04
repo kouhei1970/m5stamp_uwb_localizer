@@ -83,7 +83,7 @@ tr.disabled{opacity:.45}
 .planHead h2{margin-bottom:0}
 .planHeadR{display:flex;align-items:center;gap:8px}
 .planHeadR .viewTabs{margin-bottom:0}
-#btnPlanFs{padding:3px 10px;font-size:11px}
+#btnPlanFs,#btnCloudClear{padding:3px 10px;font-size:11px}
 /* 測位図の拡大表示（Fullscreen API のフォールバック兼用）/ plan-view enlarge (also the Fullscreen API fallback) */
 .fs{position:fixed;inset:0;z-index:1000;background:var(--page);padding:14px;border-radius:0}
 .fs #planBox{height:calc(100vh - 60px)}
@@ -201,11 +201,12 @@ details#rawDet summary{cursor:pointer;font-size:13px;color:var(--ink2);margin-bo
           <button data-view="3d" id="btnView3D" class="sel">3D</button>
         </div>
         <button id="btnPlanFs">拡大</button>
+        <button id="btnCloudClear">点群消去</button>
       </div>
     </div>
     <!-- 印・軌跡は fix.lv3.p（EKF）が既定。EKF 無効時のみ fix.p（通常解）にフォールバックする -->
     <!-- marker/trail default to fix.lv3.p (EKF); fall back to fix.p (NLS) only when no EKF is present -->
-    <div class="chart-title muted">印・軌跡 = EKF 解（EKF が無いときだけ通常解）</div>
+    <div class="chart-title muted">印・軌跡 = EKF 解（軌跡は直近 60 秒、EKF が無いときだけ通常解）。点群 = 消去まで蓄積</div>
     <div id="planBox"><canvas id="cvPlan"></canvas></div>
   </section>
 
@@ -259,8 +260,20 @@ const posSeriesNls = [];           // [{t,x,y,z}] fix.p（Lv2 NLS, o.ok のと�
                                     // {t,x,y,z}, from fix.p (Lv2 NLS, when o.ok); z present only for a 3D fix (3-component p)
 const posSeriesEkf = [];           // [{t,x,y,z}] fix.lv3.p（EKF, o.lv3.ok のとき。z は同上）
                                     // {t,x,y,z}, from fix.lv3.p (EKF, when o.lv3.ok); z as above
-const fixTrail = [];               // [{x,y,z}] 通常解(NLS)の軌跡。最大600点（約30Hzで約20秒）/ NLS trail, 600 points (~20 s at ~30 Hz)
-const ekfTrail = [];               // [{x,y,z}] EKF(lv3)の軌跡。fixTrail と同じ形・上限600点。測位図はこちらを優先表示
+const TRAIL_MS = 60000;            // 軌跡(fixTrail/ekfTrail)の保持時間 [ms]（約60秒）/ trail retention window (~60 s)
+const TRAIL_MAX = 6000;            // 軌跡点数の安全上限（周期が異常に短くても暴走しないための保険）
+                                    // safety cap on trail length, in case the fix cycle is ever abnormally fast
+const fixTrail = [];               // [{x,y,z,t}] 通常解(NLS)の軌跡。直近 TRAIL_MS 秒を保持（安全上限 TRAIL_MAX 点）
+                                    // NLS trail; retains the last TRAIL_MS window (capped at TRAIL_MAX entries)
+const ekfTrail = [];               // [{x,y,z,t}] EKF(lv3)の軌跡。fixTrail と同じ保持規則。測位図はこちらを優先表示
+                                    // EKF (lv3) trail; same retention rule as fixTrail. the plan view shows this preferentially
+const CLOUD_MAX = 20000;           // 点群(cloudPts)の上限点数。超えたら最古の点から破棄する
+                                    // cap on the point cloud; oldest points are dropped once this is exceeded
+const cloudPts = [];               // [{x,y,z}] 測位図の点群。主マーカー(EKF優先、無ければ通常解)の位置を全て蓄積する。
+                                    // 「点群消去」ボタンでのみクリアされ、WebSocket再接続やモード変更では消えない。
+                                    // point cloud for the plan view: accumulates every position that feeds the main marker
+                                    // (EKF when present, else NLS). Cleared only by the "点群消去" button — never by a
+                                    // WebSocket reconnect or a mode change.
 const resSeries = [];              // [{t,r}] fix.residual_rms [m]（o.ok のときのみ）60秒保持
 const fixFlagSeries = [];          // [{t,ok,excluded}] 全 fix 行、60秒保持（測距統計パネル用）
 let statsWindowMs = 10000;         // 測距統計パネルの集計窓 [ms]（10s/60s トグル、既定10s）
@@ -317,6 +330,11 @@ function fmtBytes(n){
 }
 function pct(n,d){ return (d>0)? (n/d*100).toFixed(1)+'%' : '—'; }
 function utf8Len(s){ return new TextEncoder().encode(s).length; }
+// 配列の最小・最大をループで求める（点群が最大20000点まで増えるため、Math.min(...arr) の
+// スプレッド構文（引数展開。要素数が多いとエンジンの引数上限に当たり得る）を避ける）
+// min/max over an array via a plain loop — avoids Math.min(...arr) spread syntax, which can hit an
+// engine's argument-count limit once the point cloud grows toward its 20000-point cap
+function minMax(arr){ let mn=Infinity, mx=-Infinity; for(const v of arr){ if(v<mn) mn=v; if(v>mx) mx=v; } return [mn,mx]; }
 
 function rebuildTheme(){
   const cs = getComputedStyle(document.documentElement);
@@ -430,10 +448,14 @@ function onFix(o){
   for(let i=cycleSeries.length-1; i>=0 && cycleSeries[i].t>=t-1000; i--) if(cycleSeries[i].val>band) band=cycleSeries[i].val;
   cycleSeries.push({t, val, band});
   while(cycleSeries.length && cycleSeries[0].t < t-60000) cycleSeries.shift();
+  let nlsPt = null, ekfPt = null; // 今回の周期で得られた位置（点群の蓄積対象を選ぶために保持）
+                                   // this cycle's positions, kept so we can pick which one feeds the point cloud
   if(o.ok && Array.isArray(o.p)){
     const z = o.p.length>2 ? o.p[2] : (typeof o.z_fixed==='number' ? o.z_fixed : 0);
-    fixTrail.push({x:o.p[0], y:o.p[1], z});
-    if(fixTrail.length>600) fixTrail.shift();
+    nlsPt = {x:o.p[0], y:o.p[1], z};
+    fixTrail.push({x:nlsPt.x, y:nlsPt.y, z:nlsPt.z, t});
+    while(fixTrail.length && fixTrail[0].t < t-TRAIL_MS) fixTrail.shift();
+    if(fixTrail.length>TRAIL_MAX) fixTrail.shift();
     // p[2] は 2D モードでも「内部で使う固定高さ」として常に入っている（main.cpp 側は3成分固定フォーマット）
     // ので、z 系列には mode==='3d' のときだけ入れる（2D混入で平線/偽の標準偏差が出るのを防ぐ）。
     // p[2] is always present even in 2D mode (the fixed height used internally; main.cpp always
@@ -452,12 +474,21 @@ function onFix(o){
     const ekfZ = o.lv3.p.length>2 ? o.lv3.p[2] : (typeof o.z_fixed==='number' ? o.z_fixed : 0);
     ekfLatest = Object.assign({}, o.lv3, {z: ekfZ});
     lastEkfAt = t;
-    ekfTrail.push({x:o.lv3.p[0], y:o.lv3.p[1], z: ekfZ});
-    if(ekfTrail.length>600) ekfTrail.shift();
+    ekfPt = {x:o.lv3.p[0], y:o.lv3.p[1], z:ekfZ};
+    ekfTrail.push({x:ekfPt.x, y:ekfPt.y, z:ekfPt.z, t});
+    while(ekfTrail.length && ekfTrail[0].t < t-TRAIL_MS) ekfTrail.shift();
+    if(ekfTrail.length>TRAIL_MAX) ekfTrail.shift();
   } else {
     // EKF が今回無効/未提供なら、古いマーカーが残り続けないよう即座に消す
     // no valid EKF this time: clear immediately so a stale marker never lingers
     ekfLatest = null;
+  }
+  // 点群: 主マーカーに使われる位置(EKF優先、無ければ通常解)を蓄積する。上限 CLOUD_MAX 点
+  // point cloud: accumulate whichever position feeds the main marker (EKF when present, else NLS); capped at CLOUD_MAX
+  const cloudPt = ekfPt || nlsPt;
+  if(cloudPt){
+    cloudPts.push(cloudPt);
+    if(cloudPts.length>CLOUD_MAX) cloudPts.shift();
   }
   if(o.ok && typeof o.residual_rms==='number'){
     resSeries.push({t, r:o.residual_rms});
@@ -938,7 +969,9 @@ function drawPlan(){
   }
   for(const p of fixTrail){ xs.push(p.x); ys.push(p.y); }
   for(const p of ekfTrail){ xs.push(p.x); ys.push(p.y); }
-  let cbMinX=Math.min(...xs)-0.5, cbMaxX=Math.max(...xs)+0.5, cbMinY=Math.min(...ys)-0.5, cbMaxY=Math.max(...ys)+0.5;
+  for(const p of cloudPts){ xs.push(p.x); ys.push(p.y); } // 点群も自動スケールに含める / include the point cloud in autoscale bounds
+  let [cbMinX,cbMaxX] = minMax(xs), [cbMinY,cbMaxY] = minMax(ys);
+  cbMinX -= 0.5; cbMaxX += 0.5; cbMinY -= 0.5; cbMaxY += 0.5;
   if(cbMaxX-cbMinX<1){ const c=(cbMaxX+cbMinX)/2; cbMinX=c-0.5; cbMaxX=c+0.5; }
   if(cbMaxY-cbMinY<1){ const c=(cbMaxY+cbMinY)/2; cbMinY=c-0.5; cbMaxY=c+0.5; }
   const view = updateViewBounds(planViewState2D, {minX:cbMinX,maxX:cbMaxX,minY:cbMinY,maxY:cbMaxY}, performance.now());
@@ -972,6 +1005,14 @@ function drawPlan(){
     const [cx,cy] = toPx(a.p[0],a.p[1]);
     ctx.strokeStyle=getColor(a.id); ctx.globalAlpha=0.25; ctx.lineWidth=1;
     ctx.beginPath(); ctx.arc(cx,cy,m.d*scale,0,TAU); ctx.stroke(); ctx.globalAlpha=1;
+  }
+  // 点群（薄いドット）: 軌跡・マーカーより先に描いて下敷きにする。「点群消去」ボタンで消えるまで蓄積され続ける
+  // point cloud (faint dots): drawn first so it sits underneath the trail/marker; persists until "点群消去" is pressed
+  if(cloudPts.length){
+    ctx.fillStyle = COL.ink; ctx.globalAlpha = 0.25;
+    ctx.beginPath();
+    for(const p of cloudPts){ const [x,y]=toPx(p.x,p.y); ctx.moveTo(x+1.5,y); ctx.arc(x,y,1.5,0,TAU); }
+    ctx.fill(); ctx.globalAlpha = 1;
   }
   // 軌跡は EKF が有効ならそちらを主表示、無ければ通常解(NLS)にフォールバック
   // trail: prefer the EKF when available, else fall back to the NLS solution
@@ -1024,10 +1065,12 @@ function getBounds3D(){
   for(const a of anchorsCfg) if(a && Array.isArray(a.p)){ xs.push(a.p[0]); ys.push(a.p[1]); zs.push(a.p[2]||0); }
   for(const p of fixTrail) if(p.z!=null){ xs.push(p.x); ys.push(p.y); zs.push(p.z); }
   for(const p of ekfTrail) if(p.z!=null){ xs.push(p.x); ys.push(p.y); zs.push(p.z); }
+  for(const p of cloudPts) if(p.z!=null){ xs.push(p.x); ys.push(p.y); zs.push(p.z); } // 点群も自動スケールに含める / include the point cloud in autoscale bounds
   const pad=0.6;
-  const box = { minX:Math.min(...xs)-pad, maxX:Math.max(...xs)+pad,
-    minY:Math.min(...ys)-pad, maxY:Math.max(...ys)+pad,
-    minZ:Math.min(0,Math.min(...zs))-0.2, maxZ:Math.max(0,Math.max(...zs))+pad };
+  const [mnX,mxX]=minMax(xs), [mnY,mxY]=minMax(ys), [mnZ,mxZ]=minMax(zs);
+  const box = { minX:mnX-pad, maxX:mxX+pad,
+    minY:mnY-pad, maxY:mxY+pad,
+    minZ:Math.min(0,mnZ)-0.2, maxZ:Math.max(0,mxZ)+pad };
   // 2D測位図と同じヒステリシス(拡大即時/縮小3秒保持/0.5mグリッド)をXYZに適用して安定させる
   // apply the same hysteresis as the 2D view (immediate expand / 3s shrink hold / 0.5m grid) to XYZ
   return updateViewBounds(planViewState3D, box, performance.now(), ['X','Y','Z']);
@@ -1067,6 +1110,18 @@ function drawPlan3D(){
     ctx.fillText(lab, p.x+(p.x>org.x?7:-7), p.y+(p.y>org.y?7:-7));
   }
 
+  // 点群（薄いドット）: 軌跡・マーカーより先に一括描画して下敷きにする。小さく低アルファなので
+  // 個別に depth-sort（painter's algorithm。視点からの奥行きでソートして奥から描く手法）する
+  // 必要は薄いと判断し、他のアイテムより先にまとめて描くだけに留める
+  // point cloud (faint dots): drawn first, in one pass, so it sits underneath the trail/marker. Since
+  // the dots are small & low-alpha, individually depth-sorting them (the painter's algorithm used
+  // below) isn't worth it — just draw them all before everything else instead.
+  if(cloudPts.length){
+    ctx.fillStyle = COL.ink; ctx.globalAlpha = 0.25;
+    ctx.beginPath();
+    for(const p of cloudPts){ const s=toScr([p.x,p.y,p.z]); ctx.moveTo(s.x+1.5,s.y); ctx.arc(s.x,s.y,1.5,0,TAU); }
+    ctx.fill(); ctx.globalAlpha = 1;
+  }
   // アンカー・軌跡・タグは視点からの距離でソートして描画（painter's algorithm）
   // anchors / trail / tag are depth-sorted before drawing (painter's algorithm)
   const items = [];
@@ -1087,13 +1142,16 @@ function drawPlan3D(){
   // 軌跡は EKF が有効ならそちらを主表示、無ければ通常解(NLS)にフォールバック
   // trail: prefer the EKF when available, else fall back to the NLS solution
   const mainTrail3D = ekfLatest ? ekfTrail : fixTrail;
-  const trail = mainTrail3D.filter(p=>p.z!=null).slice(-180); // 直近約6秒分をフェード表示 / fade the last ~6 s of fixes
+  // 軌跡は TRAIL_MS(60秒)窓の全点を描き、新しいほど濃く(alpha≈0.7)・古いほど薄く(alpha≈0.05)フェードする
+  // draw every point within the TRAIL_MS (60 s) window; fade by age — newest ≈ 0.7, oldest ≈ 0.05
+  const trail = mainTrail3D.filter(p=>p.z!=null);
   if(trail.length>1){
-    const pts = trail.map(p=>toScr([p.x,p.y,p.z]));
+    const now3 = performance.now();
+    const pts = trail.map(p=>Object.assign(toScr([p.x,p.y,p.z]), {age: Math.min(1, Math.max(0, (now3-p.t)/TRAIL_MS))}));
     const dAvg = pts.reduce((s,p)=>s+p.depth,0)/pts.length;
     items.push({depth:dAvg, draw:()=>{
       for(let i=1;i<pts.length;i++){
-        ctx.strokeStyle=COL.ink; ctx.globalAlpha=0.08+0.55*(i/pts.length); ctx.lineWidth=1.6;
+        ctx.strokeStyle=COL.ink; ctx.globalAlpha=0.7-0.65*pts[i].age; ctx.lineWidth=1.6;
         ctx.beginPath(); ctx.moveTo(pts[i-1].x,pts[i-1].y); ctx.lineTo(pts[i].x,pts[i].y); ctx.stroke();
       }
       ctx.globalAlpha=1;
@@ -1239,6 +1297,9 @@ document.getElementById('viewTabs').addEventListener('click', e=>{
   document.getElementById('btnView3D').classList.toggle('sel', view3D);
   document.getElementById('cvPlan').classList.toggle('rot', view3D);
 });
+// 点群消去: WebSocket再接続やモード変更では消えず、このボタンでのみクリアする
+// clear the point cloud; it is NOT cleared by a WebSocket reconnect or a mode change — only by this button
+document.getElementById('btnCloudClear').addEventListener('click', ()=>{ cloudPts.length = 0; });
 
 // ---- 測位図の拡大表示切替（Fullscreen API + .fs クラスのフォールバック併用） ----
 // plan-view fullscreen toggle (Fullscreen API, with the .fs class applied unconditionally as
