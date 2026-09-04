@@ -73,8 +73,8 @@ StampFly への統合はその成果物を利用する下流作業。
 | # | 成果物 | 内容 | 状態 |
 |---|---|---|---|
 | D1 | ESP-IDF コンポーネント群 | 他プロジェクトへ丸ごと持ち込める。StampFly 依存ゼロ | **実装済み**（`components/` 8個） |
-| D2 | タグ側ファームウェア | M5StampS3A + M5Stamp UWB Module で測距→測位まで完結 | **実装済み**（`firmware/tag`、CI ビルド済み、実機未検証） |
-| D3 | アンカー側ファームウェア | 同上ハードでレスポンダ動作。アドレス/座標設定可 | **実装済み**（`firmware/anchor`、同上） |
+| D2 | タグ側ファームウェア | M5StampS3A + M5Stamp UWB Module で測距→測位まで完結 | **実装済み・実機確認済み**（`firmware/tag`。測距〈2026-08-29〜31〉、2D 測位〈アンカー3台、2026-09-02〉、3D 測位〈アンカー4台、2026-09-04〜05〉まで実機で確認。詳細は [`HANDOFF.md`](HANDOFF.md) §1） |
+| D3 | アンカー側ファームウェア | 同上ハードでレスポンダ動作。アドレス/座標設定可 | **実装済み・実機確認済み**（`firmware/anchor`、同上。アドレス・座標設定コンソールも2026-09-02・09-04に実機確認済み） |
 | D4 | ホスト側ツール | 測位結果の可視化・ログ・アンテナ遅延キャリブレーション | **一部**（`tools/bench_loc` のみ。JSON Lines は上流 Python 可視化と互換。校正ツールは未） |
 | D5 | ドキュメント | 配線図、ボード別ピン定義、立ち上げ手順、キャリブレーション手順 | **実装済み**（`docs/` 22本。`WIRING.md` / `GETTING_STARTED.md` / `GETTING_STARTED.md` / `EXPERIMENT_PLAN.md`） |
 | D6 | StampFly 統合 | `sf_hal_uwb_qm33120` として stampfly_ecosystem へ | **未着手**（設計のみ `STAMPFLY_INTEGRATION.md`） |
@@ -120,6 +120,7 @@ StampFly への統合はその成果物を利用する下流作業。
   タグ単体構成（StampFly を持たない場合）にも使う。`boards/stamps3.h`）
 - （下流）**StampFly**（M5StampS3A を搭載したドローン機体本体。タグとして背面 12P FPC
   経由で接続する。`boards/stampfly.h`）
+- **M5Stamp C5（ESP32-C5）**: 追加計画を [`PLAN_STAMPC5.md`](PLAN_STAMPC5.md) にまとめた（2026-09-05、机上検討と試しビルドまで。FPC 直結・シングルコア対応が要点）
 
 ---
 
