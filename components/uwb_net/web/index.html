@@ -285,8 +285,10 @@ function noteDrawError(e){
 
 // ---- 3D 測位図 / 3D plan view ----
 let view3D = true;
-let cam3 = {yaw:-0.7, pitch:0.5, zoom:1}; // yaw/pitch [rad], zoom は等角投影の倍率
-function resetCam3(){ cam3.yaw=-0.7; cam3.pitch=0.5; cam3.zoom=1; }
+// yaw/pitch [rad], zoom は平行投影の倍率。既定は +x+y 側の斜め上から原点を見る等角風の視点
+// yaw/pitch [rad], zoom scales the parallel projection. Default: classic isometric-like view from above the +x+y side
+let cam3 = {yaw:2.44, pitch:0.5, zoom:1};
+function resetCam3(){ cam3.yaw=2.44; cam3.pitch=0.5; cam3.zoom=1; }
 
 // ---- 汎用ヘルパ / helpers ----
 function esc(s){ return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -953,12 +955,16 @@ function drawPlan(){
 // ---- 描画: 3D 測位図（自前の直交投影） / 3D plan view (hand-rolled orthographic projection) ----
 // z が up の世界座標を、ヨー(yaw)→ピッチ(pitch)の順に回転してから平行投影する。
 // world z-up: rotate by yaw then pitch, then drop the depth axis (parallel/orthographic projection).
+// 画面右 = +x1、画面上 = 奥(+y1)と上(+z1)の混合、depth は視点に近いほど大きい。
+// この (右, 上, 手前) の 3 本は右手系（行列式 +1）なので、右手系の世界が鏡像にならずに描かれる。
+// screen right = +x1, screen up mixes far (+y1) and up (+z1), depth grows toward the viewer.
+// (right, up, toward-viewer) is right-handed (det +1), so a right-handed world is drawn without mirroring.
 function proj3(pt, center, yaw, pitch){
   const x=pt[0]-center[0], y=pt[1]-center[1], z=pt[2]-center[2];
   const cy=Math.cos(yaw), sy=Math.sin(yaw);
-  const x1 = x*cy + y*sy, y1 = -x*sy + y*cy, z1 = z;
-  const cp=Math.cos(pitch), sp=Math.sin(pitch);
-  return { sx:x1, sy:-y1*sp+z1*cp, depth:y1*cp+z1*sp };
+  const x1 = x*cy + y*sy, y1 = -x*sy + y*cy, z1 = z;   // 視線方向を +y1 に揃える / view direction becomes +y1
+  const cp=Math.cos(pitch), sp=Math.sin(pitch);          // pitch>0 で見下ろし / pitch>0 looks down from above
+  return { sx:x1, sy:y1*sp+z1*cp, depth:-y1*cp+z1*sp };
 }
 function getBounds3D(){
   let xs=[0], ys=[0], zs=[0];
@@ -1144,8 +1150,9 @@ document.getElementById('statWinTabs').addEventListener('click', e=>{
     const prev = pointers.get(e.pointerId), cur = {x:e.clientX, y:e.clientY};
     pointers.set(e.pointerId, cur);
     if(pointers.size===1){
-      cam3.yaw += (cur.x-prev.x)*0.008;
-      cam3.pitch = Math.max(-1.5, Math.min(1.5, cam3.pitch - (cur.y-prev.y)*0.008));
+      // 手前側がマウスに追従する向き（掴んで回す感覚） / the near side follows the pointer (grab-and-turn feel)
+      cam3.yaw -= (cur.x-prev.x)*0.008;
+      cam3.pitch = Math.max(-1.5, Math.min(1.5, cam3.pitch + (cur.y-prev.y)*0.008));
     } else if(pointers.size===2){
       const pts = Array.from(pointers.values());
       const d = Math.hypot(pts[0].x-pts[1].x, pts[0].y-pts[1].y);
