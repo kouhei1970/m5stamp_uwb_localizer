@@ -54,16 +54,21 @@
 
 GitHub Actions がビルドした**そのまま書き込めるバイナリ**が
 [Releases](https://github.com/kouhei1970/m5stamp_uwb_localizer/releases) にあります。
+標準構成（M5StampS3A のタグ 1 台 + アンカー N 台）なら
+**`1-standard-M5StampS3A-tag-and-anchor.zip`** を取ってください。
 
 ```sh
-# 例: 疎通確認ファーム（M5StampS3A 用。latest は Releases の最新タグを指す）
-curl -LO https://github.com/kouhei1970/m5stamp_uwb_localizer/releases/latest/download/probe-stamps3.zip
-unzip probe-stamps3.zip
+# 標準構成一式（M5StampS3A のタグ + アンカー。latest は Releases の最新タグを指す）
+curl -LO https://github.com/kouhei1970/m5stamp_uwb_localizer/releases/latest/download/1-standard-M5StampS3A-tag-and-anchor.zip
+unzip 1-standard-M5StampS3A-tag-and-anchor.zip
+# タグには tag-stamps3-ds/merged-firmware.bin、アンカー全台には
+# anchor-stamps3-ds/merged-firmware.bin（全台同じ）を書き込む
 esptool.py --chip esp32s3 -p /dev/cu.usbmodemXXXX write_flash 0x0 merged-firmware.bin
 ```
 
 ブラウザからでも書けます（<https://espressif.github.io/esptool-js/> でオフセット `0x0`）。
-11 通りの構成を用意してあります → **[`docs/PREBUILT_BINARIES.md`](docs/PREBUILT_BINARIES.md)**
+StampFly をタグにする場合や、疎通確認・1対1測距の診断用など、目的別に
+4つの zip を用意してあります → **[`docs/PREBUILT_BINARIES.md`](docs/PREBUILT_BINARIES.md)**
 
 > **⚠ 実機確認済みのピン定義は M5StampS3A（`boards/stamps3.h`）のみ**です
 > （SPI 4 本・RST・IRQ まで実機確認済み。WAKEUP と StampFly 用の定義は未検証の暫定値）。

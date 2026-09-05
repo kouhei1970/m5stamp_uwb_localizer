@@ -34,13 +34,16 @@ GitHub Actions が全ファームをビルドし、**そのまま書き込める
 
 ## どれを取ればいいか
 
-| やりたいこと | 取るもの | 対応する実験 |
-|---|---|---|
-| **まず SPI が通じるか見る** | `probe-*`（ボードに合うもの） | [実験1](EXPERIMENT_PLAN.md) |
-| 2台で距離を測る | `twr-tag-ss` + `twr-anchor-ss` | 実験2 |
-| 同上（本番方式） | `twr-tag-ds` + `twr-anchor-ds` | 実験3 |
-| **5台のアンカー + タグで測位** | `anchor-*-ds` ×1（5台に同じものを書く）+ `tag-*-ds` | 実験5・6 |
-| **IRQ が特定の個体で動かないときの切り分け用** | `anchor-stamps3-ds-polling` + `tag-stampfly-ds-polling` | 下記 |
+**Releases では variant 単位ではなく、目的別に4つの zip（bundle）にまとめて
+配布しています。** bundle の中に variant 名のサブフォルダがあり、
+中身（`merged-firmware.bin` や `README.md` 等）は variant 単位のときと同じです。
+
+| 何をしたいか | 取る zip | 書き込むファイル | 対応する実験 |
+|---|---|---|---|
+| 普通に測位したい（M5StampS3A のタグ 1 台 + アンカー N 台） | `1-standard-M5StampS3A-tag-and-anchor.zip` | タグ → `tag-stamps3-ds/merged-firmware.bin`、アンカー全台 → `anchor-stamps3-ds/merged-firmware.bin`（全台同じ） | 実験5・6 |
+| StampFly をタグにする | `2-StampFly-tag.zip` | `tag-stampfly-ds/merged-firmware.bin`（IRQ が使えない個体は `tag-stampfly-ds-polling/merged-firmware.bin`） | 実験5・6 |
+| IRQ が特定の個体で動かないときの切り分け用（タグ・アンカーとも polling） | `3-fallback-polling-M5StampS3A.zip` | タグ → `tag-stamps3-ds-polling/merged-firmware.bin`、アンカー全台 → `anchor-stamps3-ds-polling/merged-firmware.bin` | 下記 |
+| 配線の疎通確認・1対1測距の診断 | `4-diagnostics-probe-and-twr.zip` | `probe-*`（ボードに合うもの）／ `twr-tag-ss` + `twr-anchor-ss`（実験2）／ `twr-tag-ds` + `twr-anchor-ds`（実験3） | 実験1・2・3 |
 
 ### ボードの選び方
 
@@ -73,10 +76,13 @@ IRQ を受信待ちの起床信号として使う設定
 
 ### `-polling` 版が違うのは「IRQ を使うかどうか」だけ
 
-`anchor-stamps3-ds-polling` / `tag-stampfly-ds-polling` は、上の既定構成から
-**`UWB_ENABLE_IRQ` だけを `n`（無効）にした**ものです。遅延プリセットは
-どちらも `PollingBoth` のままなので、タグ・アンカーで IRQ の有効/無効が
-食い違っていても遅延プリセットの不一致は起きません（両方とも `PollingBoth`）。
+`anchor-stamps3-ds-polling` / `tag-stamps3-ds-polling` / `tag-stampfly-ds-polling`
+は、上の既定構成から**`UWB_ENABLE_IRQ` だけを `n`（無効）にした**ものです。
+遅延プリセットはどれも `PollingBoth` のままなので、タグ・アンカーで IRQ の
+有効/無効が食い違っていても遅延プリセットの不一致は起きません
+（すべて `PollingBoth`）。`tag-stamps3-ds-polling` は M5StampS3A タグ用の
+polling 版で、`anchor-stamps3-ds-polling` と組んで
+`3-fallback-polling-M5StampS3A.zip` に入っています。
 
 用意してある理由は、**個体によっては IRQ ピンが未配線・接触不良のことがあり得る**
 ためです（IRQ が使えない場合は自動でポーリングへフォールバックしますが、
@@ -90,10 +96,16 @@ IRQ を受信待ちの起床信号として使う設定
 
 ## 取得方法
 
-| 経路 | 用途 |
-|---|---|
-| **Releases** | タグが打たれた版。安定して同じものが取れる |
-| **Actions の artifact** | 最新の `main` の版。90 日で消える。GitHub のログインが要る |
+| 経路 | 用途 | 単位 |
+|---|---|---|
+| **Releases** | タグが打たれた版。安定して同じものが取れる | 上表の**4つの bundle**（`1-standard-M5StampS3A-tag-and-anchor.zip` 等） |
+| **Actions の artifact** | 最新の `main` の版。90 日で消える。GitHub のログインが要る | **variant 単位**（`tag-stamps3-ds` 等、12 個） |
+
+**Releases の zip（bundle）は目的別にまとめたもの、Actions の artifact は
+今まで通り variant 単位のまま**です。bundle の中の各サブフォルダは
+Actions artifact の中身と同じ（`merged-firmware.bin` / `README.md` 等）なので、
+Actions から取る場合は上表の「書き込むファイル」列の variant 名（例:
+`tag-stamps3-ds`）と同じ名前の artifact を選んでください。
 
 Actions からの取り方: リポジトリの **Actions** タブ → `build` ワークフローの成功した実行を開く
 → ページ下部の **Artifacts** から variant 名の zip をダウンロード。
@@ -191,11 +203,13 @@ ESP-IDF を入れずに、書き込みから設定・ダッシュボード表示
 ここでは**手順の流れ**だけを示します。
 
 1. **zip を取得する**（各1回ずつでよい。同じ zip を全アンカーに使い回す）
-   - アンカー用: `anchor-stamps3-ds.zip`
-   - タグ用: `tag-stamps3-ds.zip`（タグも M5StampS3A 単体の場合）または
-     `tag-stampfly-ds.zip`（StampFly に載せる場合）
-2. **アンカーを1台ずつ書き込む**。`anchor-stamps3-ds.zip` の中の
-   `merged-firmware.bin` を、台数分すべて同じ内容のまま
+   - タグも M5StampS3A 単体の場合: `1-standard-M5StampS3A-tag-and-anchor.zip` の
+     1つでよい（中の `tag-stamps3-ds/` と `anchor-stamps3-ds/` を使う）
+   - タグを StampFly に載せる場合: アンカー用に
+     `1-standard-M5StampS3A-tag-and-anchor.zip`（`anchor-stamps3-ds/` を使う）に加えて、
+     タグ用に `2-StampFly-tag.zip`（`tag-stampfly-ds/` を使う）
+2. **アンカーを1台ずつ書き込む**。`1-standard-M5StampS3A-tag-and-anchor.zip` の中の
+   `anchor-stamps3-ds/merged-firmware.bin` を、台数分すべて同じ内容のまま
    上記の「書き込み方」（`esptool` または方法B）でオフセット `0x0` に書き込む
    （**ビルドは1回、書き込みは台数分**）。
 3. **アンカーごとにシリアルコンソール（115200bps）でアドレスを設定する。**
@@ -211,8 +225,9 @@ ESP-IDF を入れずに、書き込みから設定・ダッシュボード表示
    使えません）。**設定したアドレスをボードにテープで貼るなどして物理的に判別できる
    ようにしてください**（次の座標登録で必要になります）。詳細は
    [`GETTING_STARTED.md` §6.2](GETTING_STARTED.md#anchors5-console)。
-4. **タグを書き込む。** 手順は 2 と同じ（`tag-stamps3-ds.zip` または
-   `tag-stampfly-ds.zip` の `merged-firmware.bin` をオフセット `0x0` に書き込む）。
+4. **タグを書き込む。** 手順は 2 と同じ（`1-standard-M5StampS3A-tag-and-anchor.zip` の
+   `tag-stamps3-ds/merged-firmware.bin`、または `2-StampFly-tag.zip` の
+   `tag-stampfly-ds/merged-firmware.bin` をオフセット `0x0` に書き込む）。
 5. **タグのコンソールでアンカー座標を登録する。** 巻尺で実測した各アンカーの
    アンテナ位置を、アドレスと対応づけて登録します。
    ```
@@ -289,13 +304,18 @@ ESP-IDF を入れて自分でビルドしてください。
 1. **ホスト側テスト**（`test_pipeline` / `test_survey` / `tests/host/loc`）を実行
    ※ 上流 `uwb_localizer` は凍結・最終取り込み済み。CI は上流を
    clone せず、本リポジトリ内のソースだけでテストします
-2. **11 通りのファーム**を ESP-IDF v5.5.2 でビルドし、`idf.py merge-bin` で結合
-3. artifact として保存し、**タグを打った時は Release に添付**
+2. **12 通りのファーム**を ESP-IDF v5.5.2 でビルドし、`idf.py merge-bin` で結合
+3. **variant 単位で artifact として保存**（Actions タブから常にこの単位で取れる）
+4. **タグを打った時だけ**、variant を目的別に**4つの bundle zip へまとめ直して**
+   Release に添付（上表参照）
 
-各 artifact には `kconfig-used.txt`（そのバイナリに焼き込まれた設定）と
+各 variant のフォルダ（Actions artifact ではそのまま、Release の bundle
+では中のサブフォルダ）には `kconfig-used.txt`（そのバイナリに焼き込まれた設定）と
 `README.md`（書き込み手順）が同梱されます。**どの設定でビルドされたものか必ず確認できます。**
+Release の bundle にはさらに、書き込むファイルの対応を示す**トップレベルの
+`README.md`** が付きます。
 
-zip の中身一覧:
+variant フォルダの中身一覧:
 
 | ファイル / ディレクトリ | 内容 |
 |---|---|
