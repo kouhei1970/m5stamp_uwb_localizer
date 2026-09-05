@@ -4,241 +4,484 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light dark">
-<title>UWB ダッシュボード</title>
+<title>UWBタグ計器盤</title>
 <style>
+/* ---- デザイントークン / design tokens ---- */
 :root{
-  --surface:#fcfcfb; --page:#f9f9f7; --ink:#0b0b0b; --ink2:#52514e; --muted:#898781;
-  --grid:#e1e0d9; --axis:#c3c2b7; --border:rgba(11,11,11,.10);
-  --good:#0ca30c; --warn:#fab219; --bad:#d03b3b;
-  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100; --s5:#e87ba4; --s6:#008300; --s7:#4a3aa7; --s8:#e34948; --cloud:#4a3aa7; /* 点群の色（アンカー色と被らない紫） / point-cloud colour, distinct from the anchor palette */
+  --bg:#F3F5F8; --surface:#FFFFFF; --surface-2:#EEF1F5;
+  --ink:#111827; --ink-2:#4B5563; --muted:#6B7280;
+  --line:rgba(17,24,39,.10);
+  --accent:#2A78D6; --good:#15803D; --warn:#B45309; --bad:#B91C1C;
+  --accent-bg:rgba(42,120,214,.12); --good-bg:rgba(21,128,61,.12);
+  --warn-bg:rgba(180,83,9,.12); --bad-bg:rgba(185,28,28,.12);
+  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100;
+  --s5:#e87ba4; --s6:#008300; --s7:#4a3aa7; --s8:#e34948;
+  --cloud:#4a3aa7; /* 測位図の点群専用（s7 と同色・紫）/ plan-view point cloud only (same hue as s7, violet) */
+  --font-ui:-apple-system,"SF Pro Text","Segoe UI",Roboto,"Noto Sans JP","Hiragino Sans","Yu Gothic UI",sans-serif;
+  --font-mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --radius:10px;
+  /* ヘッダ一式（トップバー＋KPI帯＋余白＋下部の再生バー）の高さ。ヒーロー行の高さ計算に使う。
+     初期値はレイアウト前の推定値で、起動後は updateChromeH() が実測して上書きする
+     rough initial estimate of the chrome (top bar + KPI strip + gaps + the fixed bottom
+     transport bar), used to size the hero row; updateChromeH() overwrites it with an exact
+     measurement once the page has laid out */
+  --chrome-h: 212px;
+  --bottombar-h: 44px;
 }
 @media (prefers-color-scheme: dark){
-  :root{
-    --surface:#1a1a19; --page:#0d0d0d; --ink:#ffffff; --ink2:#c3c2b7; --muted:#898781;
-    --grid:#2c2c2a; --axis:#383835; --border:rgba(255,255,255,.10);
-    --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --s5:#d55181; --s6:#008300; --s7:#9085e9; --s8:#e66767; --cloud:#9085e9;
+  :root:not([data-theme="light"]){
+    --bg:#0F1216; --surface:#171B21; --surface-2:#1F252D;
+    --ink:#E6E8EC; --ink-2:#A3A9B4; --muted:#7C838F;
+    --line:rgba(255,255,255,.10);
+    --accent:#3987E5; --good:#4ADE80; --warn:#FBBF24; --bad:#F87171;
+    --accent-bg:rgba(57,135,229,.18); --good-bg:rgba(74,222,128,.16);
+    --warn-bg:rgba(251,191,36,.16); --bad-bg:rgba(248,113,113,.16);
+    --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500;
+    --s5:#d55181; --s6:#008300; --s7:#9085e9; --s8:#e66767;
+    --cloud:#9085e9;
   }
 }
-*{box-sizing:border-box}
-body{margin:0;background:var(--page);color:var(--ink);font:13px/1.45 -apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic UI",system-ui,sans-serif}
+:root[data-theme="dark"]{
+  --bg:#0F1216; --surface:#171B21; --surface-2:#1F252D;
+  --ink:#E6E8EC; --ink-2:#A3A9B4; --muted:#7C838F;
+  --line:rgba(255,255,255,.10);
+  --accent:#3987E5; --good:#4ADE80; --warn:#FBBF24; --bad:#F87171;
+  --accent-bg:rgba(57,135,229,.18); --good-bg:rgba(74,222,128,.16);
+  --warn-bg:rgba(251,191,36,.16); --bad-bg:rgba(248,113,113,.16);
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500;
+  --s5:#d55181; --s6:#008300; --s7:#9085e9; --s8:#e66767;
+  --cloud:#9085e9;
+}
+
+/* ---- リセット・基礎 / reset & base ---- */
+*,*::before,*::after{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);padding-bottom:var(--bottombar-h);
+  font:14px/1.5 var(--font-ui);font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}
 h1,h2,h3{margin:0;font-weight:600}
-code{font-family:ui-monospace,Menlo,Consolas,monospace}
+code{font-family:var(--font-mono)}
 button,input{font:inherit;color:inherit}
-button{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 10px;cursor:pointer}
-button:hover{filter:brightness(0.97)}
-button:disabled{opacity:.45;cursor:default}
-button.active{background:var(--bad);color:#fff;border-color:var(--bad)}
-input[type=text],input:not([type]){background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+@media (prefers-reduced-motion: reduce){ *{transition:none!important;animation:none!important} }
+
+/* ---- 汎用パーツ / shared parts ---- */
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;flex:0 0 auto}
+.chip{display:inline-flex;align-items:center;gap:4px;font-size:11px;line-height:1;
+  padding:3px 9px;border-radius:999px;border:1px solid var(--line);color:var(--ink-2);white-space:nowrap}
+.chip-mode{color:var(--accent);border-color:var(--accent);background:var(--accent-bg)}
+.chip-good{color:var(--good);border-color:var(--good);background:var(--good-bg)}
+.chip-warn{color:var(--warn);border-color:var(--warn);background:var(--warn-bg)}
+.chip-muted{color:var(--muted)}
+.btn{font-size:12.5px;padding:7px 14px;border-radius:8px;border:1px solid var(--line);
+  background:var(--surface);color:var(--ink);cursor:pointer;transition:background .15s,filter .15s,transform .15s}
+.btn:hover{background:var(--surface-2)}
+.btn:active{transform:translateY(1px)}
+.btn-primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn-primary:hover{filter:brightness(1.08)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn:disabled:hover{background:var(--surface);filter:none}
+.btn-primary:disabled{background:var(--accent);filter:none}
+.btn-icon{width:32px;height:32px;padding:0;border-radius:8px;font-size:15px;
+  display:inline-flex;align-items:center;justify-content:center}
+.btn-round{width:32px;height:32px;border-radius:50%;padding:0;border:1px solid var(--line);
+  background:var(--surface);color:var(--ink);cursor:pointer;font-size:12px;line-height:1;
+  display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;transition:background .15s}
+.btn-round:hover{background:var(--surface-2)}
+.btn-sm{font-size:11px;padding:4px 10px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{border:none;border-right:1px solid var(--line);background:var(--surface);
+  padding:5px 12px;font-size:11px;color:var(--ink-2);cursor:pointer}
+.seg button:last-child{border-right:none}
+.seg button.active{background:var(--accent-bg);color:var(--accent);font-weight:600}
+.label{font-size:11px;color:var(--muted)}
+.label code{font-size:10.5px;color:var(--muted);margin-left:3px}
+.value{font-size:14px;color:var(--ink);font-weight:500}
 .muted{color:var(--muted)}
-.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:middle}
-.dot.ok{background:var(--good)}.dot.bad{background:var(--bad)}.dot.warn{background:var(--warn)}
-.warnText{color:var(--warn);font-size:11px}
-.errText{color:var(--bad);font-size:11px}
+.caption{font-size:11px;color:var(--muted);margin:4px 0 12px}
+.warnText{color:var(--warn)}
+.errText{color:var(--bad)}
 
-header{position:sticky;top:0;z-index:5;background:var(--surface);border-bottom:1px solid var(--border);
-  padding:8px 14px;display:flex;flex-wrap:wrap;align-items:center;gap:6px 18px}
-header .hgroup{display:flex;align-items:baseline;gap:8px}
-header .hgroup h1{font-size:16px}
-.badge{font-size:11px;padding:1px 7px;border-radius:20px;border:1px solid var(--border);color:var(--ink2)}
-header .spacer{flex:1 1 auto}
-header .actions{display:flex;align-items:center;gap:8px}
+/* ---- レイアウト骨格 / page skeleton ---- */
+.topbar{position:sticky;top:0;z-index:20;background:var(--surface);
+  border-bottom:1px solid var(--line);box-shadow:0 1px 6px rgba(17,24,39,.06)}
+.topbar-inner{max-width:1440px;margin:0 auto;min-height:48px;padding:6px 16px;
+  display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px}
+.brand{display:flex;align-items:center;gap:8px}
+.brand-name{font-size:18px;font-weight:600;font-family:var(--font-mono)}
+.conn-pill{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink-2);white-space:nowrap}
+.spacer{flex:1 1 auto}
+.topbar-actions{display:flex;align-items:center;gap:8px}
 
-main{max-width:1360px;margin:0 auto;padding:12px;display:grid;grid-template-columns:1fr;gap:12px}
-@media (min-width:920px){ main{grid-template-columns:1fr 1fr} .full{grid-column:1/-1} }
+/* ---- 再生バー：画面下端に固定 / transport bar, fixed to the bottom of the viewport ---- */
+/* height は指定しない（内容なりの高さ = 実測値の出所そのもの）。--bottombar-h は body の
+   padding-bottom 用の「出力専用」変数であり、バー自身の高さの入力にはしない
+   （高さを var(--bottombar-h) にすると、測った値をまた自分の高さに使う循環参照になり、
+   一度 0 に落ちると 0 のまま固まってしまう） / no explicit height here: the bar sizes to its
+   content, which is exactly what updateChromeH() measures. --bottombar-h is output-only (it
+   feeds body's padding-bottom); feeding it back into the bar's own height would be circular —
+   once the measurement dipped to 0 it would stay stuck at 0 forever */
+.bottom-bar{position:fixed;left:0;right:0;bottom:0;z-index:500;background:var(--surface);
+  border-top:1px solid var(--line);box-shadow:0 -2px 10px rgba(17,24,39,.10)}
+.bottom-bar.drag-over{outline:2px dashed var(--accent);outline-offset:-2px}
+.bottom-bar-inner{max-width:1440px;margin:0 auto;min-height:44px;padding:0 16px;
+  display:flex;flex-wrap:wrap;align-items:center;gap:8px 8px}
+.transport-files{display:flex;align-items:center;gap:5px;min-width:0;flex:0 0 auto}
+.transport-filename{font-family:var(--font-mono);font-size:11.5px;color:var(--ink-2);
+  max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#speedSeg button{padding:5px 7px}
+.transport-seek{display:flex;align-items:center;gap:6px;flex:1 1 110px;min-width:60px}
+.transport-time{font-family:var(--font-mono);font-size:10.5px;color:var(--muted);white-space:nowrap}
+.transport-meta{display:flex;align-items:center;gap:8px;flex:0 0 auto;margin-left:auto}
+.transport-seq{font-family:var(--font-mono);font-size:10.5px;color:var(--muted);white-space:nowrap}
+.live-link{font-size:11.5px;color:var(--accent);cursor:pointer;text-decoration:none;white-space:nowrap;background:none;border:none;padding:0}
+.live-link:hover{text-decoration:underline}
+.kbd-hint-inline{font-size:11px;color:var(--muted);white-space:nowrap;display:none;margin-left:4px}
+@media (min-width:1385px){ .kbd-hint-inline{display:inline} }
+@media (max-width:499px){ #speedSeg{display:none} }
+@media (max-width:799px){
+  .bottom-bar{height:auto}
+  .bottom-bar-inner{height:auto;padding:6px 16px}
+  body{padding-bottom:130px}
+}
+input[type=range].seek{-webkit-appearance:none;appearance:none;flex:1 1 auto;min-width:50px;
+  height:4px;border-radius:2px;background:var(--surface-2);outline:none;cursor:pointer}
+input[type=range].seek::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;
+  background:var(--accent);border:2px solid var(--surface);box-shadow:0 0 0 1px var(--line);margin-top:-5px;cursor:pointer}
+input[type=range].seek::-moz-range-track{height:4px;border-radius:2px;background:var(--surface-2)}
+input[type=range].seek::-moz-range-progress{height:4px;border-radius:2px;background:var(--accent)}
+input[type=range].seek::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:var(--accent);
+  border:2px solid var(--surface);cursor:pointer}
 
-.panel{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 12px;min-width:0}
-.panel h2{font-size:13px;color:var(--ink2);margin-bottom:8px;letter-spacing:.02em}
+.dashboard{max-width:1440px;margin:0 auto;padding:16px;
+  display:grid;grid-template-columns:repeat(12,1fr);gap:16px}
+@media (max-width:1099px){ .dashboard{grid-template-columns:1fr} .dashboard>*{grid-column:1/-1!important} }
+.span-12{grid-column:1/-1}
+.span-8{grid-column:span 8}
+.span-4{grid-column:span 4}
+.span-7{grid-column:span 7}
+.span-5{grid-column:span 5}
 
-.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px}
-.card{border:1px solid var(--border);border-radius:8px;padding:8px 10px;transition:opacity .3s}
-.card.stale{opacity:.4}
-.card h3{font-size:12.5px;display:flex;align-items:center;gap:4px;margin-bottom:6px}
-.card h3 .muted{margin-left:auto;font-weight:400;font-size:11px}
-.card dl{display:grid;grid-template-columns:minmax(0,auto) minmax(0,1fr);gap:2px 8px;margin:0;font-size:11.5px}
-.card dt{color:var(--muted);max-width:52%}
-.card dd{margin:0;text-align:right;font-variant-numeric:tabular-nums;word-break:break-word;overflow-wrap:anywhere}
-.card dt code{font-size:10px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+  padding:16px;min-width:0}
+.card-head{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:2px}
+.card-head h2{font-size:14px;color:var(--ink);letter-spacing:.01em}
+.card-head-r{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 
-.twrap{overflow-x:auto;min-width:0}
-table{border-collapse:collapse;width:100%;font-size:12px;white-space:nowrap}
-th,td{padding:4px 8px;text-align:right;border-bottom:1px solid var(--border)}
-th:first-child,td:first-child{text-align:left}
-th{color:var(--muted);font-weight:500}
-tr.disabled{opacity:.45}
+/* ---- KPI ストリップ / KPI strip ---- */
+.kpi-strip{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));
+  background:var(--surface);border-top:1px solid var(--line);border-bottom:1px solid var(--line);
+  border-left:1px solid var(--line)}
+.kpi-tile{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 16px;min-width:0;
+  box-shadow:inset -1px 0 0 var(--line), inset 0 -1px 0 var(--line)}
+.kpi-main{display:flex;flex-direction:column;gap:2px;min-width:0}
+.kpi-value{font-size:24px;font-weight:600;line-height:1.15;white-space:nowrap}
+.kpi-value .unit{font-size:12.5px;font-weight:500;color:var(--ink-2);margin-left:2px}
+.kpi-sub{font-size:11px;color:var(--muted)}
+.kpi-tile svg.spark{flex:0 0 auto;width:48px;height:22px}
 
-.legend{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:11px;color:var(--ink2);margin-bottom:4px}
-.legend span.dot{margin-right:4px}
-.chart-title{font-size:11px;margin:2px 0}
-.chart-title code{font-size:10px}
-.chart-box{height:150px;margin-bottom:10px}
-.chart-box canvas{width:100%;height:100%;display:block}
-#planBox{height:320px}
-#planBox canvas{width:100%;height:100%;display:block;touch-action:none}
+/* ---- 測位図 + アンカー一覧の「ヒーロー行」/ hero row ---- */
+.hero-card{height:calc(100dvh - var(--chrome-h));min-height:420px;display:flex;flex-direction:column}
+@media (max-width:799px){ .hero-card{height:auto;min-height:0} }
+
+/* ---- 測位図 / plan view（canvas: 点群が最大2万点に達するため DOM描画のsvgではなく
+   イミディエイトモードのcanvasで描く。fitCanvasがdevicePixelRatio込みで実寸に合わせる） ----
+   plan view uses <canvas> (not <svg>): the point cloud can reach ~20000 points, so an
+   immediate-mode canvas redraw is far cheaper than regenerating that many SVG nodes every
+   frame; fitCanvas sizes the backing store to the element's real box, devicePixelRatio included */
+#planBox{position:relative;flex:1 1 auto;min-height:0;overflow:hidden}
+#planBox canvas{display:block;position:absolute;inset:0;width:100%;height:100%;touch-action:none}
 #planBox canvas.rot{cursor:grab}
 #planBox canvas.rot:active{cursor:grabbing}
-.viewTabs{display:flex;gap:4px;margin-bottom:8px}
-.viewTabs button{padding:3px 10px;font-size:11px}
-.viewTabs button.sel{background:var(--ink);color:var(--surface);border-color:var(--ink)}
-.planHead{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:2px}
-.planHead h2{margin-bottom:0}
-.planHeadR{display:flex;align-items:center;gap:8px}
-.planHeadR .viewTabs{margin-bottom:0}
-#btnPlanFs,#btnCloudClear{padding:3px 10px;font-size:11px}
-/* 測位図の拡大表示（Fullscreen API のフォールバック兼用）/ plan-view enlarge (also the Fullscreen API fallback) */
-.fs{position:fixed;inset:0;z-index:1000;background:var(--page);padding:14px;border-radius:0}
-.fs #planBox{height:calc(100vh - 60px)}
+/* #planBox の中身(canvas)は position:absolute のため通常フローの高さに寄与しない。800px未満は
+   ヒーロー行の高さ制約自体を外すので、ここで最小高さを明示しないと 0px に潰れる（このルールは
+   上の無条件 #planBox 定義より後に置くこと＝詳細度が同じなので定義順で上書きされる）
+   the canvas inside #planBox is position:absolute and contributes no height to normal flow; below
+   800px the hero-row height constraint is dropped, so without this explicit min-height #planBox
+   would collapse to 0px (must stay AFTER the unconditional #planBox rule above: equal specificity,
+   so source order decides) */
+@media (max-width:799px){ #planBox{min-height:320px} }
+[hidden]{display:none!important}
+.plan-fs{position:fixed;inset:0;z-index:1000;background:var(--bg);padding:16px;overflow:auto;height:100dvh;display:flex;flex-direction:column}
+.plan-fs #planBox{flex:1 1 auto;height:auto}
 
-#conOut{height:180px;overflow-y:auto;background:var(--page);border:1px solid var(--border);border-radius:6px;
-  padding:6px 8px;margin:0 0 6px;white-space:pre-wrap;word-break:break-word;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px}
-#conOut .err{color:var(--bad)}
-.con-in{display:flex;align-items:center;gap:6px;margin-bottom:6px}
-.con-in span{color:var(--muted);font-family:ui-monospace,Menlo,Consolas,monospace}
-.con-in input{flex:1}
-.con-quick{display:flex;flex-wrap:wrap;gap:6px}
-.con-quick button{font-size:11px;padding:4px 8px}
+/* ---- アンカー一覧 / anchor list rail ---- */
+#anchorList{flex:1 1 auto;min-height:0;overflow-y:auto}
+.anchor-row{display:flex;align-items:center;gap:10px 14px;padding:9px 2px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.anchor-row:last-child{border-bottom:none}
+.anchor-id{display:flex;align-items:center;gap:7px;font-family:var(--font-mono);font-size:12.5px;min-width:78px}
+.anchor-dist{display:flex;align-items:center;gap:6px;font-size:13.5px;min-width:78px}
+.anchor-dist svg{width:50px;height:18px}
+.anchor-meta{display:flex;align-items:center;gap:14px;font-size:11px;color:var(--ink-2);flex:1 1 auto;justify-content:flex-end;flex-wrap:wrap}
+.anchor-row.dim{opacity:.45}
+@media (max-width:480px){ .anchor-dist svg{display:none} }
 
-details#rawDet summary{cursor:pointer;font-size:13px;color:var(--ink2);margin-bottom:6px}
-#rawFilter{width:200px;margin-bottom:6px}
-#rawOut{max-height:220px;overflow-y:auto;background:var(--page);border:1px solid var(--border);border-radius:6px;
-  padding:6px 8px;margin:0;white-space:pre-wrap;word-break:break-all;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:10.5px}
+/* ---- チャート小群 / chart small multiples ---- */
+.chart-legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:11px;color:var(--ink-2);margin-bottom:12px}
+.chart-legend .dot{margin-right:4px}
+.chart-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px 24px}
+.chart-tile h3{font-size:12.5px;color:var(--ink-2);font-weight:500;margin-bottom:6px}
+.chart-tile h3 code{font-size:10.5px;color:var(--muted);margin-left:3px}
+.chart-tile svg{display:block;width:100%;height:auto;cursor:crosshair}
+
+/* ---- ノード（自ノードの状態・折り畳み） / node self-status, collapsible & secondary ---- */
+details#nodeDet summary{cursor:pointer;font-size:13px;color:var(--ink-2);margin-bottom:8px}
+.node-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px}
+.node-card{border:1px solid var(--line);border-radius:8px;padding:8px 10px;transition:opacity .3s}
+.node-card.stale{opacity:.4}
+.node-card h3{font-size:12.5px;display:flex;align-items:center;gap:4px;margin-bottom:6px}
+.node-card h3 .muted{margin-left:auto;font-weight:400;font-size:11px}
+.node-card dl{display:grid;grid-template-columns:minmax(0,auto) minmax(0,1fr);gap:2px 8px;margin:0;font-size:11.5px}
+.node-card dt{color:var(--muted);max-width:52%}
+.node-card dd{margin:0;text-align:right;font-variant-numeric:tabular-nums;word-break:break-word;overflow-wrap:anywhere}
+
+/* ---- 表 / tables ---- */
+.twrap{overflow-x:auto;min-width:0}
+table{border-collapse:collapse;width:100%;font-size:12.5px;white-space:nowrap}
+th,td{padding:6px 10px;text-align:right;border-bottom:1px solid var(--line)}
+th:first-child,td:first-child{text-align:left}
+th{font-size:11px;color:var(--muted);font-weight:500}
+tr:last-child td{border-bottom:none}
+tr.dim td{color:var(--muted);opacity:.55}
+.stat-block+.stat-block{margin-top:14px}
+.stat-title{font-size:11px;color:var(--muted);margin-bottom:6px}
+
+/* ---- コンソール / console ---- */
+.console-out{height:168px;overflow-y:auto;background:var(--surface-2);border:1px solid var(--line);
+  border-radius:8px;padding:8px 10px;margin:0 0 8px;white-space:pre-wrap;word-break:break-word;
+  font-family:var(--font-mono);font-size:11.5px;line-height:1.6;color:var(--ink-2)}
+.console-out .err{color:var(--bad)}
+.console-in{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.console-in span{color:var(--muted);font-family:var(--font-mono)}
+.console-in input{flex:1;background:var(--surface);border:1px solid var(--line);border-radius:8px;
+  padding:7px 10px;font-family:var(--font-mono);font-size:12.5px}
+.console-quick{display:flex;flex-wrap:wrap;gap:6px}
+
+/* ---- 生ログ / raw log ---- */
+details#rawDet summary{cursor:pointer;font-size:13px;color:var(--ink-2);margin-bottom:8px}
+details#rawDet summary .muted{margin-left:6px}
+#rawFilter{width:220px;margin-bottom:8px;background:var(--surface);border:1px solid var(--line);
+  border-radius:8px;padding:6px 9px}
+#rawOut{max-height:200px;overflow-y:auto;background:var(--surface-2);border:1px solid var(--line);
+  border-radius:8px;padding:8px 10px;margin:0;white-space:pre-wrap;word-break:break-all;
+  font-family:var(--font-mono);font-size:10.5px;color:var(--ink-2)}
+
+footer.footer{grid-column:1/-1;text-align:center;font-size:11px;color:var(--muted);padding:8px 0 24px}
 </style>
 </head>
 <body>
-<header>
-  <div class="hgroup"><h1 id="devName">&mdash;</h1><span id="devRole" class="badge"></span></div>
-  <div id="hdrInfo" class="muted"></div>
-  <div id="hdrUptime" class="muted"></div>
-  <div class="spacer"></div>
-  <div><span id="connDot" class="dot warn"></span><span id="connText" class="muted">接続中&hellip;</span>
-    <span id="lastMsgText" class="warnText" hidden></span>
-    <span id="errText" class="errText" hidden></span>
-    <span id="drawErrText" class="errText" hidden></span>
-  </div>
-  <div id="rateText" class="muted"></div>
-  <div id="modeBadge" class="badge">—</div>
-  <div class="actions">
-    <button id="btnRec">● 記録開始</button>
-    <button id="btnSave" disabled>保存</button>
-    <span id="recInfo" class="muted"></span>
-  </div>
-</header>
 
-<main>
-  <section class="panel full">
-    <h2>ノード</h2>
-    <div class="cards" id="cards"></div>
-  </section>
-
-  <section class="panel full">
-    <h2>アンカー一覧（タグの stats 行より）</h2>
-    <div class="twrap">
-      <table>
-        <thead><tr>
-          <th>a</th><th>att</th><th>succ</th><th>rate</th><th>retries</th><th>rescued</th>
-          <th>初回成功率</th><th>d [m]</th><th>elapsed_ms</th><th>状態</th><th>位置 p [m]</th>
-        </tr></thead>
-        <tbody id="anchorTbody"></tbody>
-      </table>
+<div class="topbar">
+  <div class="topbar-inner">
+    <div class="brand"><span class="brand-name" id="devName">uwb-tag</span><span class="chip" id="devRole"></span></div>
+    <div class="seg" id="modeSeg">
+      <button class="active" data-mode="live">ライブ</button>
+      <button data-mode="replay">再生</button>
     </div>
+    <div class="conn-pill" id="connPill"><span class="dot" id="connDot" style="background:var(--warn)"></span><span id="connText">接続中…</span></div>
+    <span class="chip warnText" id="errChip" hidden></span>
+    <span class="chip chip-mode" id="modeChip">—</span>
+    <div class="spacer"></div>
+    <div class="topbar-actions">
+      <button class="btn btn-primary" id="btnRec">● 記録開始</button>
+      <button class="btn" id="btnSave" disabled>保存</button>
+      <button class="btn btn-icon" id="btnTheme" title="配色モード切替" aria-label="配色モード切替">◐</button>
+    </div>
+  </div>
+</div>
+
+<!-- 再生バー: 画面下端に固定・ライブモードでは非表示 / transport bar: fixed to the bottom, hidden in live mode -->
+<div class="bottom-bar" id="transportBar" hidden>
+  <div class="bottom-bar-inner">
+    <div class="transport-files">
+      <button class="btn btn-sm" id="btnOpenFile">ファイルを開く</button>
+      <input type="file" id="fileInput" accept=".jsonl,.txt" hidden>
+      <span class="transport-filename" id="fileNameEl" title="">未選択</span>
+    </div>
+    <button class="btn-round" id="btnPlay" title="再生／停止" aria-label="再生">▶</button>
+    <div class="seg" id="speedSeg">
+      <button data-speed="0.5">0.5×</button>
+      <button data-speed="1" class="active">1×</button>
+      <button data-speed="2">2×</button>
+      <button data-speed="4">4×</button>
+      <button data-speed="10">10×</button>
+    </div>
+    <div class="transport-seek">
+      <span class="transport-time" id="seekTimeL">00:00.0</span>
+      <input type="range" class="seek" id="seekRange" min="0" max="1000" value="0" aria-label="再生位置">
+      <span class="transport-time" id="seekTimeR">00:00.0</span>
+    </div>
+    <div class="transport-meta">
+      <span class="transport-seq" id="seqText">seq 0 / 0</span>
+      <button class="live-link" id="btnGoLive">ライブに戻る</button>
+      <span class="kbd-hint-inline">Space 再生／停止 ・ ← → 1 秒 ・ Shift+← → 10 秒</span>
+    </div>
+  </div>
+</div>
+
+<main class="dashboard">
+
+  <section class="kpi-strip" aria-label="KPI">
+    <div class="kpi-tile"><div class="kpi-main">
+        <div class="label">x <code>lv3.p[0]</code></div>
+        <div class="kpi-value" id="kpiXVal">—</div>
+        <div class="kpi-sub" id="kpiXSub">—</div></div>
+      <svg class="spark" data-spark="x" data-color="--accent"></svg></div>
+    <div class="kpi-tile"><div class="kpi-main">
+        <div class="label">y <code>lv3.p[1]</code></div>
+        <div class="kpi-value" id="kpiYVal">—</div>
+        <div class="kpi-sub" id="kpiYSub">—</div></div>
+      <svg class="spark" data-spark="y" data-color="--accent"></svg></div>
+    <div class="kpi-tile"><div class="kpi-main">
+        <div class="label">z <code>lv3.p[2]</code></div>
+        <div class="kpi-value" id="kpiZVal">—</div>
+        <div class="kpi-sub" id="kpiZSub">—</div></div>
+      <svg class="spark" data-spark="z" data-color="--accent"></svg></div>
+    <div class="kpi-tile"><div class="kpi-main">
+        <div class="label">周期 <code>cycle_ms</code></div>
+        <div class="kpi-value" id="kpiCycleVal">—</div>
+        <div class="kpi-sub">直近周期</div></div>
+      <svg class="spark" data-spark="cycle" data-color="--ink-2"></svg></div>
+    <div class="kpi-tile"><div class="kpi-main">
+        <div class="label">成功率 <code>stats</code></div>
+        <div class="kpi-value" id="kpiRateVal">—</div>
+        <div class="kpi-sub">直近周期</div></div>
+      <svg class="spark" data-spark="rate" data-color="--good"></svg></div>
+    <div class="kpi-tile"><div class="kpi-main">
+        <div class="label">残差 RMS <code>residual_rms</code></div>
+        <div class="kpi-value" id="kpiResVal">—</div>
+        <div class="kpi-sub" id="kpiResSub">GDOP —</div></div>
+      <svg class="spark" data-spark="res" data-color="--ink-2"></svg></div>
   </section>
 
-  <section class="panel full">
-    <div class="planHead">
-      <h2>測距統計</h2>
-      <div class="viewTabs" id="statWinTabs">
-        <button data-win="10" id="btnStatWin10" class="sel">10s</button>
-        <button data-win="60" id="btnStatWin60">60s</button>
+  <!-- 測位図 / plan view — hero -->
+  <section class="card span-8 hero-card" id="planCard">
+    <div class="card-head">
+      <h2>測位図</h2>
+      <div class="card-head-r">
+        <div class="seg" id="viewSeg">
+          <button class="active" data-view="2d">2D</button>
+          <button data-view="3d">3D</button>
+        </div>
+        <button class="btn btn-sm" id="btnFs">拡大</button>
+        <button class="btn btn-sm" id="btnClearCloud">点群消去</button>
       </div>
     </div>
-    <div class="twrap">
+    <div class="caption">印・軌跡（墨）= EKF 解、軌跡は直近 60 秒。点群（紫）= 消去まで蓄積。再生中は記録の時刻で描画。3D は透視投影、床格子は地平線まで</div>
+    <div id="planBox">
+      <canvas id="plan2d" role="img" aria-label="2D 測位図"></canvas>
+      <canvas id="plan3d" role="img" aria-label="3D 測位図" hidden></canvas>
+    </div>
+  </section>
+
+  <!-- アンカー一覧 / anchor list -->
+  <section class="card span-4 hero-card" id="anchorCard">
+    <div class="card-head"><h2>アンカー一覧</h2></div>
+    <div id="anchorList"><div class="anchor-row"><span class="muted">データなし</span></div></div>
+  </section>
+
+  <!-- チャート / charts -->
+  <section class="card span-12" id="chartsCard">
+    <div class="card-head"><h2>チャート（直近60秒）</h2></div>
+    <div class="chart-legend" id="chartLegend"></div>
+    <div class="chart-grid">
+      <div class="chart-tile"><h3>距離 d <code>meas.d</code> [m]</h3><svg id="cvDist" viewBox="0 0 480 170"></svg></div>
+      <div class="chart-tile"><h3>成功率 <code>stats</code> [%]（太=瞬時 / 細=累積）</h3><svg id="cvRate" viewBox="0 0 480 170"></svg></div>
+      <div class="chart-tile"><h3>周期 <code>fix.cycle_ms</code>（薄帯=直近1秒の最大）</h3><svg id="cvCycle" viewBox="0 0 480 170"></svg></div>
+      <div class="chart-tile"><h3>位置 <code>lv3.p / fix.p</code> [m]（太=EKF / 細=通常解）</h3><svg id="cvPos" viewBox="0 0 480 170"></svg></div>
+    </div>
+  </section>
+
+  <!-- ノード（自身の状態）: 折り畳み・副次情報 / node self-status: collapsible, secondary -->
+  <section class="card span-12">
+    <details id="nodeDet">
+      <summary>ノード <span class="muted" id="nodeCount"></span></summary>
+      <div class="node-cards" id="cards"></div>
+    </details>
+  </section>
+
+  <!-- 測距統計 / ranging statistics -->
+  <section class="card span-7" id="statsCard">
+    <div class="card-head">
+      <h2>測距統計</h2>
+      <div class="seg" id="statWinSeg"><button class="active" data-win="10">10s</button><button data-win="60">60s</button></div>
+    </div>
+    <div class="stat-block twrap">
       <table>
-        <thead><tr>
-          <th>a</th><th>n</th><th>中央値 [m]</th><th>平均 [m]</th><th>標準偏差 [mm]</th>
-          <th>最小 [m]</th><th>最大 [m]</th><th>飛び値 (件)</th><th>1周期前との相関</th>
-        </tr></thead>
+        <thead><tr><th>a</th><th>n</th><th>中央値 [m]</th><th>平均 [m]</th><th>標準偏差 [mm]</th><th>最小 [m]</th><th>最大 [m]</th><th>飛び値</th></tr></thead>
         <tbody id="rangingStatTbody"></tbody>
       </table>
     </div>
-    <div class="twrap" style="margin-top:8px">
+    <div class="stat-block twrap">
+      <div class="stat-title">位置ジッタ（1周期移動量 = 連続する解の間の距離）</div>
       <table>
-        <thead><tr>
-          <th></th><th>n</th><th>x 平均 [m]</th><th>y 平均 [m]</th><th>x 標準偏差 [mm]</th><th>y 標準偏差 [mm]</th><th>z 標準偏差 [mm]</th>
-          <th>1周期移動量 中央値 [mm]</th><th>1周期移動量 最大 [mm]</th>
-        </tr></thead>
+        <thead><tr><th>解</th><th>n</th><th>x 平均 [m]</th><th>y 平均 [m]</th><th>x 標準偏差 [mm]</th><th>y 標準偏差 [mm]</th><th>z 標準偏差 [mm]</th><th>移動量 中央値 [mm]</th><th>移動量 最大 [mm]</th></tr></thead>
         <tbody id="posStatTbody"></tbody>
       </table>
     </div>
-    <div class="twrap" style="margin-top:8px">
-      <table>
-        <thead><tr><th>残差・診断（直近窓）</th><th>値</th></tr></thead>
-        <tbody id="residualStatTbody"></tbody>
-      </table>
-    </div>
-    <div class="muted" style="margin-top:6px;font-size:11px">
+    <div class="caption" id="residualCaption" style="margin-top:10px;margin-bottom:0">
       統計はブラウザ側で計算（直近の窓）。静止時の標準偏差＝雑音、飛び値＝前後9周期の中央値から 0.25 m 超
     </div>
   </section>
 
-  <section class="panel full">
-    <h2>チャート（直近60秒）</h2>
-    <div class="legend" id="chartLegend"></div>
-    <div class="chart-title muted">距離 d <code>meas.d</code> [m]</div>
-    <div class="chart-box"><canvas id="cvDist"></canvas></div>
-    <div class="chart-title muted">成功率 <code>stats</code> [%]（太line=瞬時 細line=累積）</div>
-    <div class="chart-box"><canvas id="cvRate"></canvas></div>
-    <div class="chart-title muted">cycle_ms <code>fix.cycle_ms</code>（薄い帯=直近1秒の最大）</div>
-    <div class="chart-box"><canvas id="cvCycle"></canvas></div>
-    <div class="chart-title muted">位置 fix.p / lv3.p [m]（太線=EKF / 細線=通常解、x, y, z: z は 3D 測位時のみ）</div>
-    <div class="chart-box"><canvas id="cvPos"></canvas></div>
-  </section>
-
-  <section class="panel" id="planPanel">
-    <div class="planHead">
-      <h2>測位図</h2>
-      <div class="planHeadR">
-        <div class="viewTabs" id="viewTabs">
-          <button data-view="2d" id="btnView2D">2D</button>
-          <button data-view="3d" id="btnView3D" class="sel">3D</button>
-        </div>
-        <button id="btnPlanFs">拡大</button>
-        <button id="btnCloudClear">点群消去</button>
-      </div>
-    </div>
-    <!-- 印・軌跡は fix.lv3.p（EKF）が既定。EKF 無効時のみ fix.p（通常解）にフォールバックする -->
-    <!-- marker/trail default to fix.lv3.p (EKF); fall back to fix.p (NLS) only when no EKF is present -->
-    <div class="chart-title muted">印・軌跡（墨色）= EKF 解、軌跡は直近 60 秒（EKF が無いときだけ通常解）。点群（紫）= 消去まで蓄積</div>
-    <div id="planBox"><canvas id="cvPlan"></canvas></div>
-  </section>
-
-  <section class="panel">
-    <h2>コンソール</h2>
-    <pre id="conOut"></pre>
-    <div class="con-in"><span>&gt;</span><input id="conIn" autocomplete="off" spellcheck="false" placeholder="コマンドを入力して Enter"></div>
-    <div class="con-quick" id="conQuick">
-      <button data-cmd="info">info</button>
-      <button data-cmd="anchor list">anchor list</button>
-      <button data-cmd="wifi">wifi</button>
-      <button data-cmd="help">help</button>
+  <!-- コンソール / console -->
+  <section class="card span-5" id="consoleCard">
+    <div class="card-head"><h2>コンソール</h2></div>
+    <pre class="console-out" id="conOut"></pre>
+    <div class="console-in"><span>&gt;</span><input id="conIn" placeholder="コマンドを入力して Enter" autocomplete="off" spellcheck="false"></div>
+    <div class="console-quick" id="conQuick">
+      <button class="btn btn-sm" data-cmd="info">info</button>
+      <button class="btn btn-sm" data-cmd="anchor list">anchor list</button>
+      <button class="btn btn-sm" data-cmd="wifi">wifi</button>
+      <button class="btn btn-sm" data-cmd="help">help</button>
     </div>
   </section>
 
-  <section class="panel full">
+  <!-- 生ログ / raw log -->
+  <section class="span-12">
     <details id="rawDet">
-      <summary>生ログ <span id="rawCount" class="muted"></span></summary>
+      <summary>生ログ <span class="muted" id="rawCount">(0)</span></summary>
       <input id="rawFilter" placeholder="type で絞り込み (例: meas)">
       <pre id="rawOut"></pre>
     </details>
   </section>
+
+  <footer class="footer">M5Stamp UWB Module × M5StampS3A · ページはタグのフラッシュから配信（外部リソースなし）</footer>
 </main>
 
 <script>
 "use strict";
-// ---- 定数・状態 / constants & state ----
+/* =====================================================================
+ * UWB タグ計器盤 / UWB tag instrument-panel dashboard
+ * 単一HTMLファイル・外部リソース無し（タグのフラッシュから配信）。
+ * a single self-contained HTML file with no external resources (served
+ * straight from the tag's flash).
+ * ===================================================================== */
+
+/* ---- 配色モード切替 / theme toggle: system -> light -> dark, persisted ---- */
+const root = document.documentElement;
+const THEME_MODES = ['system','light','dark'];
+const THEME_ICON = {system:'◐', light:'☀', dark:'☾'};
+let themeMode = null;
+try{ themeMode = localStorage.getItem('uwbDashTheme'); }catch(e){}
+if(!themeMode) themeMode = root.getAttribute('data-theme') || 'system';
+function applyTheme(m){ if(m==='system') root.removeAttribute('data-theme'); else root.setAttribute('data-theme', m); }
+applyTheme(themeMode);
+const btnTheme = document.getElementById('btnTheme');
+btnTheme.textContent = THEME_ICON[themeMode];
+btnTheme.addEventListener('click', ()=>{
+  themeMode = THEME_MODES[(THEME_MODES.indexOf(themeMode)+1) % THEME_MODES.length];
+  applyTheme(themeMode); btnTheme.textContent = THEME_ICON[themeMode];
+  try{ localStorage.setItem('uwbDashTheme', themeMode); }catch(e){}
+  rebuildTheme();
+});
+
+/* ---- 定数・状態 / constants & state ---- */
 const TAU = Math.PI*2;
 const ORDER_KEYS = ['s1','s2','s3','s4','s5','s6','s7','s8'];
-const COL = {};
+const COL = {}; // canvas描画専用の実色キャッシュ(getComputedStyleで解決)。SVG側はvar()を直接埋め込むので不要
+                // resolved colours for <canvas> drawing only (via getComputedStyle); SVG output embeds var() directly and needs none of this
 let colorHex = [];
-const anchorColorIdx = new Map(); // anchor id -> 0..7 (固定順・初出順)
+const anchorColorIdx = new Map(); // anchor id -> 0..7 (固定順・初出順。通常は "anchors" 行の並び順と一致)
+                                   // anchor id -> 0..7, in first-seen order (normally matches the "anchors" line's table order)
 
 const nodes = new Map();          // addr -> merged node/anchor_stats fields
 let selfAddr = null;
@@ -251,45 +494,34 @@ const distSeries = new Map();      // a -> [{t,d}]
 const statsPrevByA = new Map();    // a -> {att,succ}
 const statsLatestByA = new Map();  // a -> latest stats.anchors[] entry
 const rateSeries = new Map();      // a -> [{t,inst,cum}]
+const rateAggSeries = [];          // [{t,inst,cum}] 全アンカー合算の成功率（KPI帯用）/ all-anchor aggregate success rate, for the KPI strip
 const fixAnchorsLatest = new Map();// a -> latest fix.anchors[] entry
 let fixLatest = null;
-let ekfLatest = null;              // fix.lv3（o.lv3.ok && p が配列のときのみ非null）+ z（p[2] か z_fixed で解決済み）。測位図の主表示に使う
-                                    // fix.lv3, set only when o.lv3.ok && p is an array, plus a resolved z (p[2] or z_fixed); the plan view's primary marker/trail source
+let ekfLatest = null;              // fix.lv3（o.lv3.ok && p が配列のときのみ非null）+ z（p[2] か z_fixed で解決済み）
+                                    // fix.lv3, set only when o.lv3.ok && p is an array, plus a resolved z (p[2] or z_fixed)
 const cycleSeries = [];            // [{t,val,band}]
-const posSeriesNls = [];           // [{t,x,y,z}] fix.p（Lv2 NLS, o.ok のとき。z は 3D fix (p が3成分) のときだけ入る）
-                                    // {t,x,y,z}, from fix.p (Lv2 NLS, when o.ok); z present only for a 3D fix (3-component p)
-const posSeriesEkf = [];           // [{t,x,y,z}] fix.lv3.p（EKF, o.lv3.ok のとき。z は同上）
-                                    // {t,x,y,z}, from fix.lv3.p (EKF, when o.lv3.ok); z as above
-const TRAIL_MS = 60000;            // 軌跡(fixTrail/ekfTrail)の保持時間 [ms]（約60秒）/ trail retention window (~60 s)
-const TRAIL_MAX = 6000;            // 軌跡点数の安全上限（周期が異常に短くても暴走しないための保険）
-                                    // safety cap on trail length, in case the fix cycle is ever abnormally fast
-const fixTrail = [];               // [{x,y,z,t}] 通常解(NLS)の軌跡。直近 TRAIL_MS 秒を保持（安全上限 TRAIL_MAX 点）
-                                    // NLS trail; retains the last TRAIL_MS window (capped at TRAIL_MAX entries)
-const ekfTrail = [];               // [{x,y,z,t}] EKF(lv3)の軌跡。fixTrail と同じ保持規則。測位図はこちらを優先表示
-                                    // EKF (lv3) trail; same retention rule as fixTrail. the plan view shows this preferentially
-const CLOUD_MAX = 20000;           // 点群(cloudPts)の上限点数。超えたら最古の点から破棄する
-                                    // cap on the point cloud; oldest points are dropped once this is exceeded
-const cloudPts = [];               // [{x,y,z}] 測位図の点群。主マーカー(EKF優先、無ければ通常解)の位置を全て蓄積する。
-                                    // 「点群消去」ボタンでのみクリアされ、WebSocket再接続やモード変更では消えない。
-                                    // point cloud for the plan view: accumulates every position that feeds the main marker
-                                    // (EKF when present, else NLS). Cleared only by the "点群消去" button — never by a
-                                    // WebSocket reconnect or a mode change.
-const resSeries = [];              // [{t,r}] fix.residual_rms [m]（o.ok のときのみ）60秒保持
-const fixFlagSeries = [];          // [{t,ok,excluded}] 全 fix 行、60秒保持（測距統計パネル用）
-let statsWindowMs = 10000;         // 測距統計パネルの集計窓 [ms]（10s/60s トグル、既定10s）
+const posSeriesNls = [];           // [{t,x,y,z}] fix.p（Lv2 NLS）
+const posSeriesEkf = [];           // [{t,x,y,z}] fix.lv3.p（EKF）
+const TRAIL_MS = 60000;            // 軌跡(fixTrail/ekfTrail)の保持時間 [ms]（約60秒）
+const TRAIL_MAX = 6000;            // 軌跡点数の安全上限
+const fixTrail = [];               // [{x,y,z,t}] 通常解(NLS)の軌跡
+const ekfTrail = [];               // [{x,y,z,t}] EKF(lv3)の軌跡。測位図はこちらを優先表示
+const CLOUD_MAX = 20000;           // 点群(cloudPts)の上限点数
+const cloudPts = [];               // [{x,y,z}] 測位図の点群。「点群消去」でのみクリアされる（再生のシーク/モード切替時は再構築される）
+const resSeries = [];              // [{t,r}] fix.residual_rms [m]
+const fixFlagSeries = [];          // [{t,ok,excluded}]
+let statsWindowMs = 10000;         // 測距統計パネルの集計窓 [ms]（10s/60s トグル）
 
-const rawBuf = [];                 // [{raw,type}] 最大100件
+const rawBuf = [];                 // [{raw,type}] 最大200件
 let recording = false, recLines = [], recBytes = 0, recCount = 0;
 let curLines = 0, curBytes = 0, rateLinesShown = 0, rateBytesShown = 0;
 const conHistory = []; let conHistIdx = 0;
 const conBuf = [];
 
 let ws = null, connState = 'connecting', reconnectTimer = null;
-const isDemo = new URLSearchParams(location.search).get('demo')==='1';
+const qs = new URLSearchParams(location.search);
+const isDemo = qs.get('demo')==='1';
 
-// ---- 死活監視・エラー計測 / liveness watchdog & error counters ----
-// 「WebSocket 接続中のまま画面が固まる」不具合の切り分け用。受信・描画の両方を監視する。
-// diagnostics for the "still says connected but frozen" bug: watch both message receipt and rendering.
 let lastMsgAt = 0, lastFixAt = 0, lastEkfAt = 0, stalled = false;
 let msgErrors = 0, lastMsgError = '', lastMsgErrorLoggedAt = 0;
 let drawErrors = 0, lastDrawError = '', lastDrawErrorLoggedAt = 0;
@@ -304,14 +536,26 @@ function noteDrawError(e){
   if(now-lastDrawErrorLoggedAt>5000){ lastDrawErrorLoggedAt=now; console.error('[draw]',e); }
 }
 
-// ---- 3D 測位図 / 3D plan view ----
-let view3D = true;
-// yaw/pitch [rad], zoom は平行投影の倍率。既定は +x+y 側の斜め上から原点を見る等角風の視点
-// yaw/pitch [rad], zoom scales the parallel projection. Default: classic isometric-like view from above the +x+y side
-let cam3 = {yaw:2.44, pitch:0.5, zoom:1};
-function resetCam3(){ cam3.yaw=2.44; cam3.pitch=0.5; cam3.zoom=1; }
+/* ---- ライブ／再生の時刻基準 / the live-vs-replay time base ----
+ * 全てのデータパス（系列・軌跡・古さ判定）は performance.now() を直接使わず nowMs() を使う。
+ * ライブ中は実時刻、再生中は再生クロック(replayT、記録の相対秒)を ms に変換した値を返す。
+ * every data-path timestamp (series, trails, staleness) goes through nowMs() instead of
+ * performance.now() directly: live mode returns the real wall clock, replay mode returns the
+ * replay clock (replayT, seconds relative to the recording's start) converted to ms. */
+let replayMode = false;
+function nowMs(){ return replayMode ? replayT*1000 : performance.now(); }
 
-// ---- 汎用ヘルパ / helpers ----
+/* ---- 3D 測位図: 透視投影カメラ / 3D plan view: perspective orbit camera ----
+ * ヒステリシス枠の中心(床面, z=0)を注視点として周回する。yaw/pitch は向き、dist は距離[m]
+ * （null なら全体が収まるよう自動計算）。焦点距離は毎フレーム canvas 高さの1.2倍で決める。
+ * orbits a target at the centre of the hysteresis bounds (floor level, z=0). yaw/pitch set the
+ * orientation; dist is the orbit radius [m] (null = auto-fit the whole bounds). focal length is
+ * recomputed every frame as 1.2x the canvas height. */
+const cam3D = {yaw:-2.4, pitch:20*Math.PI/180, dist:null};
+function resetCam3D(){ cam3D.yaw=-2.4; cam3D.pitch=20*Math.PI/180; cam3D.dist=null; }
+let lastBounds3D = null; // drawPlan3D()が直近に使った境界（ホイール/ピンチのズーム基準に使う）/ last bounds drawPlan3D used, as the baseline for wheel/pinch zoom
+
+/* ---- 汎用ヘルパ / helpers ---- */
 function esc(s){ return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function fmtUptime(s){
   if(s==null) return '—';
@@ -330,15 +574,20 @@ function fmtBytes(n){
 }
 function pct(n,d){ return (d>0)? (n/d*100).toFixed(1)+'%' : '—'; }
 function utf8Len(s){ return new TextEncoder().encode(s).length; }
-// 配列の最小・最大をループで求める（点群が最大20000点まで増えるため、Math.min(...arr) の
-// スプレッド構文（引数展開。要素数が多いとエンジンの引数上限に当たり得る）を避ける）
-// min/max over an array via a plain loop — avoids Math.min(...arr) spread syntax, which can hit an
-// engine's argument-count limit once the point cloud grows toward its 20000-point cap
 function minMax(arr){ let mn=Infinity, mx=-Infinity; for(const v of arr){ if(v<mn) mn=v; if(v>mx) mx=v; } return [mn,mx]; }
+function median(nums){
+  if(!nums.length) return NaN;
+  const s = nums.slice().sort((a,b)=>a-b);
+  const n = s.length, mid = n>>1;
+  return (n%2) ? s[mid] : (s[mid-1]+s[mid])/2;
+}
 
+const THEME_VARS = {ink:'--ink', ink2:'--ink-2', muted:'--muted', line:'--line', cloud:'--cloud',
+  surface:'--surface', accent:'--accent', good:'--good', warn:'--warn', bad:'--bad',
+  s1:'--s1',s2:'--s2',s3:'--s3',s4:'--s4',s5:'--s5',s6:'--s6',s7:'--s7',s8:'--s8'};
 function rebuildTheme(){
   const cs = getComputedStyle(document.documentElement);
-  ['grid','axis','muted','ink','cloud','s1','s2','s3','s4','s5','s6','s7','s8'].forEach(k=>{ COL[k]=cs.getPropertyValue('--'+k).trim(); });
+  for(const k in THEME_VARS) COL[k] = cs.getPropertyValue(THEME_VARS[k]).trim();
   colorHex = ORDER_KEYS.map(k=>COL[k]);
 }
 function getColor(id){
@@ -349,13 +598,25 @@ function getColor(id){
   const idx = anchorColorIdx.get(id);
   return idx>=0 ? colorHex[idx] : COL.muted;
 }
+function getColorVar(id){
+  // SVG生成用: var(--sN) の文字列そのものを返す（テーマ切替に自動追従する）
+  // for SVG output: returns the literal "var(--sN)" string so it tracks theme changes automatically
+  if(!anchorColorIdx.has(id)){
+    if(anchorColorIdx.size<8){ anchorColorIdx.set(id, anchorColorIdx.size); updateLegend(); }
+    else anchorColorIdx.set(id, -1);
+  }
+  const idx = anchorColorIdx.get(id);
+  return idx>=0 ? '--'+ORDER_KEYS[idx] : '--muted';
+}
 function updateLegend(){
   const el = document.getElementById('chartLegend');
   el.innerHTML = Array.from(anchorColorIdx.keys()).map(id=>
-    `<span><span class="dot" style="background:${getColor(id)}"></span>${esc(id)}</span>`).join('');
+    `<span><span class="dot" style="background:var(${getColorVar(id)})"></span>${esc(id)}</span>`).join('');
 }
 
-// ---- WebSocket 接続 / connection ----
+/* ---- WebSocket 接続 / connection（ライブモード限定・再生中も張ったままにする） ----
+ * connection: live mode only; the socket stays open during replay too, we just discard
+ * whatever it delivers while replaying (see onMessage). */
 function connect(){
   connState = ws ? 'reconnecting' : 'connecting';
   let sock;
@@ -374,6 +635,7 @@ function scheduleReconnect(){
 function onMessage(ev){
   lastMsgAt = performance.now();
   stalled = false;
+  if(replayMode) return; // 再生中はライブ行を捨てる（ソケットは張ったまま）/ discard live lines while replaying (socket stays open)
   try{
     if(typeof ev.data !== 'string') return;
     curBytes += utf8Len(ev.data);
@@ -386,14 +648,14 @@ function onMessage(ev){
   }catch(e){ noteMsgError(e); }
 }
 
-// ---- 行の処理 / line handling ----
+/* ---- 行の処理 / line handling（ライブ・再生・デモ共通の入口） / shared entry point for live, replay and demo lines ---- */
 function handleLine(raw){
   let type = '?';
   const m = /"type":"([a-zA-Z_]+)"/.exec(raw);
   if(m) type = m[1];
   rawBuf.push({raw,type});
-  if(rawBuf.length>100) rawBuf.shift();
-  if(recording){ recLines.push(raw); recBytes += utf8Len(raw)+1; recCount++; }
+  if(rawBuf.length>200) rawBuf.shift();
+  if(recording && !replayMode){ recLines.push(raw); recBytes += utf8Len(raw)+1; recCount++; }
   let o;
   try{ o = JSON.parse(raw); }catch(e){ return; }
   if(!o || typeof o!=='object') return;
@@ -411,16 +673,12 @@ function handleLine(raw){
   }catch(e){ /* 未知フィールド欠落等は無視 / never throw on malformed content */ }
 }
 
-// "0x0002" と "A0002" は同じアンカー（前者はコンソール表記、後者は JSON 行表記）。
-// 旧ファームの node 行が混ざってもカードが割れないよう、A 表記へ正規化して束ねる。
-// "0x0002" and "A0002" are the same anchor (console vs JSON-line notation);
-// canonicalise to the A-form so cards never split even with old firmware.
 function canonAddr(id){ const m=/^0x([0-9A-Fa-f]{4})$/.exec(id||''); return m ? ('A'+m[1].toUpperCase()) : id; }
 function onNode(o){
   const id = canonAddr(o.addr); if(!id) return;
   const prevSelf = selfAddr ? nodes.get(selfAddr) : null;
   let n = nodes.get(id); if(!n){ n={}; nodes.set(id,n); }
-  Object.assign(n, o); n.addr = id; n._seen = performance.now();
+  Object.assign(n, o); n.addr = id; n._seen = nowMs();
   if(!selfAddr || (prevSelf && prevSelf.role!=='tag' && o.role==='tag')) selfAddr = id;
 }
 function onAnchors(o){
@@ -429,7 +687,7 @@ function onAnchors(o){
   for(const a of anchorsCfg) if(a && a.id) getColor(a.id);
 }
 function onMeas(o){
-  const t = performance.now();
+  const t = nowMs();
   for(const mm of (o.meas||[])){
     if(!mm || !mm.a) continue;
     getColor(mm.a);
@@ -440,27 +698,21 @@ function onMeas(o){
   }
 }
 function onFix(o){
-  const t = performance.now();
-  lastFixAt = t; // ok:false でも受信自体は生存の証拠として記録 / record receipt even when ok:false
+  const t = nowMs();
+  lastFixAt = t;
   fixLatest = o;
   const val = (typeof o.cycle_ms==='number') ? o.cycle_ms : 0;
   let band = val;
   for(let i=cycleSeries.length-1; i>=0 && cycleSeries[i].t>=t-1000; i--) if(cycleSeries[i].val>band) band=cycleSeries[i].val;
   cycleSeries.push({t, val, band});
   while(cycleSeries.length && cycleSeries[0].t < t-60000) cycleSeries.shift();
-  let nlsPt = null, ekfPt = null; // 今回の周期で得られた位置（点群の蓄積対象を選ぶために保持）
-                                   // this cycle's positions, kept so we can pick which one feeds the point cloud
+  let nlsPt = null, ekfPt = null;
   if(o.ok && Array.isArray(o.p)){
     const z = o.p.length>2 ? o.p[2] : (typeof o.z_fixed==='number' ? o.z_fixed : 0);
     nlsPt = {x:o.p[0], y:o.p[1], z};
     fixTrail.push({x:nlsPt.x, y:nlsPt.y, z:nlsPt.z, t});
     while(fixTrail.length && fixTrail[0].t < t-TRAIL_MS) fixTrail.shift();
     if(fixTrail.length>TRAIL_MAX) fixTrail.shift();
-    // p[2] は 2D モードでも「内部で使う固定高さ」として常に入っている（main.cpp 側は3成分固定フォーマット）
-    // ので、z 系列には mode==='3d' のときだけ入れる（2D混入で平線/偽の標準偏差が出るのを防ぐ）。
-    // p[2] is always present even in 2D mode (the fixed height used internally; main.cpp always
-    // formats p with 3 components), so only record z when mode==='3d' — otherwise 2D data would
-    // leak in as a flat line / a bogus std-dev.
     const is3d = o.mode==='3d';
     posSeriesNls.push({t, x:o.p[0], y:o.p[1], z: (is3d && o.p.length>2) ? o.p[2] : undefined});
     while(posSeriesNls.length && posSeriesNls[0].t < t-60000) posSeriesNls.shift();
@@ -469,8 +721,6 @@ function onFix(o){
     const is3d = o.mode==='3d';
     posSeriesEkf.push({t, x:o.lv3.p[0], y:o.lv3.p[1], z: (is3d && o.lv3.p.length>2) ? o.lv3.p[2] : undefined});
     while(posSeriesEkf.length && posSeriesEkf[0].t < t-60000) posSeriesEkf.shift();
-    // 測位図の主表示用: z は fixTrail と同じ規則（p[2] があればそれ、無ければ z_fixed、無ければ0）で解決する
-    // for the plan view's primary marker: resolve z the same way as fixTrail (p[2] if present, else z_fixed, else 0)
     const ekfZ = o.lv3.p.length>2 ? o.lv3.p[2] : (typeof o.z_fixed==='number' ? o.z_fixed : 0);
     ekfLatest = Object.assign({}, o.lv3, {z: ekfZ});
     lastEkfAt = t;
@@ -479,12 +729,8 @@ function onFix(o){
     while(ekfTrail.length && ekfTrail[0].t < t-TRAIL_MS) ekfTrail.shift();
     if(ekfTrail.length>TRAIL_MAX) ekfTrail.shift();
   } else {
-    // EKF が今回無効/未提供なら、古いマーカーが残り続けないよう即座に消す
-    // no valid EKF this time: clear immediately so a stale marker never lingers
     ekfLatest = null;
   }
-  // 点群: 主マーカーに使われる位置(EKF優先、無ければ通常解)を蓄積する。上限 CLOUD_MAX 点
-  // point cloud: accumulate whichever position feeds the main marker (EKF when present, else NLS); capped at CLOUD_MAX
   const cloudPt = ekfPt || nlsPt;
   if(cloudPt){
     cloudPts.push(cloudPt);
@@ -499,7 +745,8 @@ function onFix(o){
   for(const a of (o.anchors||[])) if(a && a.a) fixAnchorsLatest.set(a.a, a);
 }
 function onStats(o){
-  const t = performance.now();
+  const t = nowMs();
+  let dAttSum=0, dSuccSum=0;
   for(const a of (o.anchors||[])){
     if(!a || !a.a) continue;
     getColor(a.a);
@@ -507,7 +754,7 @@ function onStats(o){
     let inst = null;
     if(prev){
       const dAtt = a.att - prev.att, dSucc = a.succ - prev.succ;
-      if(dAtt>0) inst = Math.max(0, Math.min(100, dSucc/dAtt*100));
+      if(dAtt>0){ inst = Math.max(0, Math.min(100, dSucc/dAtt*100)); dAttSum += dAtt; dSuccSum += Math.max(0,dSucc); }
     }
     const cum = a.att>0 ? a.succ/a.att*100 : 0;
     let arr = rateSeries.get(a.a); if(!arr){ arr=[]; rateSeries.set(a.a,arr); }
@@ -516,6 +763,10 @@ function onStats(o){
     statsPrevByA.set(a.a, {att:a.att, succ:a.succ});
     statsLatestByA.set(a.a, a);
   }
+  let sAtt=0, sSucc=0;
+  for(const a of statsLatestByA.values()){ sAtt += a.att||0; sSucc += a.succ||0; }
+  rateAggSeries.push({t, inst: dAttSum>0?Math.max(0,Math.min(100,dSuccSum/dAttSum*100)):null, cum: sAtt>0?sSucc/sAtt*100:null});
+  while(rateAggSeries.length && rateAggSeries[0].t < t-60000) rateAggSeries.shift();
 }
 function onAnchorStats(o){
   const id = canonAddr(o.addr); if(!id) return;
@@ -527,15 +778,13 @@ function onAnchorStats(o){
     restarts:o.restarts, final_timeouts:o.final_timeouts, rx_errors:o.rx_errors, tx_failures:o.tx_failures,
     dist_n:o.dist_n, dist_mean_m:o.dist_mean_m, dist_std_m:o.dist_std_m,
   });
-  n._seen = performance.now();
+  n._seen = nowMs();
 }
 function onCon(o){
-  // "> cmd" は送信直後に sendCmd() 側で既にエコー済みなので、ここでは応答本文だけを表示する
-  // the "> cmd" echo was already printed by sendCmd() at send time; only show the reply body here
   conPush(String(o.text||'').replace(/\n+$/,''), !!o.ret, false);
 }
 
-// ---- コンソール表示 / console panel ----
+/* ---- コンソール表示 / console panel ---- */
 function conPush(text, isErr, isEcho){
   conBuf.push({t:text, e:isErr, q:isEcho});
   if(conBuf.length>200) conBuf.shift();
@@ -556,44 +805,96 @@ function sendCmd(text){
   else conPush('(未接続のため送信できません)', true, false);
 }
 
-// ---- 描画: DOM（ヘッダ・カード・表・生ログ） / DOM rendering ----
-function renderHeader(){
-  const n = selfAddr ? nodes.get(selfAddr) : null;
-  document.getElementById('devName').textContent = n && n.name ? n.name : '—';
-  document.getElementById('devRole').textContent = n ? (n.role==='tag'?'タグ':n.role==='anchor'?'アンカー':n.role||'') : '';
-  const w = (n && n.wifi) || {};
-  document.getElementById('hdrInfo').textContent = n ?
-    `${w.mode||'?'} / ${w.ssid||'-'} / ${w.ip||'-'} / RSSI ${w.rssi!=null?w.rssi:'-'} dBm` : '—';
-  document.getElementById('hdrUptime').textContent = n ? '稼働 ' + fmtUptime(n.uptime_s) : '';
-  const dot = document.getElementById('connDot');
-  const txt = document.getElementById('connText');
-  dot.className = 'dot ' + (isDemo || connState==='open' ? 'ok':'warn');
-  txt.textContent = isDemo ? 'デモモード' : (connState==='open' ? 'WebSocket 接続中' : (connState==='reconnecting' ? '再接続中…' : '接続中…'));
-  const lastMsgEl = document.getElementById('lastMsgText');
-  const silenceS = (performance.now()-lastMsgAt)/1000;
-  if(stalled){ lastMsgEl.hidden=false; lastMsgEl.textContent='受信停止 → 再接続中'; }
-  else if(!isDemo && lastMsgAt>0 && silenceS>2){ lastMsgEl.hidden=false; lastMsgEl.textContent=`最終受信 ${silenceS.toFixed(1)}s 前`; }
-  else lastMsgEl.hidden=true;
-  const errEl = document.getElementById('errText');
-  if(msgErrors>0){ errEl.hidden=false; errEl.textContent=`JS エラー ${msgErrors}`; errEl.title=lastMsgError; }
-  else errEl.hidden=true;
-  const drawErrEl = document.getElementById('drawErrText');
-  if(drawErrors>0){ drawErrEl.hidden=false; drawErrEl.textContent=`描画エラー ${drawErrors}: ${lastDrawError.slice(0,120)}`; drawErrEl.title=lastDrawError; }
-  else drawErrEl.hidden=true;
-  document.getElementById('rateText').textContent = `${rateLinesShown} 行/秒 ・ ${(rateBytesShown/1024).toFixed(1)} KB/秒`;
-  document.getElementById('recInfo').textContent = recCount ? `${recCount} 行 / ${fmtBytes(recBytes)}` : '';
-  document.getElementById('btnSave').disabled = recCount===0;
-  renderModeBadge();
+/* =====================================================================
+ * KPI ストリップ / KPI strip
+ * ===================================================================== */
+function sparkPath(vals, w, h, padX, padY){
+  if(vals.length<2) return '';
+  const [mn,mx] = minMax(vals), r = (mx-mn)||1;
+  const step = (w-2*padX)/(vals.length-1);
+  return vals.map((v,i)=> (i?'L':'M') + (padX+i*step).toFixed(1) + ',' + (h-padY-((v-mn)/r)*(h-2*padY)).toFixed(1)).join('');
 }
-function renderModeBadge(){
-  const el = document.getElementById('modeBadge');
-  const o = fixLatest;
-  if(!o || typeof o.mode !== 'string'){ el.textContent='—'; return; }
-  if(o.mode==='ranging') el.textContent='測距のみ';
-  else if(o.mode==='2d') el.textContent = '2D測位' + (typeof o.z_fixed==='number' ? ` (z=${o.z_fixed.toFixed(2)}m)` : '');
-  else if(o.mode==='3d') el.textContent='3D測位';
-  else el.textContent = o.mode;
+function renderSpark(key, vals){
+  const svg = document.querySelector(`svg[data-spark="${key}"]`); if(!svg) return;
+  svg.setAttribute('viewBox','0 0 48 22');
+  const d = sparkPath(vals,48,22,2,3);
+  svg.innerHTML = d ? `<path d="${d}" fill="none" style="stroke:var(${svg.dataset.color})" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>` : '';
 }
+function primaryPos(){
+  // EKF優先、無ければ通常解 / EKF when present, else the NLS solution
+  if(ekfLatest) return {x:ekfLatest.p[0], y:ekfLatest.p[1], z:ekfLatest.z, src:'EKF 解'};
+  if(fixLatest && fixLatest.ok && Array.isArray(fixLatest.p)){
+    const z = fixLatest.p.length>2 ? fixLatest.p[2] : (typeof fixLatest.z_fixed==='number'?fixLatest.z_fixed:0);
+    return {x:fixLatest.p[0], y:fixLatest.p[1], z, src:'通常解'};
+  }
+  return null;
+}
+function renderKpi(){
+  const now = nowMs(), win = now-60000;
+  const pos = primaryPos();
+  const posSrc = ekfLatest ? posSeriesEkf : posSeriesNls;
+  for(const [key,axis] of [['x',0],['y',1],['z',2]]){
+    const val = document.getElementById('kpi'+key.toUpperCase()+'Val');
+    const sub = document.getElementById('kpi'+key.toUpperCase()+'Sub');
+    if(pos){ val.innerHTML = pos[key].toFixed(3)+'<span class="unit">m</span>'; sub.textContent = pos.src; }
+    else { val.textContent = '—'; sub.textContent = '—'; }
+    renderSpark(key, posSrc.filter(p=>p.t>=win && typeof p[key]==='number').map(p=>p[key]));
+  }
+  const cVal = document.getElementById('kpiCycleVal');
+  if(cycleSeries.length){ cVal.innerHTML = Math.round(cycleSeries[cycleSeries.length-1].val)+'<span class="unit">ms</span>'; }
+  else cVal.textContent = '—';
+  renderSpark('cycle', cycleSeries.filter(p=>p.t>=win).map(p=>p.val));
+  const rVal = document.getElementById('kpiRateVal');
+  const lastRate = rateAggSeries.length ? rateAggSeries[rateAggSeries.length-1] : null;
+  const rateShow = lastRate ? (lastRate.inst!=null?lastRate.inst:lastRate.cum) : null;
+  rVal.innerHTML = rateShow!=null ? rateShow.toFixed(1)+'<span class="unit">%</span>' : '—';
+  renderSpark('rate', rateAggSeries.filter(p=>p.t>=win).map(p=>p.inst!=null?p.inst:p.cum).filter(v=>v!=null));
+  const resVal = document.getElementById('kpiResVal'), resSub = document.getElementById('kpiResSub');
+  if(fixLatest && fixLatest.ok && typeof fixLatest.residual_rms==='number'){
+    resVal.innerHTML = Math.round(fixLatest.residual_rms*1000)+'<span class="unit">mm</span>';
+  } else resVal.textContent = '—';
+  resSub.textContent = 'GDOP ' + (fixLatest && typeof fixLatest.gdop==='number' ? fixLatest.gdop.toFixed(2) : '—');
+  renderSpark('res', resSeries.filter(p=>p.t>=win).map(p=>p.r*1000));
+}
+
+/* =====================================================================
+ * アンカー一覧 / anchor rail
+ * ===================================================================== */
+function anchorRowHtml(id){
+  const cfg = anchorsCfgMap.get(id);
+  const m = measLatest.get(id);
+  const s = statsLatestByA.get(id);
+  const fa = fixAnchorsLatest.get(id);
+  const en = cfg ? cfg.enabled!==false : true;
+  const now = nowMs();
+  let chip, chipClass;
+  if(!en){ chip='無効'; chipClass='chip-muted'; }
+  else if(!m || now-m.t>3000){ chip='未応答'; chipClass='chip-warn'; }
+  else { chip='有効'; chipClass='chip-good'; }
+  const dArr = (distSeries.get(id)||[]).filter(p=>p.t>=now-60000);
+  const sparkVals = dArr.slice(-24).map(p=>p.d);
+  const sparkD = sparkPath(sparkVals,50,18,2,2);
+  const distTxt = (m && typeof m.d==='number') ? m.d.toFixed(3) : '—';
+  const rateTxt = s ? pct(s.succ,s.att) : '—';
+  const linkTxt = (fa && fa.elapsed_ms!=null) ? Math.round(fa.elapsed_ms)+' ms' : '—';
+  const colVar = getColorVar(id);
+  return `<div class="anchor-row${en?'':' dim'}">
+    <div class="anchor-id"><span class="dot" style="background:var(${colVar})"></span>${esc(id)}</div>
+    <div class="anchor-dist">${distTxt}<span class="unit muted" style="font-size:11px">m</span>${sparkD?`<svg viewBox="0 0 50 18"><path d="${sparkD}" fill="none" style="stroke:var(${colVar})" stroke-width="1.2" stroke-linecap="round"/></svg>`:''}</div>
+    <div class="anchor-meta"><span>成功率 ${rateTxt}</span><span>1リンク ${linkTxt}</span><span class="chip ${chipClass}">${chip}</span></div>
+  </div>`;
+}
+function renderAnchorRail(){
+  const order = anchorsCfg.filter(a=>a&&a.id).map(a=>a.id);
+  for(const id of statsLatestByA.keys()) if(!order.includes(id)) order.push(id);
+  for(const id of measLatest.keys()) if(!order.includes(id)) order.push(id);
+  const el = document.getElementById('anchorList');
+  el.innerHTML = order.length ? order.map(anchorRowHtml).join('') : '<div class="anchor-row"><span class="muted">データなし</span></div>';
+}
+
+/* =====================================================================
+ * ノードカード（折り畳み） / node cards (collapsible)
+ * ===================================================================== */
 function kv(label,key,val){
   return `<dt>${esc(label)}${key?` <code>${esc(key)}</code>`:''}</dt><dd>${esc(String(val))}</dd>`;
 }
@@ -622,52 +923,55 @@ function cardHtml(n, now){
     rows.push(kv('距離','dist_mean_m', (n.dist_n && typeof n.dist_mean_m==='number' && typeof n.dist_std_m==='number') ?
       `${n.dist_mean_m.toFixed(3)} ± ${n.dist_std_m.toFixed(3)} m (n=${n.dist_n})` : '-'));
   }
-  const dot = anchorColorIdx.has(n.addr) ? `<span class="dot" style="background:${getColor(n.addr)}"></span>` : '';
-  return `<div class="card${stale?' stale':''}"><h3>${dot}${esc(n.name||n.addr||'?')}<span class="muted">${esc(n.addr||'')}</span></h3><dl>${rows.join('')}</dl></div>`;
+  const dot = anchorColorIdx.has(n.addr) ? `<span class="dot" style="background:var(${getColorVar(n.addr)})"></span>` : '';
+  return `<div class="node-card${stale?' stale':''}"><h3>${dot}${esc(n.name||n.addr||'?')}<span class="muted">${esc(n.addr||'')}</span></h3><dl>${rows.join('')}</dl></div>`;
 }
-function renderCards(){
-  const now = performance.now();
-  const el = document.getElementById('cards');
-  el.innerHTML = Array.from(nodes.values()).map(n=>cardHtml(n,now)).join('');
-}
-function rowHtml(id){
-  const s = statsLatestByA.get(id) || {};
-  const cfg = anchorsCfgMap.get(id);
-  const m = measLatest.get(id);
-  const fa = fixAnchorsLatest.get(id);
-  const att = s.att, succ = s.succ, retries = s.retries, rescued = s.rescued;
-  const rate = pct(succ, att);
-  const first = (att>0) ? (Math.max(0,(succ-rescued))/att*100).toFixed(1)+'%' : '—';
-  const en = cfg ? cfg.enabled!==false : true;
-  const pos = (cfg && Array.isArray(cfg.p)) ? cfg.p.map(v=>Number(v).toFixed(2)).join(', ') : '—';
-  return `<tr class="${en?'':'disabled'}"><td><span class="dot" style="background:${getColor(id)}"></span>${esc(id)}</td>` +
-    `<td>${att??'—'}</td><td>${succ??'—'}</td><td>${rate}</td><td>${retries??'—'}</td><td>${rescued??'—'}</td>` +
-    `<td>${first}</td><td>${(m && typeof m.d==='number')? m.d.toFixed(3):'—'}</td><td>${(fa&&fa.elapsed_ms!=null)? fa.elapsed_ms:'—'}</td>` +
-    `<td>${en?'有効':'無効'}</td><td>${pos}</td></tr>`;
-}
-function renderAnchorTable(){
-  const order = anchorsCfg.filter(a=>a&&a.id).map(a=>a.id);
-  for(const id of statsLatestByA.keys()) if(!order.includes(id)) order.push(id);
-  document.getElementById('anchorTbody').innerHTML = order.map(rowHtml).join('');
-}
-function renderRaw(){
-  document.getElementById('rawCount').textContent = `(${rawBuf.length})`;
-  const det = document.getElementById('rawDet');
-  if(!det.open) return;
-  const f = document.getElementById('rawFilter').value.trim().toLowerCase();
-  const shown = f ? rawBuf.filter(e=>e.type.toLowerCase().includes(f)) : rawBuf;
-  document.getElementById('rawOut').textContent = shown.map(e=>e.raw).join('\n');
+function renderNodeCards(){
+  const now = nowMs();
+  document.getElementById('cards').innerHTML = Array.from(nodes.values()).map(n=>cardHtml(n,now)).join('');
+  document.getElementById('nodeCount').textContent = `(${nodes.size})`;
 }
 
-// ---- 測距統計パネル / ranging-statistics panel (10s/60s window, computed client-side) ----
-function median(nums){
-  if(!nums.length) return NaN;
-  const s = nums.slice().sort((a,b)=>a-b);
-  const n = s.length, mid = n>>1;
-  return (n%2) ? s[mid] : (s[mid-1]+s[mid])/2;
+/* =====================================================================
+ * ヘッダ（ブランド・接続・モード）/ header (brand, connection, mode)
+ * ===================================================================== */
+function renderHeader(){
+  const n = selfAddr ? nodes.get(selfAddr) : null;
+  document.getElementById('devName').textContent = n && n.name ? n.name : 'uwb-tag';
+  document.getElementById('devRole').textContent = n ? (n.role==='tag'?'タグ':n.role==='anchor'?'アンカー':n.role||'') : 'タグ';
+  const dot = document.getElementById('connDot'), txt = document.getElementById('connText');
+  if(replayMode){
+    dot.style.background = 'var(--accent)';
+    txt.textContent = replayFilename ? `再生中 ・ ${replayFilename}` : '再生中（ファイル未選択）';
+  } else {
+    const silenceS = (performance.now()-lastMsgAt)/1000;
+    if(stalled){ dot.style.background='var(--warn)'; txt.textContent = '受信停止 → 再接続中'; }
+    else if(isDemo){ dot.style.background='var(--good)'; txt.textContent = `デモモード ・ ${rateLinesShown} 行/秒`; }
+    else if(connState==='open'){
+      dot.style.background='var(--good)';
+      txt.textContent = (lastMsgAt>0 && silenceS>2) ? `最終受信 ${silenceS.toFixed(1)}s 前` :
+        `接続中 ・ ${rateLinesShown} 行/秒 ・ ${(rateBytesShown/1024).toFixed(1)} KB/秒`;
+    } else {
+      dot.style.background='var(--warn)';
+      txt.textContent = connState==='reconnecting' ? '再接続中…' : '接続中…';
+    }
+  }
+  const errChip = document.getElementById('errChip');
+  if(msgErrors>0 || drawErrors>0){ errChip.hidden=false; errChip.textContent = `エラー ${msgErrors+drawErrors}`; errChip.title = lastDrawError||lastMsgError; }
+  else errChip.hidden = true;
+  const modeChip = document.getElementById('modeChip');
+  const o = fixLatest;
+  if(!o || typeof o.mode !== 'string') modeChip.textContent = '—';
+  else if(o.mode==='ranging') modeChip.textContent = '測距のみ';
+  else if(o.mode==='2d') modeChip.textContent = '2D測位' + (typeof o.z_fixed==='number' ? ` (z=${o.z_fixed.toFixed(2)}m)` : '');
+  else if(o.mode==='3d') modeChip.textContent = '3D測位';
+  else modeChip.textContent = o.mode;
+  document.getElementById('btnSave').disabled = recCount===0 || replayMode;
 }
-// アンカー1本の distSeries 窓内サンプルから統計を1パスで計算（外れ値判定は前後4点=9点窓の中央値との差）
-// one-pass stats for one anchor's windowed samples; spike test compares each point to the median of its 9-sample neighbourhood
+
+/* =====================================================================
+ * 測距統計パネル / ranging-statistics panel（10s/60s、ブラウザ側で計算）
+ * ===================================================================== */
 function computeAnchorRangingStat(pts){
   const n = pts.length; if(!n) return null;
   let sum=0, min=Infinity, max=-Infinity;
@@ -676,43 +980,33 @@ function computeAnchorRangingStat(pts){
   let sq=0; for(const p of pts) sq += (p.d-mean)*(p.d-mean);
   const std = Math.sqrt(sq/n);
   const med = median(pts.map(p=>p.d));
-  let corr = null;
-  if(n>=10){
-    let num=0, den=0;
-    for(let i=0;i<n;i++){ const dv=pts[i].d-mean; den+=dv*dv; if(i>0) num+=dv*(pts[i-1].d-mean); }
-    corr = den>0 ? num/den : null;
-  }
   let spikeN=0, spikeTested=0;
   for(let i=4;i<n-4;i++){
     const med9 = median([pts[i-4].d,pts[i-3].d,pts[i-2].d,pts[i-1].d,pts[i].d,pts[i+1].d,pts[i+2].d,pts[i+3].d,pts[i+4].d]);
     spikeTested++;
     if(Math.abs(pts[i].d-med9)>0.25) spikeN++;
   }
-  return {n, med, mean, std, min, max, spikeN, spikeTested, corr};
+  return {n, med, mean, std, min, max, spikeN, spikeTested};
 }
 function rangingStatRowHtml(id, windowMs, now){
   const arr = distSeries.get(id) || [];
   const pts = arr.filter(p=>p.t>=now-windowMs);
-  const dot = `<span class="dot" style="background:${getColor(id)}"></span>`;
+  const dot = `<span class="dot" style="background:var(${getColorVar(id)})"></span>`;
   const st = computeAnchorRangingStat(pts);
-  if(!st) return `<tr><td>${dot}${esc(id)}</td><td>0</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>`;
+  if(!st) return `<tr><td>${dot}${esc(id)}</td><td>0</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>`;
   const spikeTxt = st.spikeTested>0 ? `${st.spikeN} (${(st.spikeN/st.spikeTested*100).toFixed(1)}%)` : '—';
-  const corrTxt = st.corr!=null ? st.corr.toFixed(2) : '—';
   return `<tr><td>${dot}${esc(id)}</td><td>${st.n}</td><td>${st.med.toFixed(3)}</td><td>${st.mean.toFixed(3)}</td>`+
-    `<td>${(st.std*1000).toFixed(1)}</td><td>${st.min.toFixed(3)}</td><td>${st.max.toFixed(3)}</td>`+
-    `<td>${spikeTxt}</td><td>${corrTxt}</td></tr>`;
+    `<td>${(st.std*1000).toFixed(1)}</td><td>${st.min.toFixed(3)}</td><td>${st.max.toFixed(3)}</td><td>${spikeTxt}</td></tr>`;
 }
 function renderRangingStatTable(){
-  const now = performance.now(), windowMs = statsWindowMs;
+  const now = nowMs(), windowMs = statsWindowMs;
   const order = anchorsCfg.filter(a=>a&&a.id).map(a=>a.id);
   for(const id of distSeries.keys()) if(!order.includes(id)) order.push(id);
   const rows = order.filter(id=>{ const arr=distSeries.get(id); return arr && arr.some(p=>p.t>=now-windowMs); });
   document.getElementById('rangingStatTbody').innerHTML = rows.length ?
     rows.map(id=>rangingStatRowHtml(id, windowMs, now)).join('') :
-    `<tr><td colspan="9" class="muted">データなし</td></tr>`;
+    `<tr><td colspan="8" class="muted">データなし</td></tr>`;
 }
-// 位置系列（NLS/EKF）の窓内統計。1周期移動量は連続点間の距離 [m]
-// windowed stats for a position series (NLS/EKF); step = distance between consecutive fixes [m]
 function computeSeriesStat(pts){
   const n = pts.length; if(!n) return null;
   let sx=0, sy=0, sz=0, nz=0;
@@ -720,8 +1014,6 @@ function computeSeriesStat(pts){
   const mx=sx/n, my=sy/n, mz = nz?sz/nz:null;
   let vx=0, vy=0, vz=0;
   for(const p of pts){ vx+=(p.x-mx)*(p.x-mx); vy+=(p.y-my)*(p.y-my); if(typeof p.z==='number') vz+=(p.z-mz)*(p.z-mz); }
-  // z 標準偏差は窓内の全点に z がある(=3D)ときだけ算出。一部でも欠けていれば null（2D混在は出さない）
-  // z std-dev only when every point in the window has z (3D); if any is missing, null (avoid mixing in 2D)
   const sdx=Math.sqrt(vx/n), sdy=Math.sqrt(vy/n), sdz = (nz===n) ? Math.sqrt(vz/nz) : null;
   const steps=[];
   for(let i=1;i<n;i++) steps.push(Math.hypot(pts[i].x-pts[i-1].x, pts[i].y-pts[i-1].y));
@@ -736,13 +1028,13 @@ function posStatRowHtml(label, pts){
     `<td>${st.stepMed!=null?(st.stepMed*1000).toFixed(1):'—'}</td><td>${st.stepMax!=null?(st.stepMax*1000).toFixed(1):'—'}</td></tr>`;
 }
 function renderPosStatTable(){
-  const now = performance.now(), windowMs = statsWindowMs;
+  const now = nowMs(), windowMs = statsWindowMs;
   document.getElementById('posStatTbody').innerHTML =
     posStatRowHtml('通常解', posSeriesNls.filter(p=>p.t>=now-windowMs)) +
     posStatRowHtml('EKF', posSeriesEkf.filter(p=>p.t>=now-windowMs));
 }
-function renderResidualStats(){
-  const now = performance.now(), windowMs = statsWindowMs;
+function renderResidualCaption(){
+  const now = nowMs(), windowMs = statsWindowMs;
   const res = resSeries.filter(p=>p.t>=now-windowMs).map(p=>p.r);
   const flags = fixFlagSeries.filter(p=>p.t>=now-windowMs);
   let medR='—', p90R='—', maxR='—';
@@ -755,20 +1047,177 @@ function renderResidualStats(){
   const total = flags.length;
   const notOk = flags.filter(f=>!f.ok).length;
   const excluded = flags.filter(f=>f.excluded && f.excluded!=='0x00000000').length;
-  document.getElementById('residualStatTbody').innerHTML =
-    `<tr><td>残差 RMS 中央値 [mm]</td><td>${medR}</td></tr>`+
-    `<tr><td>残差 RMS 90パーセンタイル [mm]</td><td>${p90R}</td></tr>`+
-    `<tr><td>残差 RMS 最大 [mm]</td><td>${maxR}</td></tr>`+
-    `<tr><td>解けなかった周期 (ok:false)</td><td>${total?`${notOk} / ${total}`:'—'}</td></tr>`+
-    `<tr><td>除外あり周期 (excluded≠0)</td><td>${total?`${excluded} / ${total}`:'—'}</td></tr>`;
+  document.getElementById('residualCaption').textContent =
+    `残差 RMS 中央値 ${medR} mm ・ 90パーセンタイル ${p90R} mm ・ 最大 ${maxR} mm ・ `+
+    `解けなかった周期 ${total?`${notOk}/${total}`:'—'} ・ 除外あり周期 ${total?`${excluded}/${total}`:'—'}。`+
+    `統計はブラウザ側で計算（直近の窓）。静止時の標準偏差＝雑音、飛び値＝前後9周期の中央値から 0.25 m 超`;
 }
 function renderRangingStats(){
   renderRangingStatTable();
   renderPosStatTable();
-  renderResidualStats();
+  renderResidualCaption();
 }
 
-// ---- 描画: canvas チャート / chart canvases (throttled to <=10fps) ----
+/* =====================================================================
+ * チャート小群（SVG） / chart small multiples (SVG)
+ * ===================================================================== */
+const CW = 480, CH = 170, CPL = 10, CPR = 64, CPY = 10;
+function chartPath(pts, key, mn, mx, now, windowMs){
+  const r = (mx-mn)||1;
+  let d='', started=false;
+  for(const p of pts){
+    if(p.t<now-windowMs) continue;
+    const val = key ? p[key] : p;
+    if(typeof val!=='number'){ started=false; continue; }
+    const x = CPL + (p.t-(now-windowMs))/windowMs*(CW-CPL-CPR);
+    const y = CH-CPY-((val-mn)/r)*(CH-2*CPY);
+    d += (started?'L':'M') + x.toFixed(1)+','+y.toFixed(1);
+    started = true;
+  }
+  return d;
+}
+function chartGridBg(){
+  let s=''; for(let i=1;i<4;i++){ const y=CPY+i*(CH-2*CPY)/4; s+=`<line x1="${CPL}" y1="${y}" x2="${CW-CPR}" y2="${y}" style="stroke:var(--line)"/>`; } return s;
+}
+function endLabelDot(pts, key, mn, mx, text, colorVar){
+  let last=null; for(const p of pts) if(typeof (key?p[key]:p)==='number') last = key?p[key]:p;
+  if(last==null) return '';
+  const y = CH-CPY-((last-mn)/((mx-mn)||1))*(CH-2*CPY);
+  return `<circle cx="${CW-CPR+4}" cy="${(y-3).toFixed(1)}" r="2.2" style="fill:var(${colorVar})"/>`+
+    `<text x="${CW-CPR+10}" y="${(y+3).toFixed(1)}" font-size="10" font-family="var(--font-mono)" style="fill:var(--ink-2)" text-anchor="start">${text}</text>`;
+}
+function endLabelText(pts, key, mn, mx, text, colorVar){
+  let last=null; for(const p of pts) if(typeof (key?p[key]:p)==='number') last = key?p[key]:p;
+  if(last==null) return '';
+  const y = CH-CPY-((last-mn)/((mx-mn)||1))*(CH-2*CPY);
+  return `<text x="${CW-CPR+6}" y="${(y+3).toFixed(1)}" font-size="10" font-family="var(--font-mono)" style="fill:var(${colorVar})" text-anchor="start">${text}</text>`;
+}
+function rangeOf(arrs, keys){
+  let mn=Infinity, mx=-Infinity;
+  for(const {pts,windowMs,now} of arrs) for(const p of pts){
+    if(p.t<now-windowMs) continue;
+    for(const k of keys){ const v=k?p[k]:p; if(typeof v==='number'){ if(v<mn)mn=v; if(v>mx)mx=v; } }
+  }
+  if(mn===Infinity){ mn=0; mx=1; }
+  const pad=(mx-mn)*0.18||0.1; return [mn-pad, mx+pad];
+}
+// クロスヘア+ツールチップ配線（距離・位置チャート用）/ wire up the crosshair+tooltip overlay (distance & position charts)
+function wireCrosshair(svg, buildRows){
+  const hit = svg.querySelector('.hitrect'), cross = svg.querySelector('.crosshair'), ttg = svg.querySelector('.ttgroup');
+  if(!hit) return;
+  svg.onmousemove = ev=>{
+    const rect = svg.getBoundingClientRect(), sx = CW/rect.width;
+    let frac = ((ev.clientX-rect.left)*sx - CPL)/(CW-CPL-CPR); frac = Math.max(0,Math.min(1,frac));
+    const cx = CPL+frac*(CW-CPL-CPR);
+    cross.setAttribute('x1',cx); cross.setAttribute('x2',cx); cross.style.display='block';
+    const bx = Math.min(cx+8, CW-110), by = CPY+2;
+    const rows = buildRows(frac);
+    const html = rows.map((r,j)=>{
+      const ty = by+15+j*13;
+      return `<circle cx="${bx+9}" cy="${ty-3.5}" r="2.2" style="fill:var(${r.color})"/>`+
+        `<text x="${bx+16}" y="${ty}" style="fill:var(--ink)">${r.text}</text>`;
+    }).join('');
+    ttg.innerHTML = `<rect x="${bx}" y="${by}" width="104" height="${rows.length*13+8}" rx="4" style="fill:var(--surface);stroke:var(--line)"/>${html}`;
+    ttg.style.display = 'block';
+    ttg.setAttribute('font-family','var(--font-mono)'); ttg.setAttribute('font-size','9.5');
+  };
+  svg.onmouseleave = ()=>{ cross.style.display='none'; ttg.style.display='none'; ttg.innerHTML=''; };
+}
+function overlayMarkup(){
+  return `<rect class="hitrect" x="0" y="0" width="${CW}" height="${CH}" fill="transparent"/>`+
+    `<line class="crosshair" x1="0" y1="${CPY}" x2="0" y2="${CH-CPY}" style="stroke:var(--ink-2);display:none" stroke-dasharray="2,3"/>`+
+    `<g class="ttgroup" style="display:none"></g>`;
+}
+function drawDistChart(){
+  const now = nowMs(), windowMs = 60000;
+  const keys = Array.from(distSeries.keys());
+  const arrsForRange = keys.map(k=>({pts:distSeries.get(k), windowMs, now}));
+  const [mn,mx] = rangeOf(arrsForRange, [null]);
+  let html = chartGridBg();
+  for(const k of keys) html += `<path d="${chartPath(distSeries.get(k),'d',mn,mx,now,windowMs)}" fill="none" style="stroke:var(${getColorVar(k)})" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>`;
+  for(const k of keys) html += endLabelDot(distSeries.get(k),'d',mn,mx, k.slice(-4), getColorVar(k));
+  html += overlayMarkup();
+  const svg = document.getElementById('cvDist');
+  svg.innerHTML = html;
+  wireCrosshair(svg, frac=>{
+    const tAt = now-windowMs + frac*windowMs;
+    return keys.map(k=>{
+      const arr = distSeries.get(k)||[]; let best=null, bd=Infinity;
+      for(const p of arr){ const d=Math.abs(p.t-tAt); if(d<bd){ bd=d; best=p; } }
+      return {color:getColorVar(k), text: `${k} ${best?best.d.toFixed(3):'—'} m`};
+    });
+  });
+}
+function drawRateChart(){
+  const now = nowMs(), windowMs = 60000;
+  const [mn,mx] = rangeOf([{pts:rateAggSeries, windowMs, now}], ['inst','cum']);
+  const svg = document.getElementById('cvRate');
+  let html = chartGridBg();
+  html += `<path d="${chartPath(rateAggSeries,'cum',mn,mx,now,windowMs)}" fill="none" style="stroke:var(--accent);opacity:.55" stroke-width="1.2"/>`;
+  html += `<path d="${chartPath(rateAggSeries,'inst',mn,mx,now,windowMs)}" fill="none" style="stroke:var(--accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>`;
+  html += endLabelText(rateAggSeries,'inst',mn,mx,'瞬時 '+((()=>{ for(let i=rateAggSeries.length-1;i>=0;i--) if(rateAggSeries[i].inst!=null) return rateAggSeries[i].inst.toFixed(1); return '—'; })())+'%', '--accent');
+  svg.innerHTML = html;
+}
+function drawCycleChart(){
+  const now = nowMs(), windowMs = 60000;
+  const [mn,mx] = rangeOf([{pts:cycleSeries, windowMs, now}], ['band','val']);
+  const svg = document.getElementById('cvCycle');
+  const pts = cycleSeries.filter(p=>p.t>=now-windowMs);
+  let html = chartGridBg();
+  if(pts.length){
+    const bandPath = chartPath(pts,'band',mn,mx,now,windowMs);
+    const areaPath = bandPath + ` L ${CW-CPR},${CH-CPY} L ${CPL},${CH-CPY} Z`;
+    html += `<path d="${areaPath}" style="fill:var(--accent)" opacity="0.10"/>`;
+    html += `<path d="${chartPath(pts,'val',mn,mx,now,windowMs)}" fill="none" style="stroke:var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`;
+    html += endLabelText(pts,'val',mn,mx, Math.round(pts[pts.length-1].val)+' ms', '--accent');
+  }
+  svg.innerHTML = html;
+}
+function drawPosChart(){
+  const now = nowMs(), windowMs = 60000;
+  const ptsEkf = posSeriesEkf.filter(p=>p.t>=now-windowMs);
+  const ptsNls = posSeriesNls.filter(p=>p.t>=now-windowMs);
+  const svg = document.getElementById('cvPos');
+  if(!ptsEkf.length && !ptsNls.length){ svg.innerHTML=''; return; }
+  const hasZ = !!(fixLatest && fixLatest.mode==='3d') && (ptsNls.some(p=>typeof p.z==='number') || ptsEkf.some(p=>typeof p.z==='number'));
+  const keys = hasZ ? ['x','y','z'] : ['x','y'];
+  const [mn,mx] = rangeOf([{pts:ptsEkf,windowMs,now},{pts:ptsNls,windowMs,now}], keys);
+  const cols = {x:'--accent', y:'--good', z:'--warn'};
+  let html = chartGridBg();
+  for(const k of keys) html += `<path d="${chartPath(ptsNls,k,mn,mx,now,windowMs)}" fill="none" style="stroke:var(${cols[k]});opacity:.45" stroke-width="1"/>`;
+  for(const k of keys) html += `<path d="${chartPath(ptsEkf,k,mn,mx,now,windowMs)}" fill="none" style="stroke:var(${cols[k]})" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`;
+  for(const k of keys){
+    const src = ptsEkf.length ? ptsEkf : ptsNls;
+    html += endLabelText(src,k,mn,mx, k+' '+((()=>{ for(let i=src.length-1;i>=0;i--) if(typeof src[i][k]==='number') return src[i][k].toFixed(2); return '—'; })()), cols[k]);
+  }
+  html += overlayMarkup();
+  svg.innerHTML = html;
+  wireCrosshair(svg, frac=>{
+    const tAt = now-windowMs + frac*windowMs;
+    const src = ptsEkf.length ? ptsEkf : ptsNls;
+    let best=null, bd=Infinity;
+    for(const p of src){ const d=Math.abs(p.t-tAt); if(d<bd){ bd=d; best=p; } }
+    if(!best) return [];
+    return keys.map(k=>({color:cols[k], text: `${k} ${typeof best[k]==='number'?best[k].toFixed(3):'—'} m`}));
+  });
+}
+function drawCharts(){ drawDistChart(); drawRateChart(); drawCycleChart(); drawPosChart(); }
+
+/* =====================================================================
+ * 生ログ / raw log
+ * ===================================================================== */
+function renderRaw(){
+  document.getElementById('rawCount').textContent = `(${rawBuf.length})`;
+  const det = document.getElementById('rawDet');
+  if(!det.open) return;
+  const f = document.getElementById('rawFilter').value.trim().toLowerCase();
+  const shown = f ? rawBuf.filter(e=>e.type.toLowerCase().includes(f)) : rawBuf;
+  document.getElementById('rawOut').textContent = shown.map(e=>e.raw).join('\n');
+}
+
+/* =====================================================================
+ * 測位図: canvas 共通 / plan view: shared canvas helpers
+ * ===================================================================== */
 function fitCanvas(cv){
   const dpr = window.devicePixelRatio||1;
   const r = cv.getBoundingClientRect();
@@ -779,157 +1228,22 @@ function fitCanvas(cv){
   ctx.setTransform(dpr,0,0,dpr,0,0);
   return {ctx, w:r.width, h:r.height};
 }
-function drawAxes(ctx,w,h,ymin,ymax,windowMs,now,yFmt){
-  const padL=34, padR=36, padT=6, padB=14;
-  const iw=Math.max(1,w-padL-padR), ih=Math.max(1,h-padT-padB);
-  ctx.clearRect(0,0,w,h);
-  ctx.font='10px system-ui,sans-serif';
-  for(let i=0;i<=4;i++){
-    const v = ymin+(ymax-ymin)*i/4;
-    const y = padT+ih-(ih*i/4);
-    ctx.strokeStyle=COL.grid; ctx.lineWidth=1;
-    ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(padL+iw,y); ctx.stroke();
-    ctx.fillStyle=COL.muted; ctx.textAlign='right'; ctx.textBaseline='middle';
-    ctx.fillText(yFmt(v), padL-4, y);
-  }
-  ctx.strokeStyle=COL.axis;
-  ctx.beginPath(); ctx.moveTo(padL,padT); ctx.lineTo(padL,padT+ih); ctx.lineTo(padL+iw,padT+ih); ctx.stroke();
-  ctx.fillStyle=COL.muted; ctx.textAlign='left'; ctx.textBaseline='top';
-  ctx.fillText('-60s', padL, padT+ih+2);
-  ctx.textAlign='right';
-  ctx.fillText('now', padL+iw, padT+ih+2);
-  const toPx=(t,val)=>[padL+(t-(now-windowMs))/windowMs*iw, padT+ih-((val-ymin)/((ymax-ymin)||1))*ih];
-  return {toPx, padL, iw, padT, ih};
-}
-function drawDist(){
-  const fc = fitCanvas(document.getElementById('cvDist')); if(!fc) return;
-  const {ctx,w,h} = fc, now = performance.now(), windowMs = 60000;
-  let ymax = 0.5;
-  for(const arr of distSeries.values()) for(const p of arr) if(p.t>=now-windowMs && p.d>ymax) ymax=p.d;
-  ymax = Math.ceil(ymax*1.15*10)/10;
-  const {toPx,padL,iw} = drawAxes(ctx,w,h,0,ymax,windowMs,now,v=>v.toFixed(1));
-  for(const [id,arr] of distSeries){
-    const col = getColor(id);
-    ctx.strokeStyle=col; ctx.lineWidth=1.5; ctx.beginPath();
-    let started=false, last=null;
-    for(const p of arr){
-      if(p.t<now-windowMs) continue;
-      const [x,y]=toPx(p.t,p.d);
-      if(!started){ ctx.moveTo(x,y); started=true; } else ctx.lineTo(x,y);
-      last=[x,y,p.d];
-    }
-    ctx.stroke();
-    if(last && typeof last[2]==='number'){ ctx.fillStyle=col; ctx.font='10px system-ui'; ctx.textAlign='left'; ctx.textBaseline='middle';
-      ctx.fillText(last[2].toFixed(2), Math.min(last[0]+3,padL+iw-2), last[1]); }
-  }
-}
-function drawRate(){
-  const fc = fitCanvas(document.getElementById('cvRate')); if(!fc) return;
-  const {ctx,w,h} = fc, now = performance.now(), windowMs = 60000;
-  const {toPx} = drawAxes(ctx,w,h,0,100,windowMs,now,v=>v.toFixed(0));
-  for(const [id,arr] of rateSeries){
-    const col = getColor(id);
-    ctx.globalAlpha=0.45; ctx.strokeStyle=col; ctx.lineWidth=1; ctx.beginPath();
-    let started=false;
-    for(const p of arr){ if(p.t<now-windowMs) continue; const [x,y]=toPx(p.t,p.cum); if(!started){ctx.moveTo(x,y);started=true;} else ctx.lineTo(x,y); }
-    ctx.stroke(); ctx.globalAlpha=1;
-    ctx.strokeStyle=col; ctx.lineWidth=2; ctx.beginPath();
-    started=false; let last=null;
-    for(const p of arr){
-      if(p.t<now-windowMs || p.inst==null){ started=false; continue; }
-      const [x,y]=toPx(p.t,p.inst);
-      if(!started){ ctx.moveTo(x,y); started=true; } else ctx.lineTo(x,y);
-      last=[x,y,p.inst];
-    }
-    ctx.stroke();
-    if(last){ ctx.fillStyle=col; ctx.font='10px system-ui'; ctx.textAlign='left'; ctx.textBaseline='middle';
-      ctx.fillText(last[2].toFixed(0)+'%', last[0]+3, last[1]); }
-  }
-}
-function drawCycle(){
-  const fc = fitCanvas(document.getElementById('cvCycle')); if(!fc) return;
-  const {ctx,w,h} = fc, now = performance.now(), windowMs = 60000;
-  let ymax = 20;
-  for(const p of cycleSeries) if(p.t>=now-windowMs && p.band>ymax) ymax=p.band;
-  ymax = Math.ceil(ymax*1.15);
-  const {toPx,padT,ih} = drawAxes(ctx,w,h,0,ymax,windowMs,now,v=>v.toFixed(0));
-  const pts = cycleSeries.filter(p=>p.t>=now-windowMs);
-  if(pts.length){
-    ctx.fillStyle=COL.s1; ctx.globalAlpha=0.15; ctx.beginPath();
-    pts.forEach((p,i)=>{ const [x,y]=toPx(p.t,p.band); if(i===0){ ctx.moveTo(x,padT+ih); ctx.lineTo(x,y); } else ctx.lineTo(x,y); if(i===pts.length-1) ctx.lineTo(x,padT+ih); });
-    ctx.closePath(); ctx.fill(); ctx.globalAlpha=1;
-    ctx.strokeStyle=COL.s1; ctx.lineWidth=1.5; ctx.beginPath();
-    let last=null;
-    pts.forEach((p,i)=>{ const [x,y]=toPx(p.t,p.val); if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y); last=[x,y,p.val]; });
-    ctx.stroke();
-    if(last){ ctx.fillStyle=COL.s1; ctx.font='10px system-ui'; ctx.textAlign='left'; ctx.textBaseline='middle';
-      ctx.fillText(last[2].toFixed(0)+' ms', last[0]+3, last[1]); }
-  }
-}
-function drawPos(){
-  const fc = fitCanvas(document.getElementById('cvPos')); if(!fc) return;
-  const {ctx,w,h} = fc, now = performance.now(), windowMs = 60000;
-  const ptsEkf = posSeriesEkf.filter(p=>p.t>=now-windowMs);
-  const ptsNls = posSeriesNls.filter(p=>p.t>=now-windowMs);
-  if(!ptsEkf.length && !ptsNls.length){ ctx.clearRect(0,0,w,h); return; }
-  // z は「最新 fix が 3D モード」かつ「窓内に z を持つ点がある」ときだけ描く。
-  // 2D モードの z は固定高さの平線になるだけなので出さない。
-  // draw z only when the latest fix is in 3D mode AND the window has z samples;
-  // in 2D mode z is just the fixed height (a flat line), so omit it.
-  const hasZ = !!(fixLatest && fixLatest.mode==='3d') &&
-    (ptsNls.some(p=>typeof p.z==='number') || ptsEkf.some(p=>typeof p.z==='number'));
-  let ymin=Infinity, ymax=-Infinity;
-  for(const p of ptsEkf.concat(ptsNls)){
-    if(p.x<ymin) ymin=p.x; if(p.x>ymax) ymax=p.x;
-    if(p.y<ymin) ymin=p.y; if(p.y>ymax) ymax=p.y;
-    if(hasZ && typeof p.z==='number'){ if(p.z<ymin) ymin=p.z; if(p.z>ymax) ymax=p.z; }
-  }
-  const padv = Math.max(0.05, (ymax-ymin)*0.15);
-  ymin -= padv; ymax += padv;
-  const {toPx} = drawAxes(ctx,w,h,ymin,ymax,windowMs,now,v=>v.toFixed(2));
-  const drawLine=(pts,key,col,lw)=>{
-    ctx.strokeStyle=col; ctx.lineWidth=lw; ctx.beginPath();
-    let started=false, last=null;
-    for(const p of pts){
-      if(typeof p[key]!=='number') continue; // z が無い点(2D時など)はスキップ / skip points without this key (e.g. z in 2D)
-      const [x,y]=toPx(p.t,p[key]); if(!started){ ctx.moveTo(x,y); started=true; } else ctx.lineTo(x,y); last=[x,y,p[key]];
-    }
-    if(started) ctx.stroke();
-    return last;
-  };
-  const lastNlsX = drawLine(ptsNls,'x',COL.s1,1);
-  const lastNlsY = drawLine(ptsNls,'y',COL.s2,1);
-  const lastNlsZ = hasZ ? drawLine(ptsNls,'z',COL.s3,1) : null;
-  const lastEkfX = drawLine(ptsEkf,'x',COL.s1,2.5);
-  const lastEkfY = drawLine(ptsEkf,'y',COL.s2,2.5);
-  const lastEkfZ = hasZ ? drawLine(ptsEkf,'z',COL.s3,2.5) : null;
-  // ラベルは EKF（太線）の末端を優先し、無ければ通常解（細線）の末端を使う
-  // label the end of the EKF (thick) line when available, else fall back to the NLS (thin) line
-  const lastX = lastEkfX || lastNlsX, lastY = lastEkfY || lastNlsY, lastZ = lastEkfZ || lastNlsZ;
-  ctx.font='10px system-ui'; ctx.textAlign='left'; ctx.textBaseline='middle';
-  if(lastX){ ctx.fillStyle=COL.s1; ctx.fillText('x '+lastX[2].toFixed(2), lastX[0]+3, lastX[1]); }
-  if(lastY){ ctx.fillStyle=COL.s2; ctx.fillText('y '+lastY[2].toFixed(2), lastY[0]+3, lastY[1]); }
-  if(lastZ){ ctx.fillStyle=COL.s3; ctx.fillText('z '+lastZ[2].toFixed(2), lastZ[0]+3, lastZ[1]); }
-}
-// ---- 測位図のビュー枠ヒステリシス / plan-view bounds hysteresis (2D と 3D で共有) ----
-// 内容(アンカー+距離円+軌跡)の範囲をそのまま毎フレーム反映すると、距離の揺らぎで枠が
-// 細かく震える(flicker)。拡大は即座、縮小は「内容が枠の70%未満」の状態が3秒続いてから、
-// 0.5mグリッドに丸めた目標へ指数的に滑らかに追従させることで枠を安定させる。
-// Refitting the axes from the raw content extent every frame makes the view jitter with each
-// distance sample. Expand immediately; shrink only once "content < 70% of view span" has held
-// for 3 s; snap the target to a 0.5 m grid; ease current bounds toward the target exponentially.
-// チューニング値 / tunables:
-const PLAN_SHRINK_RATIO = 0.7;    // 内容スパンが枠スパンのこの比率未満なら「縮小候補」
-const PLAN_SHRINK_HOLD_MS = 3000; // 縮小候補がこの時間[ms]続いたら実際に縮小へ向かう
-const PLAN_GRID_M = 0.5;          // 目標枠を外側へ丸める格子[m]（微小変化で枠が動かないように）
-const PLAN_EASE = 0.2;            // 描画tick(約100ms)ごとに目標へ寄せる割合（指数追従の係数）
-const planViewState2D = {view:null, shrinkSince:null}; // 2D測位図の現在枠 / 2D plan view state
-const planViewState3D = {view:null, shrinkSince:null}; // 3D測位図の現在枠 / 3D plan view state
+
+/* ---- 測位図のビュー枠ヒステリシス / plan-view bounds hysteresis (2D と 3D で共有) ----
+ * 内容(アンカー+距離円+軌跡)の範囲をそのまま毎フレーム反映すると、距離の揺らぎで枠が
+ * 細かく震える(flicker)。拡大は即座、縮小は「内容が枠の70%未満」の状態が3秒続いてから、
+ * 0.5mグリッドに丸めた目標へ指数的に滑らかに追従させることで枠を安定させる。 */
+const PLAN_SHRINK_RATIO = 0.7;
+const PLAN_SHRINK_HOLD_MS = 3000;
+const PLAN_GRID_M = 0.5;
+const PLAN_EASE = 0.2;
+const planViewState2D = {view:null, shrinkSince:null};
+const planViewState3D = {view:null, shrinkSince:null};
 function updateViewBounds(state, box, now, axes){
   axes = axes || ['X','Y'];
   const tgt = {};
   for(const ax of axes){ tgt['min'+ax]=Math.floor(box['min'+ax]/PLAN_GRID_M)*PLAN_GRID_M; tgt['max'+ax]=Math.ceil(box['max'+ax]/PLAN_GRID_M)*PLAN_GRID_M; }
-  if(!state.view){ state.view = tgt; return state.view; } // 初回はそのまま採用（既存の初期値相当）
+  if(!state.view){ state.view = tgt; return state.view; }
   const view = state.view;
   let needExpand = false;
   for(const ax of axes) if(tgt['min'+ax]<view['min'+ax] || tgt['max'+ax]>view['max'+ax]) needExpand = true;
@@ -942,23 +1256,25 @@ function updateViewBounds(state, box, now, axes){
   const shrinkReady = shrinkCandidate && (now-state.shrinkSince >= PLAN_SHRINK_HOLD_MS);
   let next;
   if(needExpand){
-    // マーカーが画面外に出ないよう、拡大方向は即スナップ / snap immediately so nothing goes off-screen
     next = {};
     for(const ax of axes){ next['min'+ax]=Math.min(view['min'+ax],tgt['min'+ax]); next['max'+ax]=Math.max(view['max'+ax],tgt['max'+ax]); }
   } else if(shrinkReady){
     next = {};
     for(const ax of axes){ next['min'+ax]=view['min'+ax]+(tgt['min'+ax]-view['min'+ax])*PLAN_EASE; next['max'+ax]=view['max'+ax]+(tgt['max'+ax]-view['max'+ax])*PLAN_EASE; }
   } else {
-    next = view; // 縮小条件が未成立/未達なら枠を動かさない(震え防止) / hold still, avoids jitter
+    next = view;
   }
   state.view = next;
   return next;
 }
-function drawPlan(){
-  const fc = fitCanvas(document.getElementById('cvPlan')); if(!fc) return;
+
+/* =====================================================================
+ * 測位図 2D（canvas・全面グリッド） / 2D plan view (canvas, edge-to-edge grid)
+ * ===================================================================== */
+function drawPlan2D(){
+  const fc = fitCanvas(document.getElementById('plan2d')); if(!fc) return;
   const {ctx,w,h} = fc;
   ctx.clearRect(0,0,w,h);
-  const pad = 26;
   let xs=[0,1], ys=[0,1];
   const validAnchors = anchorsCfg.filter(a=>a && Array.isArray(a.p));
   if(validAnchors.length){ xs=[]; ys=[]; }
@@ -969,53 +1285,55 @@ function drawPlan(){
   }
   for(const p of fixTrail){ xs.push(p.x); ys.push(p.y); }
   for(const p of ekfTrail){ xs.push(p.x); ys.push(p.y); }
-  for(const p of cloudPts){ xs.push(p.x); ys.push(p.y); } // 点群も自動スケールに含める / include the point cloud in autoscale bounds
+  for(const p of cloudPts){ xs.push(p.x); ys.push(p.y); }
   let [cbMinX,cbMaxX] = minMax(xs), [cbMinY,cbMaxY] = minMax(ys);
   cbMinX -= 0.5; cbMaxX += 0.5; cbMinY -= 0.5; cbMaxY += 0.5;
   if(cbMaxX-cbMinX<1){ const c=(cbMaxX+cbMinX)/2; cbMinX=c-0.5; cbMaxX=c+0.5; }
   if(cbMaxY-cbMinY<1){ const c=(cbMaxY+cbMinY)/2; cbMinY=c-0.5; cbMaxY=c+0.5; }
-  const view = updateViewBounds(planViewState2D, {minX:cbMinX,maxX:cbMaxX,minY:cbMinY,maxY:cbMaxY}, performance.now());
-  const iw=w-pad*2, ih=h-pad*2;
-  // 等尺(x/y同スケール)を保ったまま中心基準で範囲を拡張し、描画領域を余白なく埋める(state.viewへは書き戻さない)
-  // expand bounds about their centre (equal x/y scale) to fill the area with no margins; view itself is not mutated
+  const view = updateViewBounds(planViewState2D, {minX:cbMinX,maxX:cbMaxX,minY:cbMinY,maxY:cbMaxY}, nowMs());
+  // 等尺(x/y同スケール)を保ったまま中心基準で範囲を拡張(state.viewへは書き戻さない)
   let {minX,maxX,minY,maxY} = view;
   const spanX=maxX-minX, spanY=maxY-minY;
-  if(spanX*ih > spanY*iw){ const s=spanX*ih/iw, c=(minY+maxY)/2; minY=c-s/2; maxY=c+s/2; }
-  else { const s=spanY*iw/ih, c=(minX+maxX)/2; minX=c-s/2; maxX=c+s/2; }
-  const scale = Math.max(0.001, iw/(maxX-minX));
-  const ox = pad, oy = pad;
-  const toPx=(x,y)=>[ox+(x-minX)*scale, h-oy-(y-minY)*scale];
+  if(spanX*h > spanY*w){ const s=spanX*h/w, c=(minY+maxY)/2; minY=c-s/2; maxY=c+s/2; }
+  else { const s=spanY*w/h, c=(minX+maxX)/2; minX=c-s/2; maxX=c+s/2; }
+  const scale = Math.max(0.001, w/(maxX-minX));
+  // canvas全面が「見えている世界の範囲」そのものになるよう、キャンバス寸法とスケール・中心から
+  // ワールド座標の可視範囲を直接導出する（縁まで届くグリッドの根拠。中身の分布に依存させない）
+  // derive the visible world extent directly from the canvas size + scale/centre (not from the
+  // content bounds) so the grid provably reaches every edge, in both fullscreen and after a resize
+  const centreX = (minX+maxX)/2, centreY = (minY+maxY)/2;
+  const worldHalfW = (w/2)/scale, worldHalfH = (h/2)/scale;
+  const worldMinX = centreX-worldHalfW, worldMaxX = centreX+worldHalfW;
+  const worldMinY = centreY-worldHalfH, worldMaxY = centreY+worldHalfH;
+  const toPx=(x,y)=>[(x-worldMinX)*scale, h-(y-worldMinY)*scale];
 
-  ctx.strokeStyle=COL.grid; ctx.lineWidth=1; ctx.font='9px system-ui'; ctx.fillStyle=COL.muted;
-  for(let x=Math.ceil(minX); x<=Math.floor(maxX); x++){
+  ctx.strokeStyle=COL.line; ctx.lineWidth=1; ctx.font='9px system-ui'; ctx.fillStyle=COL.muted;
+  for(let x=Math.floor(worldMinX); x<=Math.ceil(worldMaxX); x++){
     const [px] = toPx(x,0);
-    ctx.beginPath(); ctx.moveTo(px,oy); ctx.lineTo(px,h-oy); ctx.stroke();
-    ctx.textAlign='center'; ctx.textBaseline='top'; ctx.fillText(String(x), px, h-oy+2);
+    ctx.beginPath(); ctx.moveTo(px,0); ctx.lineTo(px,h); ctx.stroke();
+    ctx.textAlign='left'; ctx.textBaseline='alphabetic'; ctx.fillText(String(x), px+3, h-6);
   }
-  for(let y=Math.ceil(minY); y<=Math.floor(maxY); y++){
+  for(let y=Math.floor(worldMinY); y<=Math.ceil(worldMaxY); y++){
     const [,py] = toPx(0,y);
-    ctx.beginPath(); ctx.moveTo(ox,py); ctx.lineTo(w-ox,py); ctx.stroke();
-    ctx.textAlign='right'; ctx.textBaseline='middle'; ctx.fillText(String(y), ox-3, py);
+    ctx.beginPath(); ctx.moveTo(0,py); ctx.lineTo(w,py); ctx.stroke();
+    ctx.textAlign='left'; ctx.textBaseline='bottom'; ctx.fillText(String(y), 4, py-2);
   }
-  ctx.fillStyle=COL.muted; ctx.textAlign='center'; ctx.textBaseline='alphabetic'; ctx.fillText('x [m]', w/2, h-8);
-  ctx.save(); ctx.translate(9,h/2); ctx.rotate(-Math.PI/2); ctx.textAlign='center'; ctx.fillText('y [m]',0,0); ctx.restore();
 
+  ctx.save(); ctx.beginPath(); ctx.rect(0,0,w,h); ctx.clip(); // レンジ円は canvas 全面でクリップ / range circles clip at the canvas edge
   for(const a of validAnchors){
     const m = measLatest.get(a.id); if(!m) continue;
     const [cx,cy] = toPx(a.p[0],a.p[1]);
     ctx.strokeStyle=getColor(a.id); ctx.globalAlpha=0.25; ctx.lineWidth=1;
     ctx.beginPath(); ctx.arc(cx,cy,m.d*scale,0,TAU); ctx.stroke(); ctx.globalAlpha=1;
   }
-  // 点群（薄いドット）: 軌跡・マーカーより先に描いて下敷きにする。「点群消去」ボタンで消えるまで蓄積され続ける
-  // point cloud (faint dots): drawn first so it sits underneath the trail/marker; persists until "点群消去" is pressed
+  ctx.restore();
+
   if(cloudPts.length){
-    ctx.fillStyle = COL.cloud; ctx.globalAlpha = 0.45; // 点群は紫、軌跡・印は墨色 / cloud in violet, trail and marker in ink
+    ctx.fillStyle = COL.cloud; ctx.globalAlpha = 0.45;
     ctx.beginPath();
     for(const p of cloudPts){ const [x,y]=toPx(p.x,p.y); ctx.moveTo(x+1.5,y); ctx.arc(x,y,1.5,0,TAU); }
     ctx.fill(); ctx.globalAlpha = 1;
   }
-  // 軌跡は EKF が有効ならそちらを主表示、無ければ通常解(NLS)にフォールバック
-  // trail: prefer the EKF when available, else fall back to the NLS solution
   const mainTrail2D = ekfLatest ? ekfTrail : fixTrail;
   if(mainTrail2D.length>1){
     ctx.strokeStyle=COL.ink; ctx.globalAlpha=0.3; ctx.lineWidth=1.5; ctx.beginPath();
@@ -1026,203 +1344,498 @@ function drawPlan(){
     const [x,y] = toPx(a.p[0],a.p[1]);
     const enabled = a.enabled!==false;
     ctx.fillStyle = enabled ? getColor(a.id) : COL.muted;
-    ctx.beginPath(); ctx.arc(x,y,4,0,TAU); ctx.fill();
-    ctx.fillStyle = enabled ? COL.ink : COL.muted;
-    ctx.font='10px system-ui'; ctx.textAlign='left'; ctx.textBaseline='bottom';
-    ctx.fillText(a.id, x+6, y-4);
+    ctx.beginPath(); ctx.arc(x,y,6,0,TAU); ctx.fill();
+    ctx.strokeStyle = COL.surface; ctx.lineWidth=2; ctx.stroke();
+    ctx.fillStyle = enabled ? COL.ink2 : COL.muted;
+    ctx.font='10.5px var(--font-mono),monospace'; ctx.textAlign='left'; ctx.textBaseline='bottom';
+    ctx.fillText(a.id, x+9, y-3);
   }
-  // 主マーカーは EKF 優先、無ければ通常解(NLS)にフォールバック（今まで通り）
-  // main marker: prefer the EKF, else fall back to the NLS solution (unchanged from before)
   const hasNls2D = fixLatest && fixLatest.ok && Array.isArray(fixLatest.p);
   if(ekfLatest || hasNls2D){
     const usingEkf = !!ekfLatest;
     const [x,y] = usingEkf ? toPx(ekfLatest.p[0], ekfLatest.p[1]) : toPx(fixLatest.p[0], fixLatest.p[1]);
-    const stale = performance.now()-(usingEkf?lastEkfAt:lastFixAt)>2000; // 受信が止まっているのに描画だけ動いて見えないように
+    const stale = nowMs()-(usingEkf?lastEkfAt:lastFixAt)>2000;
     if(stale) ctx.globalAlpha = 0.35;
-    ctx.strokeStyle=COL.ink; ctx.lineWidth=1.5;
-    ctx.beginPath(); ctx.moveTo(x-7,y); ctx.lineTo(x+7,y); ctx.moveTo(x,y-7); ctx.lineTo(x,y+7); ctx.stroke();
-    ctx.beginPath(); ctx.arc(x,y,4,0,TAU); ctx.fillStyle=COL.ink; ctx.fill();
+    ctx.strokeStyle=COL.ink; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(x-14,y); ctx.lineTo(x+14,y); ctx.moveTo(x,y-14); ctx.lineTo(x,y+14); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x,y,5.5,0,TAU); ctx.fillStyle=COL.ink; ctx.fill();
+    ctx.strokeStyle=COL.surface; ctx.lineWidth=1.5; ctx.stroke();
     if(stale) ctx.globalAlpha = 1;
   }
 }
 
-// ---- 描画: 3D 測位図（自前の直交投影） / 3D plan view (hand-rolled orthographic projection) ----
-// z が up の世界座標を、ヨー(yaw)→ピッチ(pitch)の順に回転してから平行投影する。
-// world z-up: rotate by yaw then pitch, then drop the depth axis (parallel/orthographic projection).
-// 画面右 = +x1、画面上 = 奥(+y1)と上(+z1)の混合、depth は視点に近いほど大きい。
-// この (右, 上, 手前) の 3 本は右手系（行列式 +1）なので、右手系の世界が鏡像にならずに描かれる。
-// screen right = +x1, screen up mixes far (+y1) and up (+z1), depth grows toward the viewer.
-// (right, up, toward-viewer) is right-handed (det +1), so a right-handed world is drawn without mirroring.
-function proj3(pt, center, yaw, pitch){
-  const x=pt[0]-center[0], y=pt[1]-center[1], z=pt[2]-center[2];
-  const cy=Math.cos(yaw), sy=Math.sin(yaw);
-  const x1 = x*cy + y*sy, y1 = -x*sy + y*cy, z1 = z;   // 視線方向を +y1 に揃える / view direction becomes +y1
-  const cp=Math.cos(pitch), sp=Math.sin(pitch);          // pitch>0 で見下ろし / pitch>0 looks down from above
-  return { sx:x1, sy:y1*sp+z1*cp, depth:-y1*cp+z1*sp };
-}
+/* =====================================================================
+ * 測位図 3D（canvas・透視投影） / 3D plan view (canvas, perspective projection)
+ * ===================================================================== */
+function cross3(a,b){ return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
+function norm3(a){ const m=Math.hypot(a[0],a[1],a[2])||1; return [a[0]/m,a[1]/m,a[2]/m]; }
+function dot3(a,b){ return a[0]*b[0]+a[1]*b[1]+a[2]*b[2]; }
 function getBounds3D(){
   let xs=[0], ys=[0], zs=[0];
   for(const a of anchorsCfg) if(a && Array.isArray(a.p)){ xs.push(a.p[0]); ys.push(a.p[1]); zs.push(a.p[2]||0); }
   for(const p of fixTrail) if(p.z!=null){ xs.push(p.x); ys.push(p.y); zs.push(p.z); }
   for(const p of ekfTrail) if(p.z!=null){ xs.push(p.x); ys.push(p.y); zs.push(p.z); }
-  for(const p of cloudPts) if(p.z!=null){ xs.push(p.x); ys.push(p.y); zs.push(p.z); } // 点群も自動スケールに含める / include the point cloud in autoscale bounds
+  for(const p of cloudPts) if(p.z!=null){ xs.push(p.x); ys.push(p.y); zs.push(p.z); }
   const pad=0.6;
   const [mnX,mxX]=minMax(xs), [mnY,mxY]=minMax(ys), [mnZ,mxZ]=minMax(zs);
-  const box = { minX:mnX-pad, maxX:mxX+pad,
-    minY:mnY-pad, maxY:mxY+pad,
+  const box = { minX:mnX-pad, maxX:mxX+pad, minY:mnY-pad, maxY:mxY+pad,
     minZ:Math.min(0,mnZ)-0.2, maxZ:Math.max(0,mxZ)+pad };
-  // 2D測位図と同じヒステリシス(拡大即時/縮小3秒保持/0.5mグリッド)をXYZに適用して安定させる
-  // apply the same hysteresis as the 2D view (immediate expand / 3s shrink hold / 0.5m grid) to XYZ
-  return updateViewBounds(planViewState3D, box, performance.now(), ['X','Y','Z']);
+  return updateViewBounds(planViewState3D, box, nowMs(), ['X','Y','Z']);
 }
+function fitDistance3D(b){
+  const dx=b.maxX-b.minX, dy=b.maxY-b.minY, dz=b.maxZ-b.minZ;
+  const R = 0.5*Math.hypot(dx,dy,dz);
+  const halfFovV = Math.atan(0.5/1.2); // f = 1.2*h -> tan(halfFov) = (h/2)/f = 0.5/1.2
+  return Math.max(1.5, R/Math.sin(halfFovV)*1.15);
+}
+function buildCam3D(target, h){
+  const yaw=cam3D.yaw, pitch=cam3D.pitch;
+  const dist = cam3D.dist!=null ? cam3D.dist : fitDistance3D(lastBounds3D||{minX:-1,maxX:1,minY:-1,maxY:1,minZ:0,maxZ:1});
+  const cp=Math.cos(pitch), sp=Math.sin(pitch), cy=Math.cos(yaw), sy=Math.sin(yaw);
+  // 右手系・z上。camPosはtargetからyaw/pitch/distだけ離れた位置、FWDはcamからtargetへの単位ベクトル
+  // right-handed, z-up world. camPos orbits target by yaw/pitch/dist; FWD is the unit vector from camera to target
+  const camPos = [target[0]+dist*cp*cy, target[1]+dist*cp*sy, target[2]+dist*sp];
+  const FWD = [-cp*cy, -cp*sy, -sp];
+  const WORLD_UP = [0,0,1];
+  let RIGHT = cross3(FWD, WORLD_UP);
+  if(Math.hypot(RIGHT[0],RIGHT[1],RIGHT[2])<1e-6) RIGHT=[1,0,0]; else RIGHT=norm3(RIGHT);
+  const UP = cross3(RIGHT, FWD);
+  const f = 1.2*h;
+  return {camPos, FWD, RIGHT, UP, f, dist};
+}
+function toCam3(P, cam){
+  const d = [P[0]-cam.camPos[0], P[1]-cam.camPos[1], P[2]-cam.camPos[2]];
+  return {x:dot3(d,cam.RIGHT), y:dot3(d,cam.UP), z:dot3(d,cam.FWD)};
+}
+const NEAR3 = 0.05;
+function clipNear3(a,b){
+  if(a.z<=NEAR3 && b.z<=NEAR3) return null;
+  if(a.z>NEAR3 && b.z>NEAR3) return [a,b];
+  const t = (NEAR3-a.z)/(b.z-a.z);
+  const c = {x:a.x+(b.x-a.x)*t, y:a.y+(b.y-a.y)*t, z:NEAR3};
+  return a.z>NEAR3 ? [a,c] : [c,b];
+}
+function screenOf(c, f, cx, cy){ return {x:cx+f*c.x/c.z, y:cy-f*c.y/c.z}; }
 function drawPlan3D(){
-  const fc = fitCanvas(document.getElementById('cvPlan')); if(!fc) return;
+  const fc = fitCanvas(document.getElementById('plan3d')); if(!fc) return;
   const {ctx,w,h} = fc;
-  const b = getBounds3D();
-  const center = [(b.minX+b.maxX)/2, (b.minY+b.maxY)/2, (b.minZ+b.maxZ)/2];
-  const yaw = cam3.yaw, pitch = cam3.pitch;
-  const corners = [];
-  for(const x of [b.minX,b.maxX]) for(const y of [b.minY,b.maxY]) for(const z of [b.minZ,b.maxZ]) corners.push([x,y,z]);
-  const pc = corners.map(c=>proj3(c,center,yaw,pitch));
-  const sxs=pc.map(p=>p.sx), sys=pc.map(p=>p.sy);
-  const spanX=Math.max(0.5,Math.max(...sxs)-Math.min(...sxs)), spanY=Math.max(0.5,Math.max(...sys)-Math.min(...sys));
-  const midSx=(Math.max(...sxs)+Math.min(...sxs))/2, midSy=(Math.max(...sys)+Math.min(...sys))/2;
-  const pad=32, iw=Math.max(10,w-pad*2), ih=Math.max(10,h-pad*2);
-  const scale = Math.max(3, Math.min(iw/spanX, ih/spanY)) * cam3.zoom;
-  const cxC=w/2, cyC=h/2;
-  const toScr = pt=>{ const p=proj3(pt,center,yaw,pitch); return {x:cxC+(p.sx-midSx)*scale, y:cyC-(p.sy-midSy)*scale, depth:p.depth}; };
-
   ctx.clearRect(0,0,w,h);
+  const b = getBounds3D(); lastBounds3D = b;
+  const target = [(b.minX+b.maxX)/2, (b.minY+b.maxY)/2, 0];
+  const cam = buildCam3D(target, h);
+  const {f} = cam, cx = w/2, cy = h/2;
+  const toScr = P=>{ const c=toCam3(P,cam); return c.z>NEAR3 ? Object.assign(screenOf(c,f,cx,cy),{depth:c.z}) : null; };
 
-  // 床グリッド（1mピッチ）/ floor grid at z=0, 1 m pitch
-  const gx0=Math.floor(b.minX), gx1=Math.ceil(b.maxX), gy0=Math.floor(b.minY), gy1=Math.ceil(b.maxY);
-  ctx.strokeStyle=COL.grid; ctx.lineWidth=1;
-  for(let x=gx0;x<=gx1;x++){ const p1=toScr([x,gy0,0]), p2=toScr([x,gy1,0]); ctx.beginPath(); ctx.moveTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y); ctx.stroke(); }
-  for(let y=gy0;y<=gy1;y++){ const p1=toScr([gx0,y,0]), p2=toScr([gx1,y,0]); ctx.beginPath(); ctx.moveTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y); ctx.stroke(); }
+  // 地平線: 床(z=0)上の無限遠が収束する行。screenY = cy - f*tan(pitch)（カメラ高さ・向きから解析的に求まる）
+  // horizon: the row where the floor plane's infinity vanishes. screenY = cy - f*tan(pitch), derived
+  // analytically from the camera's pitch (independent of any specific far point, avoids projecting one)
+  const horizonY = cy - f*Math.tan(cam3D.pitch);
+  ctx.strokeStyle=COL.ink2; ctx.globalAlpha=0.35; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(0,horizonY); ctx.lineTo(w,horizonY); ctx.stroke(); ctx.globalAlpha=1;
 
-  // 座標軸 x赤/y緑/z青 / axes, x red / y green / z blue (原点は世界原点そのもの・bounds centerではない)
-  const axLen = Math.max(0.4, Math.min(b.maxX-b.minX, b.maxY-b.minY, b.maxZ-b.minZ)*0.22);
+  // 床格子: 1m格子。カメラから15m以内は1m間隔、それより遠くは2m間隔（偶数座標のみ延伸）。
+  // 世界原点から±60mで打ち切り、視点からの距離でフェード、近クリップ面(0.05m)で線分をクリップする
+  // floor grid: 1 m pitch; beyond 15 m from the camera only even-metre lines continue (2 m pitch);
+  // culled beyond ±60 m of the target; alpha fades with distance; each segment clipped at the 0.05 m near plane
+  const EXT=60, NEAR_R=15, FADE_MAX=45;
+  function drawGridSeg(p1,p2,distCam){
+    const seg = clipNear3(toCam3(p1,cam), toCam3(p2,cam)); if(!seg) return;
+    const s1=screenOf(seg[0],f,cx,cy), s2=screenOf(seg[1],f,cx,cy);
+    const alpha = 0.5 - 0.45*Math.min(1, distCam/FADE_MAX);
+    ctx.strokeStyle=COL.ink2; ctx.globalAlpha=Math.max(0.03,alpha); ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(s1.x,s1.y); ctx.lineTo(s2.x,s2.y); ctx.stroke();
+  }
+  ctx.save();
+  const gx0=Math.floor((target[0]-EXT)), gx1=Math.ceil((target[0]+EXT));
+  const gy0=Math.floor((target[1]-EXT)), gy1=Math.ceil((target[1]+EXT));
+  for(let k=gx0; k<=gx1; k++){
+    const fineOnly = (Math.round(k/2)*2 !== k);
+    for(let ys=gy0; ys<gy1; ys++){
+      const y1=ys, y2=ys+1, midx=k, midy=(y1+y2)/2;
+      const distCam = Math.hypot(midx-cam.camPos[0], midy-cam.camPos[1]);
+      if(fineOnly && distCam>NEAR_R) continue;
+      drawGridSeg([k,y1,0],[k,y2,0], distCam);
+    }
+  }
+  for(let k=gy0; k<=gy1; k++){
+    const fineOnly = (Math.round(k/2)*2 !== k);
+    for(let xs=gx0; xs<gx1; xs++){
+      const x1=xs, x2=xs+1, midy=k, midx=(x1+x2)/2;
+      const distCam = Math.hypot(midx-cam.camPos[0], midy-cam.camPos[1]);
+      if(fineOnly && distCam>NEAR_R) continue;
+      drawGridSeg([x1,k,0],[x2,k,0], distCam);
+    }
+  }
+  ctx.restore(); ctx.globalAlpha=1;
+
+  // 座標軸 x赤/y緑/z青（原点=世界原点） / axis triad at the world origin (x red, y green, z blue)
+  const axLen = Math.max(0.3, Math.min(b.maxX-b.minX, b.maxY-b.minY, Math.max(0.6,b.maxZ-b.minZ))*0.18);
   const org = toScr([0,0,0]);
-  for(const [tip,col,lab] of [[[axLen,0,0],'#d03b3b','x'], [[0,axLen,0],'#0ca30c','y'], [[0,0,axLen],'#2a78d6','z']]){
-    const p = toScr(tip);
-    ctx.strokeStyle=col; ctx.lineWidth=1.6; ctx.beginPath(); ctx.moveTo(org.x,org.y); ctx.lineTo(p.x,p.y); ctx.stroke();
-    ctx.fillStyle=col; ctx.font='10px system-ui'; ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.fillText(lab, p.x+(p.x>org.x?7:-7), p.y+(p.y>org.y?7:-7));
+  if(org){
+    for(const [tip,col,lab] of [[[axLen,0,0],'--bad','x'], [[0,axLen,0],'--good','y'], [[0,0,axLen],'--accent','z']]){
+      const p = toScr(tip); if(!p) continue;
+      ctx.strokeStyle=COL[col.slice(2)]; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(org.x,org.y); ctx.lineTo(p.x,p.y); ctx.stroke();
+      ctx.fillStyle=COL[col.slice(2)]; ctx.font='10px system-ui'; ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText(lab, p.x+(p.x>org.x?7:-7), p.y+(p.y>org.y?7:-7));
+    }
   }
 
-  // 点群（薄いドット）: 軌跡・マーカーより先に一括描画して下敷きにする。小さく低アルファなので
-  // 個別に depth-sort（painter's algorithm。視点からの奥行きでソートして奥から描く手法）する
-  // 必要は薄いと判断し、他のアイテムより先にまとめて描くだけに留める
-  // point cloud (faint dots): drawn first, in one pass, so it sits underneath the trail/marker. Since
-  // the dots are small & low-alpha, individually depth-sorting them (the painter's algorithm used
-  // below) isn't worth it — just draw them all before everything else instead.
   if(cloudPts.length){
-    ctx.fillStyle = COL.cloud; ctx.globalAlpha = 0.45; // 点群は紫、軌跡・印は墨色 / cloud in violet, trail and marker in ink
+    ctx.fillStyle = COL.cloud; ctx.globalAlpha = 0.45;
     ctx.beginPath();
-    for(const p of cloudPts){ const s=toScr([p.x,p.y,p.z]); ctx.moveTo(s.x+1.5,s.y); ctx.arc(s.x,s.y,1.5,0,TAU); }
+    for(const p of cloudPts){ const s=toScr([p.x,p.y,p.z]); if(!s) continue; ctx.moveTo(s.x+1.5,s.y); ctx.arc(s.x,s.y,1.5,0,TAU); }
     ctx.fill(); ctx.globalAlpha = 1;
   }
-  // アンカー・軌跡・タグは視点からの距離でソートして描画（painter's algorithm）
-  // anchors / trail / tag are depth-sorted before drawing (painter's algorithm)
+
   const items = [];
   for(const a of anchorsCfg){
     if(!a || !Array.isArray(a.p)) continue;
-    const wp=[a.p[0],a.p[1],a.p[2]||0], s=toScr(wp), gp=toScr([a.p[0],a.p[1],0]);
+    const wp=[a.p[0],a.p[1],a.p[2]||0], s=toScr(wp); if(!s) continue;
+    const gp=toScr([a.p[0],a.p[1],0]);
     const en = a.enabled!==false;
     items.push({depth:s.depth, draw:()=>{
-      ctx.strokeStyle = en? getColor(a.id) : COL.muted; ctx.globalAlpha=0.35; ctx.lineWidth=1;
-      ctx.beginPath(); ctx.moveTo(s.x,s.y); ctx.lineTo(gp.x,gp.y); ctx.stroke(); ctx.globalAlpha=1;
+      if(gp){
+        ctx.strokeStyle = en? getColor(a.id) : COL.muted; ctx.globalAlpha=0.35; ctx.lineWidth=1;
+        ctx.beginPath(); ctx.moveTo(s.x,s.y); ctx.lineTo(gp.x,gp.y); ctx.stroke(); ctx.globalAlpha=1;
+      }
       ctx.fillStyle = en? getColor(a.id) : COL.muted;
       ctx.beginPath(); ctx.arc(s.x,s.y,4.5,0,TAU); ctx.fill();
-      ctx.fillStyle = en? COL.ink : COL.muted;
-      ctx.font='10px system-ui'; ctx.textAlign='left'; ctx.textBaseline='bottom';
+      ctx.strokeStyle = COL.surface; ctx.lineWidth=1.5; ctx.stroke();
+      ctx.fillStyle = en? COL.ink2 : COL.muted;
+      ctx.font='10px var(--font-mono),monospace'; ctx.textAlign='left'; ctx.textBaseline='bottom';
       ctx.fillText(a.id, s.x+6, s.y-4);
     }});
   }
-  // 軌跡は EKF が有効ならそちらを主表示、無ければ通常解(NLS)にフォールバック
-  // trail: prefer the EKF when available, else fall back to the NLS solution
   const mainTrail3D = ekfLatest ? ekfTrail : fixTrail;
-  // 軌跡は TRAIL_MS(60秒)窓の全点を描き、新しいほど濃く(alpha≈0.7)・古いほど薄く(alpha≈0.05)フェードする
-  // draw every point within the TRAIL_MS (60 s) window; fade by age — newest ≈ 0.7, oldest ≈ 0.05
   const trail = mainTrail3D.filter(p=>p.z!=null);
   if(trail.length>1){
-    const now3 = performance.now();
-    const pts = trail.map(p=>Object.assign(toScr([p.x,p.y,p.z]), {age: Math.min(1, Math.max(0, (now3-p.t)/TRAIL_MS))}));
-    const dAvg = pts.reduce((s,p)=>s+p.depth,0)/pts.length;
-    items.push({depth:dAvg, draw:()=>{
-      for(let i=1;i<pts.length;i++){
-        ctx.strokeStyle=COL.ink; ctx.globalAlpha=0.7-0.65*pts[i].age; ctx.lineWidth=1.6;
-        ctx.beginPath(); ctx.moveTo(pts[i-1].x,pts[i-1].y); ctx.lineTo(pts[i].x,pts[i].y); ctx.stroke();
-      }
-      ctx.globalAlpha=1;
-    }});
+    const now3 = nowMs();
+    const segs = [];
+    for(let i=1;i<trail.length;i++){
+      const seg = clipNear3(toCam3([trail[i-1].x,trail[i-1].y,trail[i-1].z],cam), toCam3([trail[i].x,trail[i].y,trail[i].z],cam));
+      if(!seg) continue;
+      const age = Math.min(1, Math.max(0, (now3-trail[i].t)/TRAIL_MS));
+      segs.push({s1:screenOf(seg[0],f,cx,cy), s2:screenOf(seg[1],f,cx,cy), age, depth:(seg[0].z+seg[1].z)/2});
+    }
+    if(segs.length){
+      const dAvg = segs.reduce((s,p)=>s+p.depth,0)/segs.length;
+      items.push({depth:dAvg, draw:()=>{
+        for(const sg of segs){
+          ctx.strokeStyle=COL.ink; ctx.globalAlpha=0.7-0.65*sg.age; ctx.lineWidth=1.6;
+          ctx.beginPath(); ctx.moveTo(sg.s1.x,sg.s1.y); ctx.lineTo(sg.s2.x,sg.s2.y); ctx.stroke();
+        }
+        ctx.globalAlpha=1;
+      }});
+    }
   }
-  // 主マーカー(+床への破線)は EKF 優先、無ければ通常解(NLS)にフォールバック（今まで通り）
-  // main marker (+ dashed drop line to the floor): prefer the EKF, else fall back to the NLS solution (unchanged from before)
   const hasNls3D = fixLatest && fixLatest.ok && Array.isArray(fixLatest.p);
   const nlsZ3D = hasNls3D ? (fixLatest.p.length>2 ? fixLatest.p[2] : (typeof fixLatest.z_fixed==='number' ? fixLatest.z_fixed : 0)) : 0;
   if(ekfLatest || hasNls3D){
     const usingEkf = !!ekfLatest;
     const wp = usingEkf ? [ekfLatest.p[0],ekfLatest.p[1],ekfLatest.z] : [fixLatest.p[0],fixLatest.p[1],nlsZ3D];
-    const s=toScr(wp), gp=toScr([wp[0],wp[1],0]);
-    const stale = performance.now()-(usingEkf?lastEkfAt:lastFixAt)>2000; // 受信が止まっているのに描画だけ動いて見えないように
-    items.push({depth:s.depth, draw:()=>{
-      ctx.strokeStyle=COL.ink; ctx.globalAlpha=0.5; ctx.setLineDash([3,3]); ctx.lineWidth=1.2;
-      ctx.beginPath(); ctx.moveTo(s.x,s.y); ctx.lineTo(gp.x,gp.y); ctx.stroke();
-      ctx.setLineDash([]); ctx.globalAlpha = stale ? 0.35 : 1;
-      ctx.fillStyle=COL.ink; ctx.beginPath(); ctx.arc(s.x,s.y,5,0,TAU); ctx.fill();
-      ctx.strokeStyle=COL.ink; ctx.lineWidth=1.5;
-      ctx.beginPath(); ctx.moveTo(s.x-7,s.y); ctx.lineTo(s.x+7,s.y); ctx.moveTo(s.x,s.y-7); ctx.lineTo(s.x,s.y+7); ctx.stroke();
-      ctx.globalAlpha=1;
-    }});
+    const s=toScr(wp);
+    if(s){
+      const gp=toScr([wp[0],wp[1],0]);
+      const stale = nowMs()-(usingEkf?lastEkfAt:lastFixAt)>2000;
+      items.push({depth:s.depth, draw:()=>{
+        if(gp){
+          ctx.strokeStyle=COL.ink; ctx.globalAlpha=0.5; ctx.setLineDash([3,3]); ctx.lineWidth=1.2;
+          ctx.beginPath(); ctx.moveTo(s.x,s.y); ctx.lineTo(gp.x,gp.y); ctx.stroke();
+          ctx.setLineDash([]);
+        }
+        ctx.globalAlpha = stale ? 0.35 : 1;
+        ctx.fillStyle=COL.ink; ctx.beginPath(); ctx.arc(s.x,s.y,5,0,TAU); ctx.fill();
+        ctx.strokeStyle=COL.surface; ctx.lineWidth=1.5; ctx.stroke();
+        ctx.strokeStyle=COL.ink; ctx.lineWidth=1;
+        ctx.beginPath(); ctx.moveTo(s.x-7,s.y); ctx.lineTo(s.x+7,s.y); ctx.moveTo(s.x,s.y-7); ctx.lineTo(s.x,s.y+7); ctx.stroke();
+        ctx.globalAlpha=1;
+      }});
+    }
   }
-  items.sort((p,q)=>p.depth-q.depth);
+  items.sort((p,q)=>q.depth-p.depth); // 奥(depth大)から手前へ描く / paint far (large depth) to near
   for(const it of items) it.draw();
 }
 
-// ---- 更新ループ / update loops ----
-let lastDraw = 0;
-function tick(ts){
-  // 再スケジュールを最初に行う：どれか1つの描画が例外を投げてもループは止まらない
-  // re-arm the next frame first, so a single throwing draw call can never kill the loop
-  requestAnimationFrame(tick);
-  if(ts - lastDraw >= 100){
-    lastDraw = ts;
-    for(const fn of [drawDist, drawRate, drawCycle, drawPos, view3D?drawPlan3D:drawPlan]){
-      try{ fn(); }catch(e){ noteDrawError(e); }
-    }
-  }
-}
-function uiTick(){
-  try{
-    // 5秒以上メッセージが来ないのに ws が open のままなら「接続中と表示されたまま固まる」状態
-    // → いったん close して既存の onclose→scheduleReconnect 経路に再接続させる
-    if(ws && ws.readyState===WebSocket.OPEN && performance.now()-lastMsgAt>5000){
-      if(!stalled){
-        stalled = true;
-        console.warn(`[watchdog] no message for ${((performance.now()-lastMsgAt)/1000).toFixed(1)}s, reconnecting`);
-        try{ ws.close(); }catch(e){}
+/* ---- 3D 測位図の操作（ドラッグ回転・ホイール/ピンチで距離変更・ダブルクリックでリセット） ---- */
+function wire3DControls(){
+  const cv = document.getElementById('plan3d');
+  cv.classList.add('rot');
+  const pointers = new Map();
+  let pinchDist = null, pinchBaseDist = null;
+  cv.addEventListener('pointerdown', e=>{
+    if(!view3D) return;
+    cv.setPointerCapture(e.pointerId);
+    pointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
+  });
+  cv.addEventListener('pointermove', e=>{
+    if(!view3D || !pointers.has(e.pointerId)) return;
+    const prev = pointers.get(e.pointerId), cur = {x:e.clientX, y:e.clientY};
+    pointers.set(e.pointerId, cur);
+    if(pointers.size===1){
+      cam3D.yaw -= (cur.x-prev.x)*0.008;
+      cam3D.pitch = Math.max(-0.17, Math.min(1.4, cam3D.pitch + (cur.y-prev.y)*0.008));
+    } else if(pointers.size===2){
+      const pts = Array.from(pointers.values());
+      const d = Math.hypot(pts[0].x-pts[1].x, pts[0].y-pts[1].y);
+      if(pinchDist!=null){
+        if(pinchBaseDist==null) pinchBaseDist = cam3D.dist!=null?cam3D.dist:fitDistance3D(lastBounds3D||{minX:-1,maxX:1,minY:-1,maxY:1,minZ:0,maxZ:1});
+        cam3D.dist = Math.max(0.5, Math.min(200, pinchBaseDist*(pinchDist/d)));
       }
+      pinchDist = d;
     }
-    renderHeader(); renderCards(); renderAnchorTable(); renderRangingStats(); renderRaw();
-  }catch(e){ noteMsgError(e); }
-}
-function rateTick(){
-  try{
-    rateLinesShown = curLines; rateBytesShown = curBytes;
-    curLines = 0; curBytes = 0;
-  }catch(e){ noteMsgError(e); }
+  });
+  const endPtr = e=>{ pointers.delete(e.pointerId); if(pointers.size<2){ pinchDist=null; pinchBaseDist=null; } try{ cv.releasePointerCapture(e.pointerId); }catch(err){} };
+  cv.addEventListener('pointerup', endPtr);
+  cv.addEventListener('pointercancel', endPtr);
+  cv.addEventListener('wheel', e=>{
+    if(!view3D) return;
+    e.preventDefault();
+    const base = cam3D.dist!=null?cam3D.dist:fitDistance3D(lastBounds3D||{minX:-1,maxX:1,minY:-1,maxY:1,minZ:0,maxZ:1});
+    cam3D.dist = Math.max(0.5, Math.min(200, base*(e.deltaY<0?0.9:1.1)));
+  }, {passive:false});
+  cv.addEventListener('dblclick', ()=>{ if(view3D) resetCam3D(); });
 }
 
-// ---- UI 配線 / UI wiring ----
+/* =====================================================================
+ * 測位図の共通配線（2D/3D切替・拡大・点群消去・リサイズ） / shared plan-view wiring
+ * ===================================================================== */
+let view3D = qs.get('view')==='3d';
+function redrawPlan(){ try{ (view3D?drawPlan3D:drawPlan2D)(); }catch(e){ noteDrawError(e); } }
+document.getElementById('viewSeg').addEventListener('click', e=>{
+  const b = e.target.closest('button'); if(!b) return;
+  document.querySelectorAll('#viewSeg button').forEach(x=>x.classList.toggle('active', x===b));
+  view3D = b.dataset.view === '3d';
+  document.getElementById('plan2d').toggleAttribute('hidden', view3D);
+  document.getElementById('plan3d').toggleAttribute('hidden', !view3D);
+  redrawPlan();
+});
+if(view3D){
+  document.querySelectorAll('#viewSeg button').forEach(x=>x.classList.toggle('active', x.dataset.view==='3d'));
+  document.getElementById('plan2d').toggleAttribute('hidden', true);
+  document.getElementById('plan3d').toggleAttribute('hidden', false);
+}
+document.getElementById('btnClearCloud').addEventListener('click', ()=>{ cloudPts.length = 0; });
+{
+  const planCard = document.getElementById('planCard');
+  const btnFs = document.getElementById('btnFs');
+  btnFs.addEventListener('click', ()=>{
+    const goFs = !planCard.classList.contains('plan-fs');
+    planCard.classList.toggle('plan-fs', goFs);
+    btnFs.textContent = goFs ? '戻る' : '拡大';
+    if(goFs){ if(planCard.requestFullscreen) planCard.requestFullscreen().catch(()=>{}); }
+    else if(document.fullscreenElement===planCard){ document.exitFullscreen().catch(()=>{}); }
+    requestAnimationFrame(redrawPlan);
+  });
+  document.addEventListener('fullscreenchange', ()=>{
+    if(!document.fullscreenElement && planCard.classList.contains('plan-fs')){
+      planCard.classList.remove('plan-fs');
+      btnFs.textContent = '拡大';
+      requestAnimationFrame(redrawPlan);
+    }
+  });
+}
+wire3DControls();
+new ResizeObserver(redrawPlan).observe(document.getElementById('planBox'));
+
+/* =====================================================================
+ * ヘッダ実寸から --chrome-h / --bottombar-h を算出 / measure --chrome-h & --bottombar-h exactly
+ * ===================================================================== */
+function updateChromeH(){
+  const topH = document.querySelector('.topbar').getBoundingClientRect().height;
+  const kpiH = document.querySelector('.kpi-strip').getBoundingClientRect().height;
+  const bar = document.getElementById('transportBar');
+  const barH = bar.hidden ? 0 : bar.getBoundingClientRect().height;
+  const dash = document.querySelector('.dashboard');
+  const cs = getComputedStyle(dash);
+  const padTop = parseFloat(cs.paddingTop)||0;
+  const rowGap = parseFloat(cs.rowGap||cs.gap)||0;
+  root.style.setProperty('--chrome-h', (topH+kpiH+padTop+rowGap+barH)+'px');
+  root.style.setProperty('--bottombar-h', barH+'px');
+}
+new ResizeObserver(updateChromeH).observe(document.querySelector('.topbar'));
+new ResizeObserver(updateChromeH).observe(document.querySelector('.kpi-strip'));
+new ResizeObserver(updateChromeH).observe(document.getElementById('transportBar'));
+window.addEventListener('resize', updateChromeH);
+window.addEventListener('load', ()=>{ updateChromeH(); requestAnimationFrame(updateChromeH); });
+
+/* =====================================================================
+ * 再生モード / replay mode
+ * ===================================================================== */
+let replayLines = [];      // [{raw, t:number|null}] tは記録開始からの相対秒 / t is seconds relative to the recording's start
+let replayIdx = 0;
+let replayT = 0;
+let replayTotalT = 0;
+let replayPlaying = false;
+let replaySpeed = 1;
+let replayFilename = '';
+let replayLastWall = null;
+
+function resetBuffers(){
+  nodes.clear(); selfAddr=null;
+  anchorsCfg=[]; anchorsCfgMap=new Map();
+  measLatest.clear(); distSeries.clear(); statsPrevByA.clear(); statsLatestByA.clear(); rateSeries.clear(); fixAnchorsLatest.clear();
+  rateAggSeries.length=0;
+  fixLatest=null; ekfLatest=null;
+  cycleSeries.length=0; posSeriesNls.length=0; posSeriesEkf.length=0;
+  fixTrail.length=0; ekfTrail.length=0; cloudPts.length=0;
+  resSeries.length=0; fixFlagSeries.length=0;
+  rawBuf.length=0;
+  lastFixAt=0; lastEkfAt=0;
+}
+function parseReplayText(text){
+  const lines = text.split(/\r?\n/).filter(l=>l.trim().length>0);
+  const parsed = lines.map(raw=>{ let t=null; try{ const o=JSON.parse(raw); if(typeof o.t==='number') t=o.t; }catch(e){} return {raw,t}; });
+  let t0=null; for(const p of parsed) if(p.t!=null){ t0=p.t; break; }
+  if(t0==null) t0=0;
+  for(const p of parsed) if(p.t!=null) p.t -= t0;
+  return parsed;
+}
+function updatePlayButton(){
+  const b = document.getElementById('btnPlay');
+  b.textContent = replayPlaying ? '❙❙' : '▶';
+  b.setAttribute('aria-label', replayPlaying ? '一時停止' : '再生');
+}
+function fmtSeekTime(s){
+  if(!isFinite(s)) s=0;
+  const m=Math.floor(s/60), ss=(s%60).toFixed(1).padStart(4,'0');
+  return String(m).padStart(2,'0')+':'+ss;
+}
+function updateSeekUI(){
+  const range = document.getElementById('seekRange');
+  const pctv = replayTotalT>0 ? (replayT/replayTotalT)*1000 : 0;
+  range.value = pctv;
+  range.style.background = `linear-gradient(to right, var(--accent) ${(pctv/10).toFixed(1)}%, var(--surface-2) ${(pctv/10).toFixed(1)}%)`;
+  document.getElementById('seekTimeL').textContent = fmtSeekTime(replayT);
+  document.getElementById('seekTimeR').textContent = fmtSeekTime(replayTotalT);
+  document.getElementById('seqText').textContent = `seq ${replayIdx} / ${replayLines.length} ・ ${rateLinesShown} 行/秒`;
+}
+function seekReplay(targetT){
+  resetBuffers();
+  replayT = Math.max(0, Math.min(replayTotalT, targetT));
+  replayIdx = 0;
+  for(; replayIdx<replayLines.length; replayIdx++){
+    const ln = replayLines[replayIdx];
+    if(ln.t!=null && ln.t>replayT) break;
+    try{ handleLine(ln.raw); }catch(e){ noteMsgError(e); }
+  }
+  replayLastWall = null;
+  updateSeekUI();
+  refreshAll();
+}
+function enterReplayUI(){
+  document.querySelectorAll('#modeSeg button').forEach(x=>x.classList.toggle('active', x.dataset.mode==='replay'));
+  document.getElementById('transportBar').hidden = false;
+  document.getElementById('btnRec').disabled = true;
+  document.getElementById('btnSave').disabled = true;
+  updateChromeH();
+}
+function loadReplayFile(text, filename){
+  resetBuffers();
+  replayLines = parseReplayText(text);
+  replayTotalT = 0; for(const p of replayLines) if(p.t!=null) replayTotalT = Math.max(replayTotalT, p.t);
+  replayFilename = filename || '';
+  document.getElementById('fileNameEl').textContent = replayFilename || '未選択';
+  document.getElementById('fileNameEl').title = replayFilename;
+  replayMode = true;
+  enterReplayUI();
+  replayIdx = 0; replayT = 0;
+  seekReplay(0);
+  replayPlaying = true; updatePlayButton();
+}
+window.uwbReplayLoadText = loadReplayFile; // テスト用フック / test hook
+function goLive(){
+  replayMode = false; replayPlaying = false;
+  resetBuffers();
+  document.querySelectorAll('#modeSeg button').forEach(x=>x.classList.toggle('active', x.dataset.mode==='live'));
+  document.getElementById('transportBar').hidden = true;
+  document.getElementById('btnRec').disabled = false;
+  updateChromeH();
+  refreshAll();
+}
+function advanceReplay(nowWall){
+  if(!replayMode || !replayPlaying){ replayLastWall = nowWall; return; }
+  if(replayLastWall==null) replayLastWall = nowWall;
+  const dt = (nowWall-replayLastWall)/1000; replayLastWall = nowWall;
+  replayT = Math.min(replayTotalT, replayT + dt*replaySpeed);
+  let fed = false;
+  while(replayIdx<replayLines.length){
+    const ln = replayLines[replayIdx];
+    if(ln.t!=null && ln.t>replayT) break;
+    try{ handleLine(ln.raw); }catch(e){ noteMsgError(e); }
+    replayIdx++; fed = true;
+  }
+  if(fed){ curLines++; }
+  if(replayT>=replayTotalT && replayIdx>=replayLines.length && replayPlaying){ replayPlaying=false; updatePlayButton(); }
+  updateSeekUI();
+}
+
+/* ---- 再生バー配線 / transport bar wiring ---- */
+document.getElementById('modeSeg').addEventListener('click', e=>{
+  const b = e.target.closest('button'); if(!b) return;
+  if(b.dataset.mode==='replay'){
+    if(!replayMode){ replayMode=true; enterReplayUI(); if(!replayLines.length){ replayPlaying=false; updatePlayButton(); updateSeekUI(); } }
+  } else {
+    goLive();
+  }
+});
+document.getElementById('btnGoLive').addEventListener('click', goLive);
+document.getElementById('btnPlay').addEventListener('click', ()=>{
+  if(!replayLines.length) return;
+  replayPlaying = !replayPlaying;
+  if(replayPlaying && replayT>=replayTotalT) { replayT=0; seekReplay(0); }
+  replayLastWall = null;
+  updatePlayButton();
+});
+document.getElementById('speedSeg').addEventListener('click', e=>{
+  const b = e.target.closest('button'); if(!b) return;
+  document.querySelectorAll('#speedSeg button').forEach(x=>x.classList.toggle('active', x===b));
+  replaySpeed = Number(b.dataset.speed)||1;
+});
+document.getElementById('seekRange').addEventListener('input', e=>{
+  if(!replayLines.length) return;
+  const frac = Number(e.target.value)/Number(e.target.max||1000);
+  seekReplay(frac*replayTotalT);
+});
+document.getElementById('btnOpenFile').addEventListener('click', ()=>document.getElementById('fileInput').click());
+document.getElementById('fileInput').addEventListener('change', e=>{
+  const file = e.target.files && e.target.files[0]; if(!file) return;
+  const reader = new FileReader();
+  reader.onload = ()=>loadReplayFile(String(reader.result), file.name);
+  reader.readAsText(file);
+});
+{
+  const bar = document.getElementById('transportBar');
+  bar.addEventListener('dragover', e=>{ e.preventDefault(); bar.classList.add('drag-over'); });
+  bar.addEventListener('dragleave', ()=>bar.classList.remove('drag-over'));
+  bar.addEventListener('drop', e=>{
+    e.preventDefault(); bar.classList.remove('drag-over');
+    const file = e.dataTransfer.files && e.dataTransfer.files[0]; if(!file) return;
+    const reader = new FileReader();
+    reader.onload = ()=>loadReplayFile(String(reader.result), file.name);
+    reader.readAsText(file);
+  });
+}
+document.addEventListener('keydown', e=>{
+  if(!replayMode) return;
+  const tag = (document.activeElement && document.activeElement.tagName) || '';
+  if(tag==='INPUT' || tag==='TEXTAREA') return;
+  if(e.code==='Space'){ e.preventDefault(); document.getElementById('btnPlay').click(); }
+  else if(e.code==='ArrowLeft'){ e.preventDefault(); seekReplay(replayT-(e.shiftKey?10:1)); }
+  else if(e.code==='ArrowRight'){ e.preventDefault(); seekReplay(replayT+(e.shiftKey?10:1)); }
+});
+
+/* =====================================================================
+ * UI 配線（記録・コンソール・生ログ・測距統計窓） / remaining UI wiring
+ * ===================================================================== */
 document.getElementById('btnRec').addEventListener('click', ()=>{
+  if(replayMode) return;
   recording = !recording;
   const b = document.getElementById('btnRec');
-  if(recording){ recLines=[]; recBytes=0; recCount=0; b.textContent='● 記録停止'; b.classList.add('active'); }
-  else { b.textContent='● 記録開始'; b.classList.remove('active'); }
+  if(recording){ recLines=[]; recBytes=0; recCount=0; b.textContent='● 記録停止'; }
+  else { b.textContent='● 記録開始'; }
 });
 document.getElementById('btnSave').addEventListener('click', ()=>{
-  if(!recCount) return;
+  if(!recCount || replayMode) return;
   const n = selfAddr ? nodes.get(selfAddr) : null;
   const name = (n && n.name) ? n.name : 'device';
   const d = new Date(); const p = x=>String(x).padStart(2,'0');
@@ -1239,121 +1852,89 @@ document.getElementById('conIn').addEventListener('keydown', e=>{
   else if(e.key==='ArrowDown'){ e.preventDefault(); if(conHistory.length){ conHistIdx=Math.min(conHistory.length,conHistIdx+1); e.target.value=conHistory[conHistIdx]||''; } }
 });
 document.getElementById('conQuick').addEventListener('click', e=>{
-  const c = e.target.dataset && e.target.dataset.cmd;
-  if(c) sendCmd(c);
+  const b = e.target.closest('button'); if(!b) return;
+  const c = b.dataset.cmd; if(c) sendCmd(c);
 });
 document.getElementById('rawFilter').addEventListener('input', renderRaw);
 document.getElementById('rawDet').addEventListener('toggle', renderRaw);
-document.getElementById('statWinTabs').addEventListener('click', e=>{
+document.getElementById('statWinSeg').addEventListener('click', e=>{
   const b = e.target.closest('button'); if(!b) return;
+  document.querySelectorAll('#statWinSeg button').forEach(x=>x.classList.toggle('active', x===b));
   statsWindowMs = Number(b.dataset.win)*1000;
-  document.getElementById('btnStatWin10').classList.toggle('sel', statsWindowMs===10000);
-  document.getElementById('btnStatWin60').classList.toggle('sel', statsWindowMs===60000);
   try{ renderRangingStats(); }catch(e){ noteDrawError(e); }
 });
 
-// ---- 3D 測位図の操作（ドラッグ回転・ホイールズーム・ダブルクリックでリセット） ----
-// 3D view controls: drag to rotate, wheel to zoom, dbl-click to reset. Pointer Events で
-// マウス・タッチを一本化（1本指=回転、2本指=ピンチズーム）。
-{
-  const cv = document.getElementById('cvPlan');
-  cv.classList.add('rot');
-  const pointers = new Map();
-  let pinchDist = null;
-  cv.addEventListener('pointerdown', e=>{
-    if(!view3D) return;
-    cv.setPointerCapture(e.pointerId);
-    pointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
-  });
-  cv.addEventListener('pointermove', e=>{
-    if(!view3D || !pointers.has(e.pointerId)) return;
-    const prev = pointers.get(e.pointerId), cur = {x:e.clientX, y:e.clientY};
-    pointers.set(e.pointerId, cur);
-    if(pointers.size===1){
-      // 手前側がマウスに追従する向き（掴んで回す感覚） / the near side follows the pointer (grab-and-turn feel)
-      cam3.yaw -= (cur.x-prev.x)*0.008;
-      cam3.pitch = Math.max(-1.5, Math.min(1.5, cam3.pitch + (cur.y-prev.y)*0.008));
-    } else if(pointers.size===2){
-      const pts = Array.from(pointers.values());
-      const d = Math.hypot(pts[0].x-pts[1].x, pts[0].y-pts[1].y);
-      if(pinchDist!=null) cam3.zoom = Math.max(0.2, Math.min(8, cam3.zoom*(d/pinchDist)));
-      pinchDist = d;
-    }
-  });
-  const endPtr = e=>{ pointers.delete(e.pointerId); if(pointers.size<2) pinchDist=null; try{ cv.releasePointerCapture(e.pointerId); }catch(err){} };
-  cv.addEventListener('pointerup', endPtr);
-  cv.addEventListener('pointercancel', endPtr);
-  cv.addEventListener('wheel', e=>{
-    if(!view3D) return;
-    e.preventDefault();
-    cam3.zoom = Math.max(0.2, Math.min(8, cam3.zoom*(e.deltaY<0?1.1:0.9)));
-  }, {passive:false});
-  cv.addEventListener('dblclick', ()=>{ if(view3D) resetCam3(); });
-}
-document.getElementById('viewTabs').addEventListener('click', e=>{
-  const b = e.target.closest('button'); if(!b) return;
-  view3D = b.dataset.view==='3d';
-  document.getElementById('btnView2D').classList.toggle('sel', !view3D);
-  document.getElementById('btnView3D').classList.toggle('sel', view3D);
-  document.getElementById('cvPlan').classList.toggle('rot', view3D);
-});
-// 点群消去: WebSocket再接続やモード変更では消えず、このボタンでのみクリアする
-// clear the point cloud; it is NOT cleared by a WebSocket reconnect or a mode change — only by this button
-document.getElementById('btnCloudClear').addEventListener('click', ()=>{ cloudPts.length = 0; });
-
-// ---- 測位図の拡大表示切替（Fullscreen API + .fs クラスのフォールバック併用） ----
-// plan-view fullscreen toggle (Fullscreen API, with the .fs class applied unconditionally as
-// a layout fallback for contexts where the API is unavailable or the request is rejected)
-{
-  const planPanel = document.getElementById('planPanel');
-  const btnPlanFs = document.getElementById('btnPlanFs');
-  const redrawPlan = ()=>{ try{ (view3D?drawPlan3D:drawPlan)(); }catch(e){ noteDrawError(e); } };
-  btnPlanFs.addEventListener('click', ()=>{
-    const goFs = !planPanel.classList.contains('fs');
-    planPanel.classList.toggle('fs', goFs);
-    btnPlanFs.textContent = goFs ? '戻る' : '拡大';
-    if(goFs){ if(planPanel.requestFullscreen) planPanel.requestFullscreen().catch(()=>{}); }
-    else if(document.fullscreenElement===planPanel){ document.exitFullscreen().catch(()=>{}); }
-    requestAnimationFrame(redrawPlan);
-  });
-  document.addEventListener('fullscreenchange', ()=>{
-    if(!document.fullscreenElement && planPanel.classList.contains('fs')){
-      planPanel.classList.remove('fs');
-      btnPlanFs.textContent = '拡大';
-      requestAnimationFrame(redrawPlan);
-    }
-  });
-}
-
-// ---- デモモード（?demo=1）/ demo mode: 実機なしで表示確認するための擬似データ生成 ----
-// WebSocket の代わりに handleLine() へ直接 JSON 行を流し込む（受信〜描画の経路をそのまま使う）。
+/* ---- デモモード（?demo=1）/ demo mode: 実機なしで表示確認するための擬似データ生成 ---- */
 function startDemo(){
-  const anchors = [ {id:'A0001',p:[0,0,0]}, {id:'A0002',p:[5,0,1.6]}, {id:'A0003',p:[5,4,0.2]}, {id:'A0004',p:[0,4,1.2]} ];
+  const anchors = [ {id:'A0002',p:[0,0,1.2]}, {id:'A0003',p:[5,0,1.6]}, {id:'A0004',p:[5,4,0.2]}, {id:'A0005',p:[0,4,1.2]} ];
   const dist3 = (a,b)=>Math.hypot(a[0]-b[0], a[1]-b[1], (a[2]||0)-(b[2]||0));
-  const feed = o=>handleLine(JSON.stringify(o));
+  const feed = o=>{ if(replayMode) return; handleLine(JSON.stringify(o)); };
   const t0 = performance.now();
   let seq = 0;
-  let ekfP = null; // EKF(lv3)はNLS(tp)を軽く平滑化した軌跡として模擬 / simulate lv3 as a lightly-smoothed trace of tp
-  feed({type:'node', addr:'A0000', role:'tag', name:'TAG-DEMO', wifi:{mode:'STA',ssid:'demo',ip:'192.0.2.1',rssi:-52}, uptime_s:0, heap_free:180000, drops:0, ws_clients:1, udp_tx:0, udp_rx:0});
+  let ekfP = null;
+  feed({type:'node', addr:'A0001', role:'tag', name:'uwb-tag', wifi:{mode:'sta',ssid:'itolabwifi-deco',ip:'192.168.2.41',rssi:-52}, uptime_s:0, heap_free:182340, drops:0, ws_clients:1, udp_tx:0, udp_rx:0});
   feed({type:'anchors', mode:'3d', anchors: anchors.map(a=>({id:a.id, p:a.p, enabled:true}))});
   setInterval(()=>{
+    if(replayMode) return;
     const t = (performance.now()-t0)/1000;
     const tp = [2.5+2*Math.cos(t*0.4), 2+2*Math.sin(t*0.4), 0.9+0.5*Math.sin(t*0.7)];
     ekfP = ekfP ? ekfP.map((v,i)=>v+(tp[i]-v)*0.3) : tp.slice();
     feed({type:'meas', meas: anchors.map(a=>({a:a.id, d: dist3(a.p,tp)+(Math.random()-0.5)*0.02}))});
-    feed({type:'fix', ok:true, mode:'3d', p:tp, lv3:{ok:true, p:ekfP}, cycle_ms: 30+Math.random()*5, gdop:2.1, residual_m:0.02,
+    feed({type:'fix', ok:true, mode:'3d', p:tp, gdop:1.8+Math.random()*0.4, residual_rms:0.015+Math.random()*0.01,
+      lv3:{ok:true, p:ekfP, gdop:1.7, residual_rms:0.012},
+      cycle_ms: 30+Math.random()*5,
       anchors: anchors.map(a=>({a:a.id, elapsed_ms: 5+Math.random()*2}))});
     seq++;
     if(seq%20===0){
-      feed({type:'stats', anchors: anchors.map(a=>({a:a.id, att:seq, succ:seq-1, retries:0, rescued:0}))});
-      feed({type:'node', addr:'A0000', role:'tag', name:'TAG-DEMO', wifi:{mode:'STA',ssid:'demo',ip:'192.0.2.1',rssi:-52-Math.floor(Math.random()*5)}, uptime_s:Math.floor(t), heap_free:180000-seq, drops:0, ws_clients:1, udp_tx:seq, udp_rx:seq});
+      feed({type:'stats', anchors: anchors.map(a=>({a:a.id, att:seq, succ:Math.round(seq*0.996), retries:0, rescued:0}))});
+      feed({type:'node', addr:'A0001', role:'tag', name:'uwb-tag', wifi:{mode:'sta',ssid:'itolabwifi-deco',ip:'192.168.2.41',rssi:-52-Math.floor(Math.random()*5)}, uptime_s:Math.floor(t), heap_free:182340-seq, drops:0, ws_clients:1, udp_tx:seq, udp_rx:seq});
     }
-  }, 150);
+  }, 30);
 }
 
-// ---- 初期化 / init ----
+/* =====================================================================
+ * 更新ループ / update loops
+ * ===================================================================== */
+function refreshAll(){
+  try{ renderHeader(); renderKpi(); renderAnchorRail(); renderNodeCards(); renderRangingStats(); renderRaw(); }catch(e){ noteMsgError(e); }
+  try{ drawCharts(); }catch(e){ noteDrawError(e); }
+  redrawPlan();
+}
+let lastDraw = 0;
+function tick(ts){
+  requestAnimationFrame(tick);
+  advanceReplay(ts);
+  if(ts - lastDraw >= 100){
+    lastDraw = ts;
+    for(const fn of [renderHeader, renderKpi, renderAnchorRail, drawCharts, view3D?drawPlan3D:drawPlan2D]){
+      try{ fn(); }catch(e){ noteDrawError(e); }
+    }
+  }
+}
+function uiTick(){
+  try{
+    if(!replayMode && ws && ws.readyState===WebSocket.OPEN && performance.now()-lastMsgAt>5000){
+      if(!stalled){
+        stalled = true;
+        console.warn(`[watchdog] no message for ${((performance.now()-lastMsgAt)/1000).toFixed(1)}s, reconnecting`);
+        try{ ws.close(); }catch(e){}
+      }
+    }
+    renderNodeCards(); renderRangingStats(); renderRaw();
+  }catch(e){ noteMsgError(e); }
+}
+function rateTick(){
+  try{
+    rateLinesShown = curLines; rateBytesShown = curBytes;
+    curLines = 0; curBytes = 0;
+  }catch(e){ noteMsgError(e); }
+}
+
+/* ---- 初期化 / init ---- */
 rebuildTheme();
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', rebuildTheme);
+updateChromeH();
+updateSeekUI();
 if(isDemo) startDemo(); else connect();
 requestAnimationFrame(tick);
 setInterval(uiTick, 500);
