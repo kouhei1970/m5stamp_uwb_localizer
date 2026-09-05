@@ -86,12 +86,10 @@ esptool.py --chip esp32s3 -p /dev/cu.usbmodemXXXX write_flash 0x0 tag-stamps3-ds
 
 書き込みから設定・ダッシュボード表示までの手順の全体は
 [`docs/PREBUILT_BINARIES.md`](docs/PREBUILT_BINARIES.md) の「一気通貫の手順」を
-参照してください。StampFly をタグにする場合や、IRQ の切り分け・1対1測距の
-診断用ファームは Actions の artifact から入手できます（開発者向け）→
-**[`docs/PREBUILT_BINARIES.md`](docs/PREBUILT_BINARIES.md)**
+参照してください。
 
 > **⚠ 実機確認済みのピン定義は M5StampS3A（`boards/stamps3.h`）のみ**です
-> （SPI 4 本・RST・IRQ まで実機確認済み。WAKEUP と StampFly 用の定義は未検証の暫定値）。
+> （SPI 4 本・RST・IRQ まで実機確認済み。WAKEUP は未検証の暫定値）。
 > 配線が [`docs/GETTING_STARTED.md` §3](docs/GETTING_STARTED.md#wiring) と違えば動きません。
 
 配布 zip には Qorvo ライセンスの条件（Qorvo 製 IC 限定）が適用されます →
@@ -103,7 +101,7 @@ esptool.py --chip esp32s3 -p /dev/cu.usbmodemXXXX write_flash 0x0 tag-stamps3-ds
 
 > **ESP-IDF を入れずに試したい場合**は、GitHub Actions がビルドした
 > **そのまま書き込めるバイナリ**が [Releases](https://github.com/kouhei1970/m5stamp_uwb_localizer/releases)
-> と Actions の artifact にあります。→ [`docs/PREBUILT_BINARIES.md`](docs/PREBUILT_BINARIES.md)
+> にあります。→ [`docs/PREBUILT_BINARIES.md`](docs/PREBUILT_BINARIES.md)
 > （ただし実機確認済みのピン定義は M5StampS3A 用のみ。配線が本書と違うと動きません）
 
 ```sh

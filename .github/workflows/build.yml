@@ -246,7 +246,7 @@ jobs:
             echo '## 注意'
             echo
             echo '**ピン定義 (boards/*.h) のうち、M5StampS3A の SPI4本・RST・IRQ は実機確認済み'
-            echo 'だが、WAKEUP と StampFly 用の定義は未検証の暫定値**です。配線がドキュメントと'
+            echo 'だが、WAKEUP は未検証の暫定値**です。配線がドキュメントと'
             echo '違う場合、このバイナリは動きません。詳細は docs/PREBUILT_BINARIES.md を読むこと。'
             echo
             echo '## ライセンス'
@@ -286,11 +286,12 @@ jobs:
           path: dist
 
       # Release に添付するのは「普通に測位する」「配線確認する」の2本だけに
-      # 絞る（2026-09-05 ユーザー判断）。他の variant（StampFly・polling・
-      # twr 診断）は開発者向けとして Actions の artifact のみに残す
-      # （12 通り全部が引き続きビルド・artifact 化はされる。上の firmware job
-      # 参照）。各 variant は bundle の中のサブフォルダとして残す
-      # （README.md・merged-firmware.bin 等はそのまま）。
+      # 絞る（2026-09-05/06 ユーザー判断）。他の variant（StampFly・polling・
+      # twr 診断）は今後の開発・ビルド確認のためだけに matrix に残す
+      # （StampFly対応は未完成のため、ユーザー向けに案内はしない。上の
+      # firmware job は 12 通り全部を引き続きビルドする）。各 variant は
+      # bundle の中のサブフォルダとして残す（README.md・merged-firmware.bin
+      # 等はそのまま）。
       - name: Pack bundles
         run: |
           set -eu
@@ -389,16 +390,12 @@ jobs:
             `merged-firmware.bin` をオフセット `0x0` に書き込みます
             （サブフォルダごとに `README.md` も同梱）。
 
-            他の variant（StampFly 用・ポーリング版・twr 診断）は Releases には
-            載せません。必要な人は Actions の artifact から取ってください
-            （開発者向け。`docs/PREBUILT_BINARIES.md` の「開発者向け」節参照）。
-
             ```sh
             esptool.py --chip esp32s3 -p /dev/cu.usbmodemXXXX write_flash 0x0 merged-firmware.bin
             ```
 
             **⚠ M5StampS3A の SPI4本・RST・IRQ のピン定義は実機確認済みですが、
-            WAKEUP と StampFly 用の定義は未検証の暫定値です。** 配線が
+            WAKEUP は未検証の暫定値です。** 配線が
             `docs/GETTING_STARTED.md` §3 と違う場合は動きません。
             書き込みから設定・ダッシュボード表示までの手順は `docs/PREBUILT_BINARIES.md`
             の「一気通貫の手順」を参照してください。

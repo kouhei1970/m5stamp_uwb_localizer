@@ -46,10 +46,6 @@ GitHub Actions が全ファームをビルドし、**そのまま書き込める
 bundle 2 の合格基準・出力内容は [`GETTING_STARTED.md` §4.2](GETTING_STARTED.md#probe)
 と同じです。
 
-StampFly をタグにしたい、IRQ が使えない個体を切り分けたい、1対1測距だけを
-診断したい、といった用途は Release の zip には含まれていません。
-→ [開発者向け（Actions の artifact のみ）](#dev-only)を参照してください。
-
 ### 既定は IRQ 有効 + 遅延プリセット `PollingBoth`（約 31 Hz）
 
 **`tag-stamps3-ds` / `anchor-stamps3-ds`（bundle 1 の中身）は、
@@ -63,79 +59,17 @@ IRQ を受信待ちの起床信号として使う設定
 詳細は [`IRQ_POLICY.md`](IRQ_POLICY.md)・[`HANDOFF.md`](HANDOFF.md) §1）。
 
 測距が全く出ない場合は、まず起動ログの `irq=` 行と `timing profile=` 行
-（[`IRQ_POLICY.md`](IRQ_POLICY.md) の切り分け表）を確認してください。IRQ が
-使えない個体を切り分けたい場合の polling 版は
-[開発者向け](#dev-only)から取得できます。
-
----
-
-<a id="dev-only"></a>
-
-## 開発者向け（Actions の artifact のみ）
-
-> ここから先は Release の2つの zip には**入っていない**構成の説明です。
-> **Actions の artifact（12 通りの variant）からのみ**取得できます
-> （[取得方法](#取得方法)参照）。普段タグ1台＋アンカーで測位するだけなら
-> 読み飛ばして構いません。
-
-### ボードの選び方
-
-| 手元のボード | 選ぶ variant |
-|---|---|
-| **M5StampS3A + StampS3 BreakOut（標準構成）** | `*-stamps3` |
-| StampFly に載せる | `*-stampfly` |
-
-> **例外: `twr-anchor-ss` / `twr-anchor-ds` はボード名を含みません。**
-> この2つは **M5StampS3A 用にビルドされたもの**です（標準構成が
-> M5StampS3A + StampS3 BreakOut になったため）。
-
-### `firmware/twr`（1対1診断）だけ既定が `BothIrq`
-
-**遅延プリセットが旧既定の `BothIrq`（約 90 Hz）になることはありません**
-（上記の bundle 1 は常に `PollingBoth`）。`BothIrq` は実機での素の成功率が
-低く（6.8 Mbps 構成で 1.0%）、2026-08-30 に本番既定から外されました
-（[`HANDOFF.md`](HANDOFF.md) §0-D「6.8 Mbps の切り分けと本番既定の決定」）。
-`BothIrq` を今も既定に使うのは 1 対 1 診断用の `firmware/twr`＝
-`twr-tag-*` / `twr-anchor-*` だけです。
-
-### `-polling` 版が違うのは「IRQ を使うかどうか」だけ
-
-`anchor-stamps3-ds-polling` / `tag-stamps3-ds-polling` / `tag-stampfly-ds-polling`
-は、上の既定構成から**`UWB_ENABLE_IRQ` だけを `n`（無効）にした**ものです。
-遅延プリセットはどれも `PollingBoth` のままなので、タグ・アンカーで IRQ の
-有効/無効が食い違っていても遅延プリセットの不一致は起きません
-（すべて `PollingBoth`）。`tag-stamps3-ds-polling` は M5StampS3A タグ用の
-polling 版で、`anchor-stamps3-ds-polling` と組んで使います。
-
-用意してある理由は、**個体によっては IRQ ピンが未配線・接触不良のことがあり得る**
-ためです（IRQ が使えない場合は自動でポーリングへフォールバックしますが、
-問題を切り分けたいときは明示的に無効化した版を使うと変数が減ります）。
-「IRQ の極性が未検証だから」ではありません。
-
-StampFly をタグにする場合は `tag-stampfly-ds`（既定・IRQ 有効）または
-`tag-stampfly-ds-polling`（IRQ が使えない個体向け）を Actions artifact から
-取得してください。アンカー側は上記の `anchor-stamps3-ds`（または
-`anchor-stamps3-ds-polling`）を使います。
+（[`IRQ_POLICY.md`](IRQ_POLICY.md) の切り分け表）を確認してください。
 
 ---
 
 ## 取得方法
 
-| 経路 | 用途 | 単位 |
-|---|---|---|
-| **Releases** | タグが打たれた版。安定して同じものが取れる | **上記の2つの bundle だけ**（`1-positioning-M5StampS3A-tag-and-anchor.zip` / `2-wiring-check-probe-M5StampS3A.zip`） |
-| **Actions の artifact** | 最新の `main` の版。90 日で消える。GitHub のログインが要る | **variant 単位**（`tag-stamps3-ds` 等、12 個。[開発者向け](#dev-only)の variant を含む全部） |
+Release の2つの zip は、タグ（`v*`）を打つたびに GitHub Actions がビルドして
+添付します。**タグが打たれた版は安定して同じものが取れます。**
 
-**Releases の2つの zip（bundle）は普段の利用に絞ったもの、Actions の artifact は
-今まで通り variant 単位のまま**です。bundle の中の各サブフォルダは
-Actions artifact の中身と同じ（`merged-firmware.bin` / `README.md` 等）なので、
-Actions から取る場合は上表の「書き込むファイル」列の variant 名（例:
-`tag-stamps3-ds`）と同じ名前の artifact を選んでください。StampFly 用・
-polling 版・1対1診断用（`twr-*`）は Releases には無いので、
-[開発者向け](#dev-only)の節にある variant 名を Actions artifact から探してください。
-
-Actions からの取り方: リポジトリの **Actions** タブ → `build` ワークフローの成功した実行を開く
-→ ページ下部の **Artifacts** から variant 名の zip をダウンロード。
+（CI はタグを打たない push でも毎回ビルドを行い、ビルドが壊れていないことを
+継続的に確認しています。）
 
 ---
 
@@ -233,12 +167,9 @@ ESP-IDF を入れずに、書き込みから設定・ダッシュボード表示
    `probe-stamps3/merged-firmware.bin` を書き込んで、Device ID `0xDECA0314` が
    読めることを確認してから先に進みます（詳細は上の「どれを取ればいいか」と
    [`GETTING_STARTED.md` §4.2](GETTING_STARTED.md#probe)）。
-1. **zip を取得する**（各1回ずつでよい。同じ zip を全アンカーに使い回す）。
-   タグも M5StampS3A 単体の場合は `1-positioning-M5StampS3A-tag-and-anchor.zip`
-   の1つでよい（中の `tag-stamps3-ds/` と `anchor-stamps3-ds/` を使う）。
-   タグを StampFly に載せたい場合は
-   [開発者向け](#dev-only)の `tag-stampfly-ds`（Actions artifact）を
-   別途取得してください。
+1. **zip を取得する**（1回だけでよい。同じ zip を全アンカーに使い回す）。
+   `1-positioning-M5StampS3A-tag-and-anchor.zip` の1つでよい
+   （中の `tag-stamps3-ds/` と `anchor-stamps3-ds/` を使う）。
 2. **アンカーを1台ずつ書き込む**。`1-positioning-M5StampS3A-tag-and-anchor.zip`
    の中の `anchor-stamps3-ds/merged-firmware.bin` を、台数分すべて同じ内容のまま
    上記の「書き込み方」（`esptool` または方法B）でオフセット `0x0` に書き込む
@@ -257,9 +188,7 @@ ESP-IDF を入れずに、書き込みから設定・ダッシュボード表示
    ようにしてください**（次の座標登録で必要になります）。詳細は
    [`GETTING_STARTED.md` §6.2](GETTING_STARTED.md#anchors5-console)。
 4. **タグを書き込む。** 手順は 2 と同じ（`1-positioning-M5StampS3A-tag-and-anchor.zip`
-   の `tag-stamps3-ds/merged-firmware.bin`、または StampFly の場合は
-   [開発者向け](#dev-only)の `tag-stampfly-ds` の `merged-firmware.bin` を
-   オフセット `0x0` に書き込む）。
+   の `tag-stamps3-ds/merged-firmware.bin` をオフセット `0x0` に書き込む）。
 5. **タグのコンソールでアンカー座標を登録する。** 巻尺で実測した各アンカーの
    アンテナ位置を、アドレスと対応づけて登録します。
    ```
@@ -320,8 +249,7 @@ ESP-IDF を入れずに、書き込みから設定・ダッシュボード表示
 - **ピン割り当て**（`boards/*.h`）
 - ボードの種類、SS-TWR / DS-TWR の別
 - **IRQ の有効/無効、遅延プリセット**（`anchor-*-ds` / `tag-*-ds` の既定は
-  IRQ 有効 + `PollingBoth`。IRQ だけを無効化した `*-polling` 版は
-  [開発者向け](#dev-only)の Actions artifact から取得できます）
+  IRQ 有効 + `PollingBoth`）
 - SPI クロック、EKF の有効化（on/off そのもの。有効化後のQ/R/ゲートの
   調整は上表の `ekf` コマンドで実行時に変えられます）、2D フォールバックの挙動
 
@@ -337,20 +265,16 @@ ESP-IDF を入れて自分でビルドしてください。
 1. **ホスト側テスト**（`test_pipeline` / `test_survey` / `tests/host/loc`）を実行
    ※ 上流 `uwb_localizer` は凍結・最終取り込み済み。CI は上流を
    clone せず、本リポジトリ内のソースだけでテストします
-2. **12 通りのファーム**を ESP-IDF v5.5.2 でビルドし、`idf.py merge-bin` で結合
-3. **variant 単位で artifact として保存**（Actions タブから常にこの単位で取れる。
-   12 通り全部、[開発者向け](#dev-only)の variant も含む）
-4. **タグを打った時だけ**、普段使う2つの variant の組だけを**2つの bundle zip
-   へまとめ直して** Release に添付（上表参照。残り10 variant は Release には
-   載らず、Actions artifact のみで入手可能）
+2. **複数構成のファーム**を ESP-IDF v5.5.2 でビルドし、`idf.py merge-bin` で結合
+   （継続的なビルド確認のためで、すべてを配布しているわけではありません）
+3. **タグを打った時だけ**、普段使う2つの構成を**2つの bundle zip へまとめて**
+   Release に添付（上表参照）
 
-各 variant のフォルダ（Actions artifact ではそのまま、Release の bundle
-では中のサブフォルダ）には `kconfig-used.txt`（そのバイナリに焼き込まれた設定）と
+各 bundle の中のサブフォルダには `kconfig-used.txt`（そのバイナリに焼き込まれた設定）と
 `README.md`（書き込み手順）が同梱されます。**どの設定でビルドされたものか必ず確認できます。**
-Release の bundle にはさらに、書き込むファイルの対応を示す**トップレベルの
-`README.md`** が付きます。
+bundle にはさらに、書き込むファイルの対応を示す**トップレベルの `README.md`** が付きます。
 
-variant フォルダの中身一覧:
+サブフォルダの中身一覧:
 
 | ファイル / ディレクトリ | 内容 |
 |---|---|
