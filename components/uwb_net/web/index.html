@@ -363,6 +363,7 @@ footer.footer{grid-column:1/-1;text-align:center;font-size:11px;color:var(--mute
         </div>
         <button class="btn btn-sm" id="btnFs">拡大</button>
         <button class="btn btn-sm" id="btnClearCloud">点群消去</button>
+        <button class="btn btn-sm" id="btnClearTrail">軌跡消去</button>
       </div>
     </div>
     <div class="caption">印・軌跡（墨）= EKF 解、軌跡は直近 60 秒。点群（紫）= 消去まで蓄積。再生中は記録の時刻で描画。3D は透視投影、床格子は地平線まで</div>
@@ -1615,6 +1616,8 @@ if(view3D){
   document.getElementById('plan3d').toggleAttribute('hidden', false);
 }
 document.getElementById('btnClearCloud').addEventListener('click', ()=>{ cloudPts.length = 0; });
+// 軌跡消去: 直近 60 秒の軌跡（通常解・EKF とも）を空にする。点群と印は触らない / clear both trails; cloud and marker untouched
+document.getElementById('btnClearTrail').addEventListener('click', ()=>{ fixTrail.length = 0; ekfTrail.length = 0; });
 {
   const planCard = document.getElementById('planCard');
   const btnFs = document.getElementById('btnFs');
