@@ -1682,9 +1682,30 @@ function resetBuffers(){
   rawBuf.length=0;
   lastFixAt=0; lastEkfAt=0;
 }
+// "t" (起動からの秒) はタグ自身のクロック基準。meas/fix/stats は常にタグ発だが、"node" と
+// "anchor_stats" はアンカーからUDP中継されたものが混ざり、各アンカー自身の（タグとは無関係な）
+// 起動時刻を積んでくる（実機取得ログで確認済み: 4台のアンカーの t が互いに84〜125秒もズレて
+// いた）。これを他行と同じ基準で時刻合わせすると、タイムラインの原点(t0)や再生総尺が
+// アンカー側の t に引きずられて壊れる（t0をアンカー発の行から選ぶとmeas/fixが軒並み負の
+// 相対時刻になり、再生開始と同時に全データが一気に流れてしまう。実際に発生を確認して修正）。
+// よってタグ以外にも発生元を持ちうるこの2種は時刻を使わず、"anchors"/"con" 行と同様に
+// 「出てきた順に即時投入」する
+// "t" (seconds since boot) is the TAG's own clock. meas/fix/stats always originate from the tag,
+// but "node" and "anchor_stats" also arrive relayed from anchors over UDP, each carrying that
+// anchor's own boot time — unrelated to the tag's (verified against a real capture: the four
+// anchors' t values were offset from each other and from the tag by 84-125 s). Scheduling those on
+// the same timeline corrupts the origin (t0) and total duration (reproduced: picking t0 from an
+// anchor-sourced line made meas/fix relative times go negative, dumping the whole recording at
+// once at the start of playback). So these two types — which can originate from a non-tag device —
+// are never time-gated: like "anchors"/"con", they are fed immediately in file order.
+const REPLAY_FOREIGN_CLOCK_TYPES = new Set(['node','anchor_stats']);
 function parseReplayText(text){
   const lines = text.split(/\r?\n/).filter(l=>l.trim().length>0);
-  const parsed = lines.map(raw=>{ let t=null; try{ const o=JSON.parse(raw); if(typeof o.t==='number') t=o.t; }catch(e){} return {raw,t}; });
+  const parsed = lines.map(raw=>{
+    let t=null, type=null;
+    try{ const o=JSON.parse(raw); type=o.type; if(typeof o.t==='number' && !REPLAY_FOREIGN_CLOCK_TYPES.has(type)) t=o.t; }catch(e){}
+    return {raw,t};
+  });
   let t0=null; for(const p of parsed) if(p.t!=null){ t0=p.t; break; }
   if(t0==null) t0=0;
   for(const p of parsed) if(p.t!=null) p.t -= t0;
