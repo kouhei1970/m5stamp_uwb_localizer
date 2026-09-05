@@ -362,11 +362,12 @@ footer.footer{grid-column:1/-1;text-align:center;font-size:11px;color:var(--mute
           <button data-view="3d">3D</button>
         </div>
         <button class="btn btn-sm" id="btnFs">拡大</button>
+        <button class="btn btn-sm" id="btnRot" title="測位図を90°回転">↻ 90°</button>
         <button class="btn btn-sm" id="btnClearCloud">点群消去</button>
         <button class="btn btn-sm" id="btnClearTrail">軌跡消去</button>
       </div>
     </div>
-    <div class="caption">印・軌跡（墨）= EKF 解、軌跡は直近 60 秒。点群（紫）= 消去まで蓄積。再生中は記録の時刻で描画。3D は透視投影、床格子は地平線まで</div>
+    <div class="caption">印・軌跡（墨）= EKF 解、軌跡は直近 20 秒。点群（紫）= 消去まで蓄積。再生中は記録の時刻で描画。3D は透視投影、床格子は地平線まで</div>
     <div id="planBox">
       <canvas id="plan2d" role="img" aria-label="2D 測位図"></canvas>
       <canvas id="plan3d" role="img" aria-label="3D 測位図" hidden></canvas>
@@ -503,7 +504,7 @@ let ekfLatest = null;              // fix.lv3（o.lv3.ok && p が配列のとき
 const cycleSeries = [];            // [{t,val,band}]
 const posSeriesNls = [];           // [{t,x,y,z}] fix.p（Lv2 NLS）
 const posSeriesEkf = [];           // [{t,x,y,z}] fix.lv3.p（EKF）
-const TRAIL_MS = 60000;            // 軌跡(fixTrail/ekfTrail)の保持時間 [ms]（約60秒）
+const TRAIL_MS = 20000;            // 軌跡(fixTrail/ekfTrail)の保持時間 [ms]（約20秒。チャート/KPIの60秒窓とは別物）
 const TRAIL_MAX = 6000;            // 軌跡点数の安全上限
 const fixTrail = [];               // [{x,y,z,t}] 通常解(NLS)の軌跡
 const ekfTrail = [];               // [{x,y,z,t}] EKF(lv3)の軌跡。測位図はこちらを優先表示
@@ -1219,6 +1220,19 @@ function renderRaw(){
 /* =====================================================================
  * 測位図: canvas 共通 / plan view: shared canvas helpers
  * ===================================================================== */
+// 2D測位図の回転（0/90/180/270°、中心(cx,cy)まわり）。90°刻みは直交回転なので
+// sin/cosを呼ばず加減算だけで正確に求める(浮動小数の誤差を避ける)。
+// rotate a 2D point by 0/90/180/270° about (cx,cy) for the 2D plan view. Since these are all
+// multiples of 90°, compute them with plain +/- (no sin/cos), avoiding float error.
+function rotPoint2D(x,y,cx,cy,deg){
+  const dx=x-cx, dy=y-cy;
+  switch(((deg%360)+360)%360){
+    case 90: return [cx-dy, cy+dx];
+    case 180: return [cx-dx, cy-dy];
+    case 270: return [cx+dy, cy-dx];
+    default: return [x,y];
+  }
+}
 function fitCanvas(cv){
   const dpr = window.devicePixelRatio||1;
   const r = cv.getBoundingClientRect();
@@ -1294,31 +1308,64 @@ function drawPlan2D(){
   const view = updateViewBounds(planViewState2D, {minX:cbMinX,maxX:cbMaxX,minY:cbMinY,maxY:cbMaxY}, nowMs());
   // 等尺(x/y同スケール)を保ったまま中心基準で範囲を拡張(state.viewへは書き戻さない)
   let {minX,maxX,minY,maxY} = view;
-  const spanX=maxX-minX, spanY=maxY-minY;
-  if(spanX*h > spanY*w){ const s=spanX*h/w, c=(minY+maxY)/2; minY=c-s/2; maxY=c+s/2; }
-  else { const s=spanY*w/h, c=(minX+maxX)/2; minX=c-s/2; maxX=c+s/2; }
-  const scale = Math.max(0.001, w/(maxX-minX));
+  // 回転(planRot)はこのヒステリシス枠の中心を軸に世界座標を回してから等尺フィットする。
+  // 90°刻みの回転は直線性・軸整列を保つので、4隅を回してbboxを取り直すだけで済む
+  // (回した後も長方形のまま)。scaleは以後どの向きでも等方（距離をそのままpxに保つ）。
+  // rotation (planRot) pivots the world about this hysteresis box's centre before the equal-scale
+  // fit. A 90°-multiple rotation preserves straightness and axis-alignment, so rotating the 4
+  // corners and re-taking min/max is enough (the box stays a rectangle). scale stays isotropic
+  // afterwards regardless of orientation (a world distance always maps to the same px length).
+  const rotCx = (minX+maxX)/2, rotCy = (minY+maxY)/2;
+  const rCorners = [[minX,minY],[minX,maxY],[maxX,minY],[maxX,maxY]].map(([x,y])=>rotPoint2D(x,y,rotCx,rotCy,planRot));
+  let rMinX=Infinity,rMaxX=-Infinity,rMinY=Infinity,rMaxY=-Infinity;
+  for(const [x,y] of rCorners){ if(x<rMinX)rMinX=x; if(x>rMaxX)rMaxX=x; if(y<rMinY)rMinY=y; if(y>rMaxY)rMaxY=y; }
+  const spanX=rMaxX-rMinX, spanY=rMaxY-rMinY;
+  if(spanX*h > spanY*w){ const s=spanX*h/w, c=(rMinY+rMaxY)/2; rMinY=c-s/2; rMaxY=c+s/2; }
+  else { const s=spanY*w/h, c=(rMinX+rMaxX)/2; rMinX=c-s/2; rMaxX=c+s/2; }
+  const scale = Math.max(0.001, w/(rMaxX-rMinX));
   // canvas全面が「見えている世界の範囲」そのものになるよう、キャンバス寸法とスケール・中心から
-  // ワールド座標の可視範囲を直接導出する（縁まで届くグリッドの根拠。中身の分布に依存させない）
-  // derive the visible world extent directly from the canvas size + scale/centre (not from the
-  // content bounds) so the grid provably reaches every edge, in both fullscreen and after a resize
-  const centreX = (minX+maxX)/2, centreY = (minY+maxY)/2;
+  // 可視範囲を直接導出する（縁まで届くグリッドの根拠。中身の分布にも回転にも依存させない）
+  // derive the visible extent directly from the canvas size + scale/centre (not from the content
+  // bounds) so the grid provably reaches every edge, in both fullscreen and after a resize —
+  // regardless of rotation.
+  const rCentreX = (rMinX+rMaxX)/2, rCentreY = (rMinY+rMaxY)/2;
   const worldHalfW = (w/2)/scale, worldHalfH = (h/2)/scale;
-  const worldMinX = centreX-worldHalfW, worldMaxX = centreX+worldHalfW;
-  const worldMinY = centreY-worldHalfH, worldMaxY = centreY+worldHalfH;
-  const toPx=(x,y)=>[(x-worldMinX)*scale, h-(y-worldMinY)*scale];
+  const rWorldMinX = rCentreX-worldHalfW, rWorldMaxX = rCentreX+worldHalfW;
+  const rWorldMinY = rCentreY-worldHalfH, rWorldMaxY = rCentreY+worldHalfH;
+  // toPx: 元のワールド座標を回転してから、回転後空間の可視範囲でcanvas全面へ写す
+  // rotate the original world coordinate first, then map the rotated space's visible extent to fill the canvas
+  const toPx=(x,y)=>{ const [xr,yr]=rotPoint2D(x,y,rotCx,rotCy,planRot); return [(xr-rWorldMinX)*scale, h-(yr-rWorldMinY)*scale]; };
+  // グリッドの探索範囲は「回転後の可視範囲(canvas全面)」を逆回転して元のワールド座標に戻して求める
+  // （90°刻みの逆回転もbboxを保つので、4隅を逆回転して取り直すだけでよい）
+  // the grid's search range is the rotated-space visible extent (the whole canvas) rotated back
+  // into the original world coordinates (again just the 4 corners, since the inverse of a
+  // 90°-multiple rotation also preserves the bounding box)
+  const invCorners = [[rWorldMinX,rWorldMinY],[rWorldMinX,rWorldMaxY],[rWorldMaxX,rWorldMinY],[rWorldMaxX,rWorldMaxY]]
+    .map(([x,y])=>rotPoint2D(x,y,rotCx,rotCy,(360-planRot)%360));
+  let worldMinX=Infinity,worldMaxX=-Infinity,worldMinY=Infinity,worldMaxY=-Infinity;
+  for(const [x,y] of invCorners){ if(x<worldMinX)worldMinX=x; if(x>worldMaxX)worldMaxX=x; if(y<worldMinY)worldMinY=y; if(y>worldMaxY)worldMaxY=y; }
 
+  // 格子線は両端点をtoPx()で写すだけ（回転は toPx 内で処理済み）。90°/270°では画面上の
+  // 向き（水平/垂直）が入れ替わるので、ラベルは「実際に画面でどちら向きになったか」を
+  // 見て置き場所を決める（水平寄りの線→左端、垂直寄りの線→下端。0°の従来レイアウトと一致する）
+  // grid lines: just map both endpoints through toPx() (rotation is handled inside it). At 90/270°
+  // the on-screen orientation (horizontal/vertical) swaps, so the label placement is decided from
+  // the line's *actual* screen orientation (near-horizontal -> left edge, near-vertical -> bottom
+  // edge — matching the original 0° layout in both cases).
   ctx.strokeStyle=COL.line; ctx.lineWidth=1; ctx.font='9px system-ui'; ctx.fillStyle=COL.muted;
-  for(let x=Math.floor(worldMinX); x<=Math.ceil(worldMaxX); x++){
-    const [px] = toPx(x,0);
-    ctx.beginPath(); ctx.moveTo(px,0); ctx.lineTo(px,h); ctx.stroke();
-    ctx.textAlign='left'; ctx.textBaseline='alphabetic'; ctx.fillText(String(x), px+3, h-6);
+  function gridLine(x0,y0,x1,y1,label){
+    const [px0,py0]=toPx(x0,y0), [px1,py1]=toPx(x1,y1);
+    ctx.beginPath(); ctx.moveTo(px0,py0); ctx.lineTo(px1,py1); ctx.stroke();
+    if(Math.abs(py1-py0) < Math.abs(px1-px0)){
+      const ly = px0<px1 ? py0 : py1;
+      ctx.textAlign='left'; ctx.textBaseline='bottom'; ctx.fillText(label, 4, ly-2);
+    } else {
+      const lx = py0>py1 ? px0 : px1;
+      ctx.textAlign='left'; ctx.textBaseline='alphabetic'; ctx.fillText(label, lx+3, h-6);
+    }
   }
-  for(let y=Math.floor(worldMinY); y<=Math.ceil(worldMaxY); y++){
-    const [,py] = toPx(0,y);
-    ctx.beginPath(); ctx.moveTo(0,py); ctx.lineTo(w,py); ctx.stroke();
-    ctx.textAlign='left'; ctx.textBaseline='bottom'; ctx.fillText(String(y), 4, py-2);
-  }
+  for(let x=Math.floor(worldMinX); x<=Math.ceil(worldMaxX); x++) gridLine(x,worldMinY,x,worldMaxY,String(x));
+  for(let y=Math.floor(worldMinY); y<=Math.ceil(worldMaxY); y++) gridLine(worldMinX,y,worldMaxX,y,String(y));
 
   ctx.save(); ctx.beginPath(); ctx.rect(0,0,w,h); ctx.clip(); // レンジ円は canvas 全面でクリップ / range circles clip at the canvas edge
   for(const a of validAnchors){
@@ -1417,8 +1464,76 @@ function clipNear3(a,b){
   return a.z>NEAR3 ? [a,c] : [c,b];
 }
 function screenOf(c, f, cx, cy){ return {x:cx+f*c.x/c.z, y:cy-f*c.y/c.z}; }
+
+/* ---- 3D 床格子: 階層フェード（1m/5m）+ 近クリップ + モアレ間引き ----
+ * カメラを振っても格子が明滅しないよう、ワールド距離の硬い閾値で線を打ち切ることは
+ * せず、距離に応じた連続的なアルファ減衰だけで見えなくする（旧実装は「カメラから
+ * 15m」という硬い足切りで1m→2m間隔が唐突に切り替わり、オービット中に明滅していた）。
+ * 1m格子はカメラから ~18m でアルファ0、5m格子は独立にカメラから ~80m まで届く。
+ * 1本の線を数点(G3D_SAMPLES)でサンプリングし、線分内でも減衰が滑らかになるようにする。
+ * 地平線付近で隣接する平行線の投影間隔が G3D_MOIRE_PX 未満に詰まったら間引く（モアレ対策）。
+ * 近クリップ面(NEAR3)でクリップしてから射影し、画面外に出た線分だけを射影後にカリングする
+ * （ワールド距離だけでのカリングはしない＝それが回転時の明滅の原因だった）。
+ * 3D floor grid: hierarchical fade (1 m / 5 m) + near-plane clip + moiré thinning. Never cut a
+ * line off by a hard world-distance threshold (that made the old 15 m pitch-switch flicker while
+ * orbiting) — only continuous distance-based alpha fade. 1 m lines fade to 0 by ~18 m from the
+ * camera; 5 m lines independently reach ~80 m. Each line is sampled at a few points
+ * (G3D_SAMPLES) so the fade is smooth along its own length too. Adjacent parallel lines whose
+ * projected spacing drops under G3D_MOIRE_PX near the horizon are thinned. Segments are culled
+ * only once off-canvas after projection — never by world distance alone (that caused the flicker).
+ */
+const G3D_SAMPLES = 4;   // 1本の線のサンプル点数（区間数はこれ-1）/ sample points per line (segments = this - 1)
+const G3D_MOIRE_PX = 3;  // 隣接平行線の投影間隔がこれ未満[px]なら間引く / thin when adjacent parallel lines project closer than this [px]
+function drawFloorFamily(ctx, cam, camPos, w, h, pitch, isXConst, kMin, kMax, rangeHalf, fadeMax, budget){
+  const cx = w/2, cy = h/2;
+  const otherCenter = isXConst ? camPos[1] : camPos[0];
+  const y0 = otherCenter - rangeHalf, y1 = otherCenter + rangeHalf;
+  let prevFar = null; // 直前に実際に描いた線の最遠サンプル点の画面座標(モアレ間引きの比較対象)
+                       // screen position of the farthest sample of the last line actually drawn (moiré comparison baseline)
+  for(let k = Math.floor(kMin/pitch)*pitch; k<=kMax; k+=pitch){
+    if(budget.used >= budget.cap) break;
+    const pA = isXConst ? [k,y0,0] : [y0,k,0];
+    const pB = isXConst ? [k,y1,0] : [y1,k,0];
+    const zA = toCam3(pA,cam).z, zB = toCam3(pB,cam).z;
+    if(zA<=NEAR3 && zB<=NEAR3) continue; // 両端とも視点の後ろ / both ends behind the camera
+    let t0=0, t1=1;
+    if(zA<=NEAR3 || zB<=NEAR3){
+      const tStar = (NEAR3-zA)/(zB-zA);
+      if(zA<=NEAR3) t0=tStar; else t1=tStar;
+    }
+    const pts = [];
+    for(let i=0;i<G3D_SAMPLES;i++){
+      const t = t0 + (t1-t0)*i/(G3D_SAMPLES-1);
+      const wx = pA[0]+(pB[0]-pA[0])*t, wy = pA[1]+(pB[1]-pA[1])*t;
+      const c = toCam3([wx,wy,0], cam);
+      pts.push({ s: screenOf(c, cam.f, cx, cy), distCam: Math.hypot(wx-camPos[0], wy-camPos[1]), zCam: c.z });
+    }
+    let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;
+    for(const p of pts){ if(p.s.x<minX)minX=p.s.x; if(p.s.x>maxX)maxX=p.s.x; if(p.s.y<minY)minY=p.s.y; if(p.s.y>maxY)maxY=p.s.y; }
+    const MARGIN=40;
+    if(maxX<-MARGIN || minX>w+MARGIN || maxY<-MARGIN || minY>h+MARGIN) continue; // 射影後に画面外なら間引く / cull once off-canvas, post-projection
+    const farPt = pts.reduce((a,b)=> b.zCam>a.zCam ? b : a).s;
+    if(prevFar && Math.hypot(farPt.x-prevFar.x, farPt.y-prevFar.y) < G3D_MOIRE_PX) continue; // モアレ間引き / moiré thinning
+    prevFar = farPt;
+    for(let i=1;i<pts.length && budget.used<budget.cap; i++){
+      const dMid = (pts[i-1].distCam+pts[i].distCam)/2;
+      const alpha = Math.max(0, 0.5*(1-dMid/fadeMax));
+      if(alpha<=0.006) continue;
+      ctx.globalAlpha = alpha;
+      ctx.beginPath(); ctx.moveTo(pts[i-1].s.x,pts[i-1].s.y); ctx.lineTo(pts[i].s.x,pts[i].s.y); ctx.stroke();
+      budget.used++;
+    }
+  }
+}
+function drawFloorGrid3D(ctx, cam, camPos, w, h, pitch, rangeHalf, fadeMax, budget){
+  const kMinX = camPos[0]-rangeHalf, kMaxX = camPos[0]+rangeHalf;
+  const kMinY = camPos[1]-rangeHalf, kMaxY = camPos[1]+rangeHalf;
+  drawFloorFamily(ctx, cam, camPos, w, h, pitch, true,  kMinX, kMaxX, rangeHalf, fadeMax, budget);
+  drawFloorFamily(ctx, cam, camPos, w, h, pitch, false, kMinY, kMaxY, rangeHalf, fadeMax, budget);
+}
 function drawPlan3D(){
   const fc = fitCanvas(document.getElementById('plan3d')); if(!fc) return;
+  const __perfT0 = performance.now();
   const {ctx,w,h} = fc;
   ctx.clearRect(0,0,w,h);
   const b = getBounds3D(); lastBounds3D = b;
@@ -1434,40 +1549,16 @@ function drawPlan3D(){
   ctx.strokeStyle=COL.ink2; ctx.globalAlpha=0.35; ctx.lineWidth=1;
   ctx.beginPath(); ctx.moveTo(0,horizonY); ctx.lineTo(w,horizonY); ctx.stroke(); ctx.globalAlpha=1;
 
-  // 床格子: 1m格子。カメラから15m以内は1m間隔、それより遠くは2m間隔（偶数座標のみ延伸）。
-  // 世界原点から±60mで打ち切り、視点からの距離でフェード、近クリップ面(0.05m)で線分をクリップする
-  // floor grid: 1 m pitch; beyond 15 m from the camera only even-metre lines continue (2 m pitch);
-  // culled beyond ±60 m of the target; alpha fades with distance; each segment clipped at the 0.05 m near plane
-  const EXT=60, NEAR_R=15, FADE_MAX=45;
-  function drawGridSeg(p1,p2,distCam){
-    const seg = clipNear3(toCam3(p1,cam), toCam3(p2,cam)); if(!seg) return;
-    const s1=screenOf(seg[0],f,cx,cy), s2=screenOf(seg[1],f,cx,cy);
-    const alpha = 0.5 - 0.45*Math.min(1, distCam/FADE_MAX);
-    ctx.strokeStyle=COL.ink2; ctx.globalAlpha=Math.max(0.03,alpha); ctx.lineWidth=1;
-    ctx.beginPath(); ctx.moveTo(s1.x,s1.y); ctx.lineTo(s2.x,s2.y); ctx.stroke();
-  }
-  ctx.save();
-  const gx0=Math.floor((target[0]-EXT)), gx1=Math.ceil((target[0]+EXT));
-  const gy0=Math.floor((target[1]-EXT)), gy1=Math.ceil((target[1]+EXT));
-  for(let k=gx0; k<=gx1; k++){
-    const fineOnly = (Math.round(k/2)*2 !== k);
-    for(let ys=gy0; ys<gy1; ys++){
-      const y1=ys, y2=ys+1, midx=k, midy=(y1+y2)/2;
-      const distCam = Math.hypot(midx-cam.camPos[0], midy-cam.camPos[1]);
-      if(fineOnly && distCam>NEAR_R) continue;
-      drawGridSeg([k,y1,0],[k,y2,0], distCam);
-    }
-  }
-  for(let k=gy0; k<=gy1; k++){
-    const fineOnly = (Math.round(k/2)*2 !== k);
-    for(let xs=gx0; xs<gx1; xs++){
-      const x1=xs, x2=xs+1, midy=k, midx=(x1+x2)/2;
-      const distCam = Math.hypot(midx-cam.camPos[0], midy-cam.camPos[1]);
-      if(fineOnly && distCam>NEAR_R) continue;
-      drawGridSeg([x1,k,0],[x2,k,0], distCam);
-    }
-  }
-  ctx.restore(); ctx.globalAlpha=1;
+  // 床格子（詳細は drawFloorFamily 直前のコメント参照）: 1m格子(~18mでアルファ0) + 独立に
+  // 5m格子(~80mまで)。1フレームあたりの線分数に上限を設け、オービット中も滑らかに保つ
+  // floor grid (see the comment above drawFloorFamily for the rationale): 1 m lines (fade to zero
+  // by ~18 m) plus an independent 5 m grid (out to ~80 m). Segment count is capped per frame so
+  // orbiting stays smooth.
+  ctx.strokeStyle = COL.ink2; ctx.lineWidth = 1;
+  const gridBudget = {used:0, cap:600};
+  drawFloorGrid3D(ctx, cam, cam.camPos, w, h, 1, 19, 18, gridBudget);
+  drawFloorGrid3D(ctx, cam, cam.camPos, w, h, 5, 82, 80, gridBudget);
+  ctx.globalAlpha=1;
 
   // 座標軸 x赤/y緑/z青（原点=世界原点） / axis triad at the world origin (x red, y green, z blue)
   const axLen = Math.max(0.3, Math.min(b.maxX-b.minX, b.maxY-b.minY, Math.max(0.6,b.maxZ-b.minZ))*0.18);
@@ -1555,6 +1646,9 @@ function drawPlan3D(){
   }
   items.sort((p,q)=>q.depth-p.depth); // 奥(depth大)から手前へ描く / paint far (large depth) to near
   for(const it of items) it.draw();
+  // 検証用の簡易計測（UIには出さない。CDP等からの eval で読む）/ lightweight perf hook for
+  // verification only (not shown in the UI; read it via eval from CDP or devtools)
+  window.__uwbPerf = {drawPlan3DMs: performance.now()-__perfT0, gridSegments: gridBudget.used};
 }
 
 /* ---- 3D 測位図の操作（ドラッグ回転・ホイール/ピンチで距離変更・ダブルクリックでリセット） ---- */
@@ -1601,6 +1695,24 @@ function wire3DControls(){
  * 測位図の共通配線（2D/3D切替・拡大・点群消去・リサイズ） / shared plan-view wiring
  * ===================================================================== */
 let view3D = qs.get('view')==='3d';
+// 2D測位図の回転角(0/90/180/270°)。localStorageの保存値を優先し、無ければ ?rot= クエリ
+// （検証用のフック）、それも無ければ0°。3D側は回さず、カメラのyawを90°ずつ振る方で対応する
+// 2D plan-view rotation angle. Prefers the saved localStorage value; falls back to the ?rot=
+// query hook (handy for verification), else 0°. The 3D view is never rotated this way — the
+// button instead nudges the orbit camera's yaw by 90° there.
+let planRot = 0;
+{
+  let saved = null;
+  try{ saved = localStorage.getItem('uwbPlanRot'); }catch(e){}
+  const fromStorage = saved!=null ? parseInt(saved,10) : NaN;
+  const fromQuery = parseInt(qs.get('rot'),10);
+  if([0,90,180,270].includes(fromStorage)) planRot = fromStorage;
+  else if([0,90,180,270].includes(fromQuery)) planRot = fromQuery;
+}
+function updateRotButtonTitle(){
+  const b = document.getElementById('btnRot');
+  if(b) b.title = view3D ? `カメラを90°回転（3D）` : `測位図を90°回転（現在 ${planRot}°）`;
+}
 function redrawPlan(){ try{ (view3D?drawPlan3D:drawPlan2D)(); }catch(e){ noteDrawError(e); } }
 document.getElementById('viewSeg').addEventListener('click', e=>{
   const b = e.target.closest('button'); if(!b) return;
@@ -1608,6 +1720,7 @@ document.getElementById('viewSeg').addEventListener('click', e=>{
   view3D = b.dataset.view === '3d';
   document.getElementById('plan2d').toggleAttribute('hidden', view3D);
   document.getElementById('plan3d').toggleAttribute('hidden', !view3D);
+  updateRotButtonTitle();
   redrawPlan();
 });
 if(view3D){
@@ -1616,8 +1729,23 @@ if(view3D){
   document.getElementById('plan3d').toggleAttribute('hidden', false);
 }
 document.getElementById('btnClearCloud').addEventListener('click', ()=>{ cloudPts.length = 0; });
-// 軌跡消去: 直近 60 秒の軌跡（通常解・EKF とも）を空にする。点群と印は触らない / clear both trails; cloud and marker untouched
+// 軌跡消去: 直近 20 秒の軌跡（通常解・EKF とも）を空にする。点群と印は触らない / clear both trails; cloud and marker untouched
 document.getElementById('btnClearTrail').addEventListener('click', ()=>{ fixTrail.length = 0; ekfTrail.length = 0; });
+// 回転ボタン: 2Dでは測位図そのものを90°刻みで回す(localStorageへ保存)。3Dでは代わりに
+// オービットカメラのyawを90°振る（測位図の回転概念が無いため）
+// rotate button: in 2D, rotate the plan view itself by 90° steps (saved to localStorage); in 3D,
+// nudge the orbit camera's yaw by 90° instead (there is no "plan rotation" concept in 3D)
+document.getElementById('btnRot').addEventListener('click', ()=>{
+  if(view3D){
+    cam3D.yaw += Math.PI/2;
+  } else {
+    planRot = (planRot+90)%360;
+    try{ localStorage.setItem('uwbPlanRot', String(planRot)); }catch(e){}
+  }
+  updateRotButtonTitle();
+  redrawPlan();
+});
+updateRotButtonTitle();
 {
   const planCard = document.getElementById('planCard');
   const btnFs = document.getElementById('btnFs');
