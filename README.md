@@ -52,10 +52,11 @@
 
 ### A. ビルド済みバイナリを使う（ESP-IDF 不要）
 
-GitHub Actions がビルドした**そのまま書き込めるバイナリ**があります。
+GitHub Actions がビルドした**そのまま書き込めるバイナリ**が
+[Releases](https://github.com/kouhei1970/m5stamp_uwb_localizer/releases) にあります。
 
 ```sh
-# 例: 疎通確認ファーム（M5StampS3A 用）
+# 例: 疎通確認ファーム（M5StampS3A 用。latest は Releases の最新タグを指す）
 curl -LO https://github.com/kouhei1970/m5stamp_uwb_localizer/releases/latest/download/probe-stamps3.zip
 unzip probe-stamps3.zip
 esptool.py --chip esp32s3 -p /dev/cu.usbmodemXXXX write_flash 0x0 merged-firmware.bin

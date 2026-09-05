@@ -307,11 +307,13 @@ menu "UWB Tag Configuration"
             IRQ有効/無効に関わらず完全に同一のポーリング経路を通る
             （dwt_setcallbacks()/dwt_isr()は使わない。docs/IRQ_POLICY.md）。
 
-            タグは標準構成（StampFly、GROVE 4本をSPIに使い切る）では
-            IRQ 線が残らずポーリングで成立させる方針であり、単体
-            M5StampS3A でタグを組む場合のみ pin_irq が配線される。
-            いずれの場合も実機での極性検証がまだ済んでいないため既定は
-            n（無効）にしてある。
+            IRQ 線は単体 M5StampS3A（G7）でも StampFly（背面 12P FPC の
+            G16、docs/WIRING.md §4）でも配線できる。極性と動作は
+            2026-08-29〜30 に実機で確認済み（docs/IRQ_POLICY.md、
+            docs/HANDOFF.md §1）なので既定は y（有効）。
+            IRQ line is available on both the bare M5StampS3A (G7) and the
+            StampFly rear 12P FPC (G16); polarity and operation were verified
+            on hardware on 2026-08-29..30, hence default y.
 
             有効にしても pin_irq が未配線（StampFly構成）、または ISR
             登録に失敗した場合は自動的にポーリングへフォールバックする

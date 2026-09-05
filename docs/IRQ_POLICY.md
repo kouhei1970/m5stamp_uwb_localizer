@@ -10,7 +10,7 @@
 素の成功率が極端に低い（6.8Mbps 構成で 1.0%）ことが判明したため、**現在の既定は
 `PollingBoth`** である（`firmware/anchor` / `firmware/tag` の Kconfig と
 `Config::timing_profile`。評価用 `firmware/twr` のみ `BothIrq` のまま。経緯は
-`docs/HANDOFF.md` §0-C、プリセットの正本は `docs/TIMING_PRESETS.md`）。
+`docs/HANDOFF.md` §0-D「6.8 Mbps の切り分けと本番既定の決定」、プリセットの正本は `docs/TIMING_PRESETS.md`）。
 
 | 役割 | ボード | IRQ ピン |
 |---|---|---|

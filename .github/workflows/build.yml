@@ -6,7 +6,8 @@ name: build
 #     （docs/PREBUILT_BINARIES.md）
 #
 # ⚠ 配布バイナリは boards/*.h のピン定義を焼き込んだものです。
-#   そのピン定義は**実機未検証の暫定値**なので、配線が違えば動きません。
+#   M5StampS3A の SPI4本・RST・IRQ は実機確認済みだが、WAKEUP と StampFly 用の
+#   定義は未検証の暫定値。配線が docs/PREBUILT_BINARIES.md と違えば動きません。
 
 on:
   push:
@@ -52,9 +53,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # 既定は「両側 IRQ（BothIrq、約90Hz）＋ IRQ 有効」。2026-08-22 に
-          # ポーリング主体をやめたため、下記の base variant がその既定で焼かれる。
-          # IRQ の極性は実機未検証なので、駄目だったとき用に *-polling がある。
+          # anchor/tag（*-ds）の既定は「遅延プリセット PollingBoth（約31Hz）＋ IRQ 有効」。
+          # BothIrq（約90Hz）は実機での素の成功率が低く 2026-08-30 に本番既定から外した
+          # （docs/HANDOFF.md §0-D「6.8 Mbps の切り分けと本番既定の決定」）。IRQ の極性・
+          # 動作は 2026-08-29〜30 に実機確認済み（docs/IRQ_POLICY.md）。*-polling は
+          # IRQ が個体によっては未配線・不調な場合の切り分け用で、UWB_ENABLE_IRQ=n
+          # だけを追加する（遅延プリセットは PollingBoth のまま変えない）。
+          # firmware/twr（twr-tag-*/twr-anchor-*）だけは今も BothIrq が既定。
 
           # --- 実験1: SPI 疎通確認（遅延プリセットは無関係） ---
           - name: probe-stamps3
@@ -155,6 +160,8 @@ jobs:
             && idf.py merge-bin -o merged-firmware.bin
 
       - name: Collect artifacts
+        env:
+          APP: ${{ matrix.app }}
         run: |
           set -eu
           out="dist/${{ matrix.name }}"
@@ -183,6 +190,10 @@ jobs:
             echo "app: firmware/${{ matrix.app }}"
             echo "commit: ${{ github.sha }}"
             echo
+            echo 'この variant が何かは docs/PREBUILT_BINARIES.md の「どれを取ればいいか」を、'
+            echo '書き込み後のアドレス設定・座標入力・Wi-Fi設定・ダッシュボード表示までの'
+            echo '手順は同ファイルの「一気通貫の手順」を参照。詳細は docs/GETTING_STARTED.md §6/§7。'
+            echo
             echo '## 書き込み方（ESP-IDF は不要）'
             echo
             echo '```sh'
@@ -190,8 +201,12 @@ jobs:
             echo 'esptool.py --chip esp32s3 -p /dev/cu.usbmodemXXXX write_flash 0x0 merged-firmware.bin'
             echo '```'
             echo
+            echo '書き込み後は 115200bps のシリアルターミナルでログとコンソールを見られる'
+            echo '（`idf.py monitor` は ESP-IDF が無いと使えない。macOS/Linuxは'
+            echo '`screen /dev/cu.usbmodemXXXX 115200`、Windowsは Tera Term や PuTTY 等）。'
+            echo
             echo 'ブラウザから書き込む場合は https://espressif.github.io/esptool-js/ で'
-            echo 'merged-firmware.bin をオフセット 0x0 に指定する。'
+            echo 'merged-firmware.bin をオフセット 0x0 に指定する（Chrome/Edge が必要）。'
             echo
             echo '個別に書き込みたい場合は同梱の flasher_args.json が使える:'
             echo
@@ -205,10 +220,25 @@ jobs:
             cat firmware/${{ matrix.app }}/ci.defaults
             echo '```'
             echo
+            if [ "$APP" = anchor ] || [ "$APP" = tag ]; then
+              echo '上記に CONFIG_UWB_ENABLE_IRQ=n が無ければ、既定どおり IRQ 有効＋遅延'
+              echo 'プリセット PollingBoth（約31Hz）で焼かれている。この組み合わせは実機で'
+              echo '確認済み（2026-08-29〜30。docs/IRQ_POLICY.md）。CONFIG_UWB_ENABLE_IRQ=n が'
+              echo 'あれば IRQ を明示的に無効化した -polling 版（遅延プリセットは変わらず'
+              echo 'PollingBoth のまま）。'
+              echo
+            elif [ "$APP" = twr ]; then
+              echo '`firmware/twr` は 1対1 診断用ファームで、既定の遅延プリセットは'
+              echo '`BothIrq`（約90Hz、上記に CONFIG_UWB_TIMING_PROFILE_* が無ければ既定のまま）。'
+              echo 'anchor/tag の本番既定（PollingBoth）とは異なるので注意すること'
+              echo '（docs/PREBUILT_BINARIES.md 参照）。'
+              echo
+            fi
             echo '## 注意'
             echo
-            echo '**ピン定義 (boards/*.h) は実機未検証の暫定値**です。配線がドキュメントと'
-            echo '違う場合、このバイナリは動きません。docs/PREBUILT_BINARIES.md を読むこと。'
+            echo '**ピン定義 (boards/*.h) のうち、M5StampS3A の SPI4本・RST・IRQ は実機確認済み'
+            echo 'だが、WAKEUP と StampFly 用の定義は未検証の暫定値**です。配線がドキュメントと'
+            echo '違う場合、このバイナリは動きません。詳細は docs/PREBUILT_BINARIES.md を読むこと。'
             echo
             echo '## ライセンス'
             echo
@@ -268,9 +298,11 @@ jobs:
             esptool.py --chip esp32s3 -p /dev/cu.usbmodemXXXX write_flash 0x0 merged-firmware.bin
             ```
 
-            **⚠ ピン定義は実機未検証の暫定値です。** 配線が
+            **⚠ M5StampS3A の SPI4本・RST・IRQ のピン定義は実機確認済みですが、
+            WAKEUP と StampFly 用の定義は未検証の暫定値です。** 配線が
             `docs/GETTING_STARTED.md` §3 と違う場合は動きません。
-            詳細は `docs/PREBUILT_BINARIES.md`。
+            書き込みから設定・ダッシュボード表示までの手順は `docs/PREBUILT_BINARIES.md`
+            の「一気通貫の手順」を参照してください。
 
             **ライセンス**: 本リポジトリのコードは MIT です。各 zip には Qorvo
             QM33120W/DW3720 用ドライバ（`LicenseRef-QORVO-2`）が組み込まれており、
