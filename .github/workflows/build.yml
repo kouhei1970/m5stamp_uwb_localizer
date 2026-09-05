@@ -285,10 +285,12 @@ jobs:
         with:
           path: dist
 
-      # variant 単位の zip は「何が何やらわからない」ので、目的別に4つの
-      # zip（bundle）へまとめ直す。各 variant は bundle の中のサブフォルダ
-      # として残す（README.md・merged-firmware.bin 等はそのまま）ので、
-      # variant 単位の内容は失われない。
+      # Release に添付するのは「普通に測位する」「配線確認する」の2本だけに
+      # 絞る（2026-09-05 ユーザー判断）。他の variant（StampFly・polling・
+      # twr 診断）は開発者向けとして Actions の artifact のみに残す
+      # （12 通り全部が引き続きビルド・artifact 化はされる。上の firmware job
+      # 参照）。各 variant は bundle の中のサブフォルダとして残す
+      # （README.md・merged-firmware.bin 等はそのまま）。
       - name: Pack bundles
         run: |
           set -eu
@@ -306,15 +308,16 @@ jobs:
             cp -r "dist/$2" "$1/$2"
           }
 
-          # ---- 1: 普通に測位したい（M5StampS3A のタグ + アンカー） ----
+          # ---- 1: 普通に測位したい（M5StampS3A のタグ + アンカー、IRQ 有効） ----
           b1="$(mktemp -d)"
           stage_variant "$b1" tag-stamps3-ds
           stage_variant "$b1" anchor-stamps3-ds
           {
-            echo '# 1-standard-M5StampS3A-tag-and-anchor'
+            echo '# 1-positioning-M5StampS3A-tag-and-anchor'
             echo
-            echo '普通に測位したい場合のバンドルです（タグ1台 + アンカー数台、全て'
-            echo 'M5StampS3A + StampS3 BreakOut の標準構成）。'
+            echo '普通に測位する場合のバンドルです（タグ1台 + アンカー数台、全て'
+            echo 'M5StampS3A + StampS3 BreakOut の標準構成。IRQ 有効 + 遅延プリセット'
+            echo '`PollingBoth`、実機確認済みの既定設定）。'
             echo
             echo '## どのフォルダをどの機器に書き込むか'
             echo
@@ -329,27 +332,23 @@ jobs:
             echo
             echo '各サブフォルダの詳しい説明・ライセンスはサブフォルダ内の README.md を参照してください。'
             echo
+            echo '書き込んだ後にアドレス設定・座標登録・Wi-Fi設定・ダッシュボード表示まで行う'
             echo '手順の全体は docs/PREBUILT_BINARIES.md の「一気通貫の手順」を参照してください。'
           } > "$b1/README.md"
-          (cd "$b1" && zip -qr "$root/release/1-standard-M5StampS3A-tag-and-anchor.zip" .)
+          (cd "$b1" && zip -qr "$root/release/1-positioning-M5StampS3A-tag-and-anchor.zip" .)
 
-          # ---- 2: StampFly をタグにする ----
+          # ---- 2: 配線後にUWBモジュールと通信できるか確認する ----
           b2="$(mktemp -d)"
-          stage_variant "$b2" tag-stampfly-ds
-          stage_variant "$b2" tag-stampfly-ds-polling
+          stage_variant "$b2" probe-stamps3
           {
-            echo '# 2-StampFly-tag'
+            echo '# 2-wiring-check-probe-M5StampS3A'
             echo
-            echo 'StampFly をタグとして使う場合のバンドルです。'
+            echo '配線した後、UWB モジュールと通信できるかを確かめるファームです'
+            echo '（M5StampS3A 用。測位の前に必ずこれで確認してください）。'
             echo
             echo '## どのフォルダをどの機器に書き込むか'
             echo
-            echo '- StampFly タグ（既定・IRQ 配線あり） → `tag-stampfly-ds/merged-firmware.bin`'
-            echo '- StampFly タグ（IRQ が使えない個体向けフォールバック） →'
-            echo '  `tag-stampfly-ds-polling/merged-firmware.bin`'
-            echo
-            echo 'アンカーは含みません。M5StampS3A のアンカーは'
-            echo '`1-standard-M5StampS3A-tag-and-anchor.zip` の `anchor-stamps3-ds` を使ってください。'
+            echo '- 疎通確認したい M5StampS3A → `probe-stamps3/merged-firmware.bin`'
             echo
             echo '## 書き込み方（ESP-IDF は不要）'
             echo
@@ -357,75 +356,20 @@ jobs:
             echo 'esptool.py --chip esp32s3 -p <port> write_flash 0x0 merged-firmware.bin'
             echo '```'
             echo
+            echo '書き込んで 115200bps のシリアル端末を開くと、起動直後に Device ID'
+            echo '`0xDECA0314` の読み出し（L1/L2）と拡張検査 L3〜L11 の結果が'
+            echo 'PASS/FAIL/SKIP で表示され、`PROBE SUMMARY` 行にまとめて出ます。'
+            echo 'その後は 1 秒周期で L1 の読み出しを繰り返します。'
+            echo
+            echo 'L1・L2 が PASS し、`0xDECA0314` が安定して読めていれば合格です。'
+            echo '合格したら `1-positioning-M5StampS3A-tag-and-anchor.zip` を書き込んで'
+            echo '測位に進んでください。'
+            echo
             echo '各サブフォルダの詳しい説明・ライセンスはサブフォルダ内の README.md を参照してください。'
             echo
-            echo '手順の全体は docs/PREBUILT_BINARIES.md の「一気通貫の手順」を参照してください。'
+            echo '詳細は docs/PREBUILT_BINARIES.md・docs/GETTING_STARTED.md §4 を参照してください。'
           } > "$b2/README.md"
-          (cd "$b2" && zip -qr "$root/release/2-StampFly-tag.zip" .)
-
-          # ---- 3: フォールバック（IRQ が使えない個体の切り分け、両側とも polling） ----
-          b3="$(mktemp -d)"
-          stage_variant "$b3" tag-stamps3-ds-polling
-          stage_variant "$b3" anchor-stamps3-ds-polling
-          {
-            echo '# 3-fallback-polling-M5StampS3A'
-            echo
-            echo 'IRQ が使えない/不調な個体を切り分けたいときのバンドルです'
-            echo '（M5StampS3A のタグ・アンカーとも IRQ を無効化した polling 版）。'
-            echo
-            echo '## どのフォルダをどの機器に書き込むか'
-            echo
-            echo '- タグ 1 台 → `tag-stamps3-ds-polling/merged-firmware.bin`'
-            echo '- アンカー全台 → `anchor-stamps3-ds-polling/merged-firmware.bin`（全台同じ内容でよい）'
-            echo
-            echo '**タグ・アンカーの両方を polling 版に揃えてください**（片方だけ polling にすると'
-            echo '遅延プリセットの前提が崩れ、測距が成立しません）。'
-            echo
-            echo '## 書き込み方（ESP-IDF は不要）'
-            echo
-            echo '```sh'
-            echo 'esptool.py --chip esp32s3 -p <port> write_flash 0x0 merged-firmware.bin'
-            echo '```'
-            echo
-            echo '各サブフォルダの詳しい説明・ライセンスはサブフォルダ内の README.md を参照してください。'
-            echo
-            echo '手順の全体は docs/PREBUILT_BINARIES.md の「一気通貫の手順」を参照してください。'
-          } > "$b3/README.md"
-          (cd "$b3" && zip -qr "$root/release/3-fallback-polling-M5StampS3A.zip" .)
-
-          # ---- 4: 診断（配線の疎通確認・1対1測距） ----
-          b4="$(mktemp -d)"
-          stage_variant "$b4" probe-stamps3
-          stage_variant "$b4" probe-stampfly
-          stage_variant "$b4" twr-tag-ss
-          stage_variant "$b4" twr-anchor-ss
-          stage_variant "$b4" twr-tag-ds
-          stage_variant "$b4" twr-anchor-ds
-          {
-            echo '# 4-diagnostics-probe-and-twr'
-            echo
-            echo '配線の疎通確認・1対1測距の診断用バンドルです。'
-            echo
-            echo '## どのフォルダをどの機器に書き込むか'
-            echo
-            echo '- `probe-stamps3/merged-firmware.bin` → M5StampS3A の SPI 疎通確認'
-            echo '- `probe-stampfly/merged-firmware.bin` → StampFly の SPI 疎通確認'
-            echo '- `twr-tag-ss/merged-firmware.bin` + `twr-anchor-ss/merged-firmware.bin` →'
-            echo '  1対1 SS-TWR 測距（それぞれ別の M5StampS3A 1台ずつに書き込む）'
-            echo '- `twr-tag-ds/merged-firmware.bin` + `twr-anchor-ds/merged-firmware.bin` →'
-            echo '  1対1 DS-TWR 測距（同上）'
-            echo
-            echo '## 書き込み方（ESP-IDF は不要）'
-            echo
-            echo '```sh'
-            echo 'esptool.py --chip esp32s3 -p <port> write_flash 0x0 merged-firmware.bin'
-            echo '```'
-            echo
-            echo '各サブフォルダの詳しい説明・ライセンスはサブフォルダ内の README.md を参照してください。'
-            echo
-            echo '手順の全体は docs/PREBUILT_BINARIES.md の「一気通貫の手順」を参照してください。'
-          } > "$b4/README.md"
-          (cd "$b4" && zip -qr "$root/release/4-diagnostics-probe-and-twr.zip" .)
+          (cd "$b2" && zip -qr "$root/release/2-wiring-check-probe-M5StampS3A.zip" .)
 
           ls -lh release
 
@@ -433,19 +377,21 @@ jobs:
         with:
           files: release/*.zip
           body: |
-            ESP-IDF を入れずに書き込めるバイナリです。目的別に4つの zip に
-            まとめてあります。まず下の表で自分のやりたいことを探してください。
+            ESP-IDF を入れずに書き込めるバイナリです。Release に添付しているのは
+            次の2本だけです。まず下の表で自分のやりたいことを探してください。
 
             | 何をしたいか | 取る zip | 書き込むファイル |
             |---|---|---|
-            | 普通に測位したい（M5StampS3A のタグ 1 台 + アンカー N 台） | `1-standard-M5StampS3A-tag-and-anchor.zip` | タグ → `tag-stamps3-ds/merged-firmware.bin`、アンカー全台 → `anchor-stamps3-ds/merged-firmware.bin`（全台同じ） |
-            | StampFly をタグにする | `2-StampFly-tag.zip` | `tag-stampfly-ds/merged-firmware.bin`（IRQ が使えない個体は `tag-stampfly-ds-polling/merged-firmware.bin`） |
-            | IRQ が使えない個体の切り分け（タグ・アンカーとも polling） | `3-fallback-polling-M5StampS3A.zip` | タグ → `tag-stamps3-ds-polling/merged-firmware.bin`、アンカー全台 → `anchor-stamps3-ds-polling/merged-firmware.bin` |
-            | 配線の疎通確認・1対1測距の診断 | `4-diagnostics-probe-and-twr.zip` | 用途に応じて `probe-stamps3` / `probe-stampfly` / `twr-tag-*` + `twr-anchor-*` の中から選ぶ |
+            | 普通に測位したい（M5StampS3A のタグ 1 台 + アンカー N 台） | `1-positioning-M5StampS3A-tag-and-anchor.zip` | タグ → `tag-stamps3-ds/merged-firmware.bin`、アンカー全台 → `anchor-stamps3-ds/merged-firmware.bin`（全台同じ） |
+            | 配線した後に UWB モジュールと通信できるか確認したい | `2-wiring-check-probe-M5StampS3A.zip` | `probe-stamps3/merged-firmware.bin`（書き込んでシリアル端末を見る。合格したら上の行の zip へ進む） |
 
             zip を開くと variant 名のサブフォルダがあり、その中の
             `merged-firmware.bin` をオフセット `0x0` に書き込みます
             （サブフォルダごとに `README.md` も同梱）。
+
+            他の variant（StampFly 用・ポーリング版・twr 診断）は Releases には
+            載せません。必要な人は Actions の artifact から取ってください
+            （開発者向け。`docs/PREBUILT_BINARIES.md` の「開発者向け」節参照）。
 
             ```sh
             esptool.py --chip esp32s3 -p /dev/cu.usbmodemXXXX write_flash 0x0 merged-firmware.bin

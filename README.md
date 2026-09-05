@@ -53,22 +53,42 @@
 ### A. ビルド済みバイナリを使う（ESP-IDF 不要）
 
 GitHub Actions がビルドした**そのまま書き込めるバイナリ**が
-[Releases](https://github.com/kouhei1970/m5stamp_uwb_localizer/releases) にあります。
-標準構成（M5StampS3A のタグ 1 台 + アンカー N 台）なら
-**`1-standard-M5StampS3A-tag-and-anchor.zip`** を取ってください。
+[Releases](https://github.com/kouhei1970/m5stamp_uwb_localizer/releases) に
+次の2つの zip として置いてあります（中身はどちらも variant 名のサブフォルダで、
+各フォルダに `merged-firmware.bin`・書き込み手順の `README.md`・ライセンス
+（`LICENSE` / `THIRD_PARTY_LICENSES.md` / `LICENSES/`）が入っています）。
+
+| zip | 中のサブフォルダ | 用途 |
+|---|---|---|
+| `1-positioning-M5StampS3A-tag-and-anchor.zip` | `tag-stamps3-ds/`、`anchor-stamps3-ds/` | 普通に測位する（タグ1台 + アンカー N 台） |
+| `2-wiring-check-probe-M5StampS3A.zip` | `probe-stamps3/` | 配線した後、UWB モジュールと通信できるか確認する |
+
+**まず `2-wiring-check-probe-M5StampS3A.zip` の `probe-stamps3/merged-firmware.bin`
+で配線を疎通確認し**、合格したら `1-positioning-M5StampS3A-tag-and-anchor.zip` の中の
+**タグには `tag-stamps3-ds/merged-firmware.bin`**、**アンカー全台には
+`anchor-stamps3-ds/merged-firmware.bin`（全台同じ内容でよい）**を書き込みます。
 
 ```sh
-# 標準構成一式（M5StampS3A のタグ + アンカー。latest は Releases の最新タグを指す）
-curl -LO https://github.com/kouhei1970/m5stamp_uwb_localizer/releases/latest/download/1-standard-M5StampS3A-tag-and-anchor.zip
-unzip 1-standard-M5StampS3A-tag-and-anchor.zip
-# タグには tag-stamps3-ds/merged-firmware.bin、アンカー全台には
-# anchor-stamps3-ds/merged-firmware.bin（全台同じ）を書き込む
-esptool.py --chip esp32s3 -p /dev/cu.usbmodemXXXX write_flash 0x0 merged-firmware.bin
+# 例: タグに書き込む場合（latest は Releases の最新タグを指す）
+curl -LO https://github.com/kouhei1970/m5stamp_uwb_localizer/releases/latest/download/1-positioning-M5StampS3A-tag-and-anchor.zip
+unzip 1-positioning-M5StampS3A-tag-and-anchor.zip
+esptool.py --chip esp32s3 -p /dev/cu.usbmodemXXXX write_flash 0x0 tag-stamps3-ds/merged-firmware.bin
 ```
 
 ブラウザからでも書けます（<https://espressif.github.io/esptool-js/> でオフセット `0x0`）。
-StampFly をタグにする場合や、疎通確認・1対1測距の診断用など、目的別に
-4つの zip を用意してあります → **[`docs/PREBUILT_BINARIES.md`](docs/PREBUILT_BINARIES.md)**
+
+**書き込んだだけでは終わりません。** 書き込み後、シリアルコンソール（115200bps）で
+それぞれ最低限これだけ設定してください（詳細は下記リンク先）。
+
+- アンカー: `addr set <アドレス>` → `save`（1台ずつ重複しないアドレスに変える）
+- タグ: `anchor set <idx> <addr> <x> <y> <z>` → `save` でアンカー座標を登録し、
+  `wifi set <SSID> <パスワード>` で Wi-Fi を設定するとブラウザのダッシュボードが使えます
+
+書き込みから設定・ダッシュボード表示までの手順の全体は
+[`docs/PREBUILT_BINARIES.md`](docs/PREBUILT_BINARIES.md) の「一気通貫の手順」を
+参照してください。StampFly をタグにする場合や、IRQ の切り分け・1対1測距の
+診断用ファームは Actions の artifact から入手できます（開発者向け）→
+**[`docs/PREBUILT_BINARIES.md`](docs/PREBUILT_BINARIES.md)**
 
 > **⚠ 実機確認済みのピン定義は M5StampS3A（`boards/stamps3.h`）のみ**です
 > （SPI 4 本・RST・IRQ まで実機確認済み。WAKEUP と StampFly 用の定義は未検証の暫定値）。
