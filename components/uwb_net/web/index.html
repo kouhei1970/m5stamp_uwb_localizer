@@ -1133,7 +1133,7 @@ function drawDistChart(){
   const now = nowMs(), windowMs = 60000;
   const keys = Array.from(distSeries.keys());
   const arrsForRange = keys.map(k=>({pts:distSeries.get(k), windowMs, now}));
-  const [mn,mx] = rangeOf(arrsForRange, [null]);
+  const [mn,mx] = rangeOf(arrsForRange, ['d']); // 距離 d の値域（[null] だと点そのものを数値扱いできず 0〜1 m に固定され、線が描画域の外に出ていた）/ range of d (a [null] key never matched a number, so the axis stuck at 0–1 m and the lines fell outside)
   let html = chartGridBg();
   for(const k of keys) html += `<path d="${chartPath(distSeries.get(k),'d',mn,mx,now,windowMs)}" fill="none" style="stroke:var(${getColorVar(k)})" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>`;
   for(const k of keys) html += endLabelDot(distSeries.get(k),'d',mn,mx, k.slice(-4), getColorVar(k));
