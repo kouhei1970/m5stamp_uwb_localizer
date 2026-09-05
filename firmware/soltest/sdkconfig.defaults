@@ -19,3 +19,13 @@ CONFIG_COMPILER_OPTIMIZATION_PERF=y
 # 消費電力は問題にならないので 240MHz にする（他の firmware/* は電池駆動の
 # 実運用を想定するため既定 160MHz のままにしている。ここだけの変更）。
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+
+# --- uwb_net（Wi-Fi ダッシュボード）がビルド対象に含まれるための設定 ---
+# このファームは uwb_net を使わないが、EXTRA_COMPONENT_DIRS で components/ 全体を
+# 取り込むため uwb_net もコンパイルされる。uwb_net_http.cpp は esp_http_server の
+# WebSocket API を使うので、この設定が無いとビルドが通らない（CI が 2026-08-31 から
+# 失敗していた原因）。
+# uwb_net is compiled into this firmware too (EXTRA_COMPONENT_DIRS pulls in all of
+# components/), and its HTTP code needs the esp_http_server WebSocket API; without
+# this option the build fails (the reason CI had been red since 2026-08-31).
+CONFIG_HTTPD_WS_SUPPORT=y
