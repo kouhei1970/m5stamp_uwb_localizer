@@ -10,13 +10,13 @@
   --surface:#fcfcfb; --page:#f9f9f7; --ink:#0b0b0b; --ink2:#52514e; --muted:#898781;
   --grid:#e1e0d9; --axis:#c3c2b7; --border:rgba(11,11,11,.10);
   --good:#0ca30c; --warn:#fab219; --bad:#d03b3b;
-  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100; --s5:#e87ba4; --s6:#008300; --s7:#4a3aa7; --s8:#e34948;
+  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100; --s5:#e87ba4; --s6:#008300; --s7:#4a3aa7; --s8:#e34948; --cloud:#4a3aa7; /* 点群の色（アンカー色と被らない紫） / point-cloud colour, distinct from the anchor palette */
 }
 @media (prefers-color-scheme: dark){
   :root{
     --surface:#1a1a19; --page:#0d0d0d; --ink:#ffffff; --ink2:#c3c2b7; --muted:#898781;
     --grid:#2c2c2a; --axis:#383835; --border:rgba(255,255,255,.10);
-    --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --s5:#d55181; --s6:#008300; --s7:#9085e9; --s8:#e66767;
+    --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --s5:#d55181; --s6:#008300; --s7:#9085e9; --s8:#e66767; --cloud:#9085e9;
   }
 }
 *{box-sizing:border-box}
@@ -206,7 +206,7 @@ details#rawDet summary{cursor:pointer;font-size:13px;color:var(--ink2);margin-bo
     </div>
     <!-- 印・軌跡は fix.lv3.p（EKF）が既定。EKF 無効時のみ fix.p（通常解）にフォールバックする -->
     <!-- marker/trail default to fix.lv3.p (EKF); fall back to fix.p (NLS) only when no EKF is present -->
-    <div class="chart-title muted">印・軌跡 = EKF 解（軌跡は直近 60 秒、EKF が無いときだけ通常解）。点群 = 消去まで蓄積</div>
+    <div class="chart-title muted">印・軌跡（墨色）= EKF 解、軌跡は直近 60 秒（EKF が無いときだけ通常解）。点群（紫）= 消去まで蓄積</div>
     <div id="planBox"><canvas id="cvPlan"></canvas></div>
   </section>
 
@@ -338,7 +338,7 @@ function minMax(arr){ let mn=Infinity, mx=-Infinity; for(const v of arr){ if(v<m
 
 function rebuildTheme(){
   const cs = getComputedStyle(document.documentElement);
-  ['grid','axis','muted','ink','s1','s2','s3','s4','s5','s6','s7','s8'].forEach(k=>{ COL[k]=cs.getPropertyValue('--'+k).trim(); });
+  ['grid','axis','muted','ink','cloud','s1','s2','s3','s4','s5','s6','s7','s8'].forEach(k=>{ COL[k]=cs.getPropertyValue('--'+k).trim(); });
   colorHex = ORDER_KEYS.map(k=>COL[k]);
 }
 function getColor(id){
@@ -1009,7 +1009,7 @@ function drawPlan(){
   // 点群（薄いドット）: 軌跡・マーカーより先に描いて下敷きにする。「点群消去」ボタンで消えるまで蓄積され続ける
   // point cloud (faint dots): drawn first so it sits underneath the trail/marker; persists until "点群消去" is pressed
   if(cloudPts.length){
-    ctx.fillStyle = COL.ink; ctx.globalAlpha = 0.25;
+    ctx.fillStyle = COL.cloud; ctx.globalAlpha = 0.45; // 点群は紫、軌跡・印は墨色 / cloud in violet, trail and marker in ink
     ctx.beginPath();
     for(const p of cloudPts){ const [x,y]=toPx(p.x,p.y); ctx.moveTo(x+1.5,y); ctx.arc(x,y,1.5,0,TAU); }
     ctx.fill(); ctx.globalAlpha = 1;
@@ -1117,7 +1117,7 @@ function drawPlan3D(){
   // the dots are small & low-alpha, individually depth-sorting them (the painter's algorithm used
   // below) isn't worth it — just draw them all before everything else instead.
   if(cloudPts.length){
-    ctx.fillStyle = COL.ink; ctx.globalAlpha = 0.25;
+    ctx.fillStyle = COL.cloud; ctx.globalAlpha = 0.45; // 点群は紫、軌跡・印は墨色 / cloud in violet, trail and marker in ink
     ctx.beginPath();
     for(const p of cloudPts){ const s=toScr([p.x,p.y,p.z]); ctx.moveTo(s.x+1.5,s.y); ctx.arc(s.x,s.y,1.5,0,TAU); }
     ctx.fill(); ctx.globalAlpha = 1;
